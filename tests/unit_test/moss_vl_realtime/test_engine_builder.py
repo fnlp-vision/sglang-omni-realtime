@@ -28,11 +28,11 @@ def _fake_model_worker() -> SimpleNamespace:
     )
 
 
-def test_generation_defaults_keep_cuda_graph_disabled_by_default() -> None:
+def test_generation_defaults_enable_decode_graph_by_default() -> None:
     defaults = _make_builder().generation_defaults(dtype="bfloat16")
 
-    assert defaults["disable_cuda_graph"] is True
-    assert "disable_prefill_cuda_graph" not in defaults
+    assert defaults["disable_cuda_graph"] is False
+    assert defaults["disable_prefill_cuda_graph"] is True
     # FlashInfer is the project's decode backend in all modes; setting any
     # backend dimension requires pinning prefill explicitly as well.
     assert defaults["decode_attention_backend"] == "flashinfer"
@@ -110,7 +110,7 @@ def test_setup_model_sets_encoder_len_fill_value_when_graph_enabled() -> None:
 def test_setup_model_leaves_hf_config_untouched_when_graph_disabled() -> None:
     model_worker = _fake_model_worker()
 
-    _make_builder().setup_model(
+    _make_builder(disable_cuda_graph=True).setup_model(
         model_worker=model_worker,
         checkpoint_dir="",
         device="cuda:0",

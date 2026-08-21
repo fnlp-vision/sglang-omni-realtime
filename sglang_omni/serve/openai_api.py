@@ -183,6 +183,7 @@ def create_app(
     speech_reference_text_required: bool = False,
     additional_speech_languages: frozenset[str] = frozenset(),
     enable_realtime: bool = False,
+    video_realtime_benchmark_mode: bool = False,
     supports_realtime_audio_output: bool = False,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
@@ -209,6 +210,8 @@ def create_app(
         additional_speech_languages: Pipeline-specific accepted languages.
         enable_realtime: If True, mount the WebSocket ``/v1/realtime``
             endpoint (OpenAI Realtime API).
+        video_realtime_benchmark_mode: Whether the MOSS-VL realtime endpoint
+            accepts benchmark-only session options.
         supports_realtime_audio_output: Whether the mounted realtime endpoint
             can request streamed audio from the configured pipeline.
         allowed_local_media_path: Directory allowed for ``file://`` TTS
@@ -283,7 +286,10 @@ def create_app(
     if "MossVLRealtimeForConditionalGeneration" in app.state.architectures:
         from sglang_omni.serve.video_realtime import register_video_realtime
 
-        register_video_realtime(app)
+        register_video_realtime(
+            app,
+            allow_benchmark_mode=video_realtime_benchmark_mode,
+        )
 
     return app
 

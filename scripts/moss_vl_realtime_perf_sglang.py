@@ -16,7 +16,8 @@ Frames are pushed without artificial FPS sleeps: the harness waits for each
 processed ack, so measurements are warm-path latencies, not replay schedules.
 The measurement session is configured with benchmark_ignore_eos=True so the
 final prompt decodes exactly --decode-tokens visible steps without an early
-EOS stop.
+EOS stop. Start the server with --enable-benchmark-mode; production-mode
+servers reject this benchmark-only session option.
 """
 
 from __future__ import annotations

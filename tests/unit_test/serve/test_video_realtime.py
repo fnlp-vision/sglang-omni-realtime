@@ -247,6 +247,7 @@ def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
         architectures=["MossVLRealtimeForConditionalGeneration"],
+        video_realtime_benchmark_mode=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
         websocket.receive_json()
@@ -272,3 +273,26 @@ def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
 
     assert client.captured_request is not None
     assert client.captured_request.extra_params == {"benchmark_ignore_eos": True}
+
+
+def test_video_realtime_rejects_benchmark_option_in_production_mode() -> None:
+    client = _HoldingClient()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        architectures=["MossVLRealtimeForConditionalGeneration"],
+    )
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "session.configure",
+                "prompt": "Watch.",
+                "benchmark_ignore_eos": True,
+            }
+        )
+        error = websocket.receive_json()
+
+    assert error["type"] == "error"
+    assert "requires server benchmark mode" in error["message"]
+    assert client.updates == []

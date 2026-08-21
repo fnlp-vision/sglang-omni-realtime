@@ -37,7 +37,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         mem_fraction_static: float | None,
         frame_resolver: Any = None,
         parked_request_timeout_s: float = 300.0,
-        disable_cuda_graph: bool = True,
+        disable_cuda_graph: bool = False,
         page_size: int = 1,
         enable_async_decode: bool = False,
     ) -> None:

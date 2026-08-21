@@ -280,6 +280,32 @@ def test_backend_inventory_resolves_cuda_variant_distributions(monkeypatch) -> N
     assert all(backend["importable"] for backend in backends)
 
 
+def test_backend_inventory_falls_back_to_standard_nixl_module(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gpu_diagnostics,
+        "_BACKENDS",
+        (("communication", "nixl", ("nixl_cu13._api", "nixl._api")),),
+    )
+    monkeypatch.setattr(
+        gpu_diagnostics,
+        "_module_import_error",
+        lambda module: "ModuleNotFoundError" if module.startswith("nixl_cu13") else None,
+    )
+    monkeypatch.setattr(
+        gpu_diagnostics,
+        "_distribution_info",
+        lambda module: ("nixl", "1.3.1") if module == "nixl._api" else (None, None),
+    )
+
+    backend = gpu_diagnostics._backend_inventory()[0]
+
+    assert backend["module"] == "nixl._api"
+    assert backend["distribution"] == "nixl"
+    assert backend["version"] == "1.3.1"
+    assert backend["installed"] is True
+    assert backend["importable"] is True
+
+
 def test_module_import_probe_survives_hard_crash(tmp_path, monkeypatch) -> None:
     assert gpu_diagnostics._module_import_error("json") is None
 

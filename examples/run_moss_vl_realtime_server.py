@@ -67,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         help="Launch decode step N+1 before resolving step N (lookahead). "
         "Requires --kv-page-size 1. Default off; validated in P10.5.",
     )
+    parser.add_argument(
+        "--enable-benchmark-mode",
+        action="store_true",
+        default=False,
+        help="Allow benchmark-only WebSocket options such as "
+        "benchmark_ignore_eos. Never enable for production traffic.",
+    )
     args = parser.parse_args()
     if args.enable_async_decode and args.kv_page_size != 1:
         parser.error("--enable-async-decode requires --kv-page-size 1")
@@ -120,6 +127,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         model_name="moss-vl-realtime",
+        video_realtime_benchmark_mode=args.enable_benchmark_mode,
     )
 
 

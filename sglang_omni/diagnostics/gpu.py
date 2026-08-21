@@ -33,7 +33,7 @@ _BACKENDS = (
         "compressed-tensors",
         "compressed_tensors",
     ),
-    ("communication", "nixl", "nixl_cu13._api"),
+    ("communication", "nixl", ("nixl_cu13._api", "nixl._api")),
     ("communication", "mooncake", "mooncake.engine"),
 )
 _IMPORT_PROBE_TIMEOUT_SECONDS = 30.0
@@ -109,9 +109,22 @@ def _distribution_info(module: str) -> tuple[str | None, str | None]:
 
 def _backend_inventory() -> list[dict[str, Any]]:
     backends = []
-    for category, name, module in _BACKENDS:
-        import_error = _module_import_error(module)
-        distribution, version = _distribution_info(module)
+    for category, name, module_spec in _BACKENDS:
+        modules = (module_spec,) if isinstance(module_spec, str) else tuple(module_spec)
+        attempts: list[tuple[str, str | None, str | None, str | None]] = []
+        for candidate in modules:
+            import_error = _module_import_error(candidate)
+            distribution, version = _distribution_info(candidate)
+            attempts.append((candidate, import_error, distribution, version))
+            if import_error is None:
+                break
+        else:
+            installed_attempts = [item for item in attempts if item[2] is not None]
+            if installed_attempts:
+                candidate, import_error, distribution, version = installed_attempts[0]
+            else:
+                candidate, import_error, distribution, version = attempts[0]
+        module = candidate
         importable = import_error is None
         installed = distribution is not None or importable
         reason = None
@@ -122,7 +135,11 @@ def _backend_inventory() -> list[dict[str, Any]]:
                     f"{module!r} failed to import: {import_error}"
                 )
             else:
-                reason = f"Module {module!r} failed to import: {import_error}"
+                attempted = ", ".join(repr(item[0]) for item in attempts)
+                reason = (
+                    f"Backend modules [{attempted}] failed to import; "
+                    f"last selected error for {module!r}: {import_error}"
+                )
         backends.append(
             {
                 "category": category,

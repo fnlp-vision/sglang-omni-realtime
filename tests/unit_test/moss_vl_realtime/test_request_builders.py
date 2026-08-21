@@ -141,6 +141,12 @@ def test_pipeline_config_targets_realtime_stage() -> None:
     assert config.stages[0].factory.endswith(
         "moss_vl_realtime.stages.create_sglang_moss_vl_realtime_executor"
     )
+    factory_args = config.stages[0].factory_args
+    assert factory_args["context_length"] == 32768
+    assert factory_args["mem_fraction_static"] == 0.25
+    assert factory_args["disable_cuda_graph"] is False
+    assert factory_args["page_size"] == 1
+    assert factory_args["enable_async_decode"] is False
 
 
 def test_request_builder_marks_benchmark_ignore_eos() -> None:

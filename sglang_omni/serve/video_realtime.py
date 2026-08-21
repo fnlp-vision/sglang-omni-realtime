@@ -66,11 +66,13 @@ class VideoRealtimeSession:
         client: Client,
         model_name: str,
         frame_store: SharedMemoryFrameStore,
+        allow_benchmark_mode: bool = False,
     ) -> None:
         self.websocket = websocket
         self.client = client
         self.model_name = model_name
         self.frame_store = frame_store
+        self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.session_id = f"video_sess_{uuid.uuid4().hex}"
         self.request_id = f"video_req_{uuid.uuid4().hex}"
         self.pending_frame: _PendingFrame | None = None
@@ -142,6 +144,10 @@ class VideoRealtimeSession:
     async def configure(self, config: VideoSessionConfigure) -> None:
         if self.configured:
             raise ValueError("session is already configured")
+        if config.benchmark_ignore_eos and not self.allow_benchmark_mode:
+            raise ValueError(
+                "benchmark_ignore_eos requires server benchmark mode"
+            )
         self.input_queue_capacity = config.input_queue_capacity
         self.configured = True
         await self.send(
@@ -418,9 +424,16 @@ class VideoRealtimeSession:
         await self.send(payload)
 
 class VideoRealtimeSessionManager:
-    def __init__(self, *, client: Client, model_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: Client,
+        model_name: str,
+        allow_benchmark_mode: bool = False,
+    ) -> None:
         self.client = client
         self.model_name = model_name
+        self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.frame_store = SharedMemoryFrameStore()
         self.sessions: dict[str, VideoRealtimeSession] = {}
 
@@ -432,6 +445,7 @@ class VideoRealtimeSessionManager:
             client=self.client,
             model_name=self.model_name,
             frame_store=self.frame_store,
+            allow_benchmark_mode=self.allow_benchmark_mode,
         )
         self.sessions[session.session_id] = session
         return session
@@ -442,10 +456,15 @@ class VideoRealtimeSessionManager:
             await session.teardown()
 
 
-def register_video_realtime(app: FastAPI) -> None:
+def register_video_realtime(
+    app: FastAPI,
+    *,
+    allow_benchmark_mode: bool = False,
+) -> None:
     manager = VideoRealtimeSessionManager(
         client=app.state.client,
         model_name=app.state.model_name,
+        allow_benchmark_mode=allow_benchmark_mode,
     )
     app.state.video_realtime_manager = manager
 

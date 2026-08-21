@@ -40,12 +40,22 @@ def test_launcher_async_decode_flag_defaults_off(monkeypatch) -> None:
     args = _parse(monkeypatch, "--model-path", "/models/x")
 
     assert args.enable_async_decode is False
+    assert args.decode_cuda_graph is True
+    assert args.context_length == 32768
+    assert args.mem_fraction_static == 0.25
+    assert args.enable_benchmark_mode is False
 
 
 def test_launcher_async_decode_flag_opt_in(monkeypatch) -> None:
     args = _parse(monkeypatch, "--model-path", "/models/x", "--enable-async-decode")
 
     assert args.enable_async_decode is True
+
+
+def test_launcher_benchmark_mode_is_explicit_opt_in(monkeypatch) -> None:
+    args = _parse(monkeypatch, "--model-path", "/models/x", "--enable-benchmark-mode")
+
+    assert args.enable_benchmark_mode is True
 
 
 def test_launcher_async_decode_requires_page_size_one(monkeypatch) -> None:
