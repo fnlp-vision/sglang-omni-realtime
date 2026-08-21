@@ -82,3 +82,29 @@ python examples/run_omni.py ming-speech-server \
 ```
 
 Use a different `--port` if you run more than one server at the same time.
+
+## MOSS-VL Realtime Video
+
+Start the single-stream realtime video server:
+
+```bash
+python examples/run_moss_vl_realtime_server.py \
+  --model-path /path/to/moss-vl-realtime-checkpoint \
+  --gpu 0 \
+  --port 8000
+```
+
+Send timestamped frames at the default 1 FPS:
+
+```bash
+python examples/moss_vl_realtime_client.py \
+  --url ws://127.0.0.1:8000/v1/video/realtime \
+  --prompt "Describe relevant changes." \
+  --frame /path/to/frame_000.png --timestamp 0.0 \
+  --frame /path/to/frame_001.png --timestamp 1.0
+```
+
+The interface accepts configurable FPS, but model-semantic acceptance is scoped
+to the trained 1 FPS setting. See the
+[MOSS-VL Realtime cookbook](../docs/cookbook/moss_vl_realtime.md) for protocol,
+backpressure, performance switches, and validation details.

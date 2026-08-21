@@ -108,6 +108,7 @@ Supported Models
    cookbook/fun_asr.md
    cookbook/arkasr.md
    cookbook/moss_transcribe_diarize.md
+   cookbook/moss_vl_realtime.md
    cookbook/whisper_asr.md
    cookbook/qwen3_omni.md
    cookbook/ming_omni.md
