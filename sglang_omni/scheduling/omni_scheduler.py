@@ -190,6 +190,7 @@ class OmniScheduler:
         stream_output_builder: Callable | None = None,
         stream_chunk_handler: Callable | None = None,
         stream_done_handler: Callable | None = None,
+        request_update_handler: Callable | None = None,
         abort_callback: Callable[[str], None] | None = None,
         request_finished_callback: Callable[[str], None] | None = None,
         enable_overlap: bool = False,
@@ -215,6 +216,7 @@ class OmniScheduler:
         self._stream_output_builder = stream_output_builder
         self._stream_chunk_handler = stream_chunk_handler
         self._stream_done_handler = stream_done_handler
+        self._request_update_handler = request_update_handler
         self._abort_callback = abort_callback
         self._request_finished_callback = request_finished_callback
         self._shutdown_callback = shutdown_callback
@@ -252,6 +254,7 @@ class OmniScheduler:
             self._request_build_backlog_limit = 0
             self._request_build_executor = None
         self._pending_request_builds: dict[str, tuple[Any, bool, Future]] = {}
+        self._pending_request_updates: dict[str, deque[Any]] = {}
         self._pending_request_admissions: dict[
             str, tuple[Any, bool, DeferredAdmission]
         ] = {}
@@ -835,6 +838,8 @@ class OmniScheduler:
                 self._on_stream_chunk(msg.request_id, msg.data)
             elif msg.type == "stream_done":
                 self._on_stream_done(msg.request_id)
+            elif msg.type == "request_update":
+                self._on_request_update(msg.request_id, msg.data)
 
         return new_reqs
 
@@ -1233,6 +1238,11 @@ class OmniScheduler:
             self._append_stream_chunk(req_data, chunk)
         if payload.prefetched_stream_done:
             self._mark_stream_done(req_data)
+        pending_updates = getattr(self, "_pending_request_updates", None)
+        if pending_updates is None:
+            return
+        for update in pending_updates.pop(payload.request_id, ()):
+            self._apply_request_update(req_data, update)
 
     def _request_kv_capacity_error(self, req: Any) -> str | None:
         input_len = len(req.origin_input_ids)
@@ -1282,6 +1292,10 @@ class OmniScheduler:
         )
         self.running_batch = plan.running_batch
         return plan.batch_to_run
+
+    def process_batch_result(self, batch: Any, result: Any) -> None:
+        """Explicit bridge so model schedulers can extend result handling."""
+        _Upstream.process_batch_result(self, batch, result)
 
     def get_new_batch_prefill(self, running_batch):
         # Note: (maydomine) batch prefill admissions to amortize the fixed step
@@ -1666,6 +1680,26 @@ class OmniScheduler:
         if request_id in self._deferred_request_payloads:
             self._dirty_deferred_request_ids.add(request_id)
 
+    def _on_request_update(self, request_id: str, data: Any) -> None:
+        """Apply an active-request update or buffer it until request build."""
+        if request_id in self._completed_request_ids:
+            return
+        req_data = self._find_request_data(request_id)
+        if req_data is not None:
+            self._apply_request_update(req_data, data)
+            return
+        self._pending_request_updates.setdefault(request_id, deque()).append(data)
+
+    def _apply_request_update(self, req_data: Any, data: Any) -> None:
+        if self._request_update_handler is not None:
+            self._request_update_handler(req_data, data)
+            return
+        updates = getattr(req_data, "request_updates", None)
+        if updates is None:
+            updates = deque()
+            req_data.request_updates = updates
+        updates.append(data)
+
     def start(self) -> None:
         self._scheduler_thread_id = threading.get_ident()
         self._running = True
@@ -1754,6 +1788,7 @@ class OmniScheduler:
         if not running_abort:
             self._run_abort_callback(request_id)
         self._pending_stream_ingress.pop(request_id, None)
+        getattr(self, "_pending_request_updates", {}).pop(request_id, None)
         self._deferred_request_payloads.pop(request_id, None)
         self._dirty_deferred_request_ids.discard(request_id)
         self._first_emit_done.discard(request_id)
@@ -2606,6 +2641,7 @@ class OmniScheduler:
             del self._completed_request_ids[next(iter(self._completed_request_ids))]
         self._completed_request_ids[request_id] = None
         self._pending_stream_ingress.pop(request_id, None)
+        getattr(self, "_pending_request_updates", {}).pop(request_id, None)
 
     def _reserve_pending_stream_request(self, request_id: str) -> None:
         pending = self._pending_stream_ingress

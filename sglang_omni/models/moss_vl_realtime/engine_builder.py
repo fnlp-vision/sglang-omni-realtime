@@ -1,0 +1,197 @@
+"""SGLang engine builder for MOSS-VL realtime."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from transformers import AutoProcessor
+
+from sglang_omni.models.moss_vl_realtime import request_builders
+from sglang_omni.models.moss_vl_realtime.model_runner import (
+    MossVLRealtimeModelRunner,
+)
+from sglang_omni.models.moss_vl_realtime.payload_types import SILENCE_TOKEN
+from sglang_omni.models.moss_vl_realtime.scheduler import (
+    MossVLRealtimeScheduler,
+)
+from sglang_omni.models.moss_vl_realtime.segment import (
+    MossVLRealtimeSegmentBuilder,
+)
+from sglang_omni.scheduling.engine_factory import SGLangGenerationEngineBuilder
+
+# Representative encoder length used as the CUDA-graph capture fill value;
+# only needs to be non-zero so cross-attention kernels are captured.
+DECODE_GRAPH_ENCODER_LEN_FILL_VALUE = 4096
+
+
+class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
+    model_name = "MOSS-VL-Realtime"
+    model_arch_override = "MossVLRealtimeForConditionalGeneration"
+
+    def __init__(
+        self,
+        *,
+        max_running_requests: int,
+        max_new_tokens: int,
+        context_length: int,
+        mem_fraction_static: float | None,
+        frame_resolver: Any = None,
+        parked_request_timeout_s: float = 300.0,
+        disable_cuda_graph: bool = True,
+        page_size: int = 1,
+        enable_async_decode: bool = False,
+    ) -> None:
+        self.max_running_requests = int(max_running_requests)
+        self.max_new_tokens = int(max_new_tokens)
+        self.context_length = int(context_length)
+        self.mem_fraction_static = mem_fraction_static
+        self.frame_resolver = frame_resolver
+        self.parked_request_timeout_s = float(parked_request_timeout_s)
+        self.disable_cuda_graph = bool(disable_cuda_graph)
+        page_size = int(page_size)
+        # chunked_prefill_size / max_prefill_tokens are fixed at 4096 below and
+        # upstream requires chunked_prefill_size % page_size == 0.
+        if page_size < 1 or 4096 % page_size:
+            raise ValueError("page_size must be positive and divide 4096")
+        self.page_size = page_size
+        self.enable_async_decode = bool(enable_async_decode)
+        if self.enable_async_decode and self.page_size > 1:
+            # Overrun-slot release assumes token-granular allocation.
+            raise ValueError("enable_async_decode requires page_size == 1")
+        self.processor: Any = None
+        self.segment_builder: MossVLRealtimeSegmentBuilder | None = None
+        self.silence_token_ids: tuple[int, ...] = ()
+
+    def pre_infra_setup(self, checkpoint_dir: str) -> None:
+        self.processor = AutoProcessor.from_pretrained(
+            checkpoint_dir,
+            trust_remote_code=True,
+        )
+        config = self.processor.image_processor
+        merge_size = int(
+            getattr(config, "merge_size", None)
+            or getattr(config, "spatial_merge_size", 2)
+        )
+        image_token_id = int(
+            getattr(self.processor, "image_token_id", None)
+            or self.processor.tokenizer.convert_tokens_to_ids("<|image|>")
+        )
+        self.segment_builder = MossVLRealtimeSegmentBuilder(
+            self.processor,
+            image_token_id=image_token_id,
+            merge_size=merge_size,
+        )
+        silence_token_id = self.processor.tokenizer.convert_tokens_to_ids(SILENCE_TOKEN)
+        if silence_token_id is None:
+            silence_token_ids = self.processor.tokenizer.encode(
+                SILENCE_TOKEN,
+                add_special_tokens=False,
+            )
+        else:
+            silence_token_ids = [silence_token_id]
+        self.silence_token_ids = tuple(int(token_id) for token_id in silence_token_ids)
+        if not self.silence_token_ids:
+            raise ValueError("tokenizer cannot encode the silence marker")
+
+    def generation_defaults(self, *, dtype: str) -> dict[str, Any]:
+        defaults = {
+            "max_running_requests": self.max_running_requests,
+            "disable_cuda_graph": self.disable_cuda_graph,
+            "disable_overlap_schedule": True,
+            "enable_torch_compile": False,
+            "mem_fraction_static": self.mem_fraction_static,
+            "max_prefill_tokens": 4096,
+            "chunked_prefill_size": 4096,
+            "sampling_backend": "pytorch",
+            # Token-granular KV allocation by default. page_size > 1 opts into
+            # page-granular allocation: req_to_token rows still store flat
+            # token slots (the paged allocator returns flat slots and the
+            # FlashInfer backends plan with logical page_size=1), so the
+            # encoder-prefix layout is page-size agnostic; rollback release is
+            # page-aware (batch_adapter retains slots sharing the committed
+            # tail page), and sglang_patch fixes the upstream paged decode
+            # alloc for encoder-decoder layouts.
+            "page_size": self.page_size,
+            "dtype": dtype,
+            # FlashInfer is the project's decode backend. (It is also required
+            # for decode CUDA graphs: fa3 decode-graph replay indexes
+            # req_to_token rows with encoder_lens + arange(max_context_len)
+            # when seq_lens_cpu is unavailable, which overflows the row for
+            # our encoder-prefix KV layout; FlashInfer re-plans from device
+            # buffers each replay and has no such issue.)
+            "decode_attention_backend": "flashinfer",
+            # Setting any single backend dimension stops the upstream MossVL
+            # override from injecting its prefill default; pin it explicitly.
+            "prefill_attention_backend": "flashinfer",
+        }
+        if not self.disable_cuda_graph:
+            # Only stable-shape decode steps enter the graph; the dynamic
+            # multimodal frame extend stays on the eager path.
+            defaults["disable_prefill_cuda_graph"] = True
+        return defaults
+
+    def setup_model(
+        self,
+        *,
+        model_worker: Any,
+        checkpoint_dir: str,
+        device: str,
+        gpu_id: int,
+        server_args: Any,
+    ) -> None:
+        del checkpoint_dir, device, gpu_id, server_args
+        if self.disable_cuda_graph:
+            return
+        # The MOSS-VL HF config defines no max_source_positions, so SGLang
+        # would capture decode graphs with encoder_len fill value 0 and skip
+        # the cross-attention kernels. Provide a representative non-zero
+        # encoder length for capture; replay re-plans with the real lengths.
+        hf_config = model_worker.model_runner.model_config.hf_config
+        hf_config.max_source_positions = DECODE_GRAPH_ENCODER_LEN_FILL_VALUE
+
+    def make_model_runner(self, model_worker: Any, output_proc: Any) -> Any:
+        return MossVLRealtimeModelRunner(model_worker, output_proc)
+
+    def make_adapters(self, model: Any) -> tuple[Any, Any]:
+        del model
+        return request_builders.make_moss_vl_realtime_scheduler_adapters(
+            tokenizer=self.processor.tokenizer,
+            max_new_tokens=self.max_new_tokens,
+        )
+
+    def extra_scheduler_kwargs(self) -> dict[str, Any]:
+        return {
+            "stream_output_builder": request_builders.make_moss_vl_realtime_stream_output_builder(
+                tokenizer=self.processor.tokenizer,
+            ),
+            "enable_overlap": False,
+            "enable_async_decode": self.enable_async_decode,
+            # bs=1 lookahead is opt-in here: the MOSS workload is dominated by
+            # single-stream sessions, and the perf A/B decides whether the
+            # flag stays worthwhile.
+            "async_decode_min_batch_size": 1,
+        }
+
+    def _make_scheduler(self, **kwargs: Any) -> Any:
+        extra = kwargs.pop("extra_scheduler_kwargs")
+        scheduler_kwargs = {
+            "tp_worker": kwargs["model_worker"],
+            "tree_cache": kwargs["tree_cache"],
+            "req_to_token_pool": kwargs["req_to_token_pool"],
+            "token_to_kv_pool_allocator": kwargs["token_to_kv_pool_allocator"],
+            "server_args": kwargs["server_args"],
+            "model_config": kwargs["model_config"],
+            "prefill_manager": kwargs["prefill_manager"],
+            "decode_manager": kwargs["decode_manager"],
+            "model_runner": kwargs["model_runner"],
+            "request_builder": kwargs["request_builder"],
+            "result_adapter": kwargs["result_adapter"],
+            "abort_callback": self.make_abort_callback(),
+            "request_finished_callback": self.make_request_finished_callback(),
+            "segment_builder": self.segment_builder,
+            "frame_resolver": self.frame_resolver,
+            "silence_token_ids": self.silence_token_ids,
+            "parked_request_timeout_s": self.parked_request_timeout_s,
+        }
+        scheduler_kwargs.update(extra)
+        return MossVLRealtimeScheduler(**scheduler_kwargs)

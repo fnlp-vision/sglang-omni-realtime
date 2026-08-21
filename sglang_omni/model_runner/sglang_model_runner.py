@@ -428,6 +428,15 @@ class SGLModelRunner(ModelRunner):
 
         from sglang.srt.models.registry import ModelRegistry
 
+        if getattr(self, "_model_arch_override", None) == "MossVLRealtimeForConditionalGeneration":
+            from sglang_omni.models.moss_vl_realtime.sglang_patch import (
+                install_moss_vl_realtime_paged_decode_alloc_patch,
+                install_moss_vl_realtime_schedule_batch_patch,
+            )
+
+            install_moss_vl_realtime_schedule_batch_patch()
+            install_moss_vl_realtime_paged_decode_alloc_patch()
+
         sglang_omni_models = {
             "S2ProSGLangTextModel": "sglang_omni.models.fishaudio_s2_pro.sglang_model:S2ProSGLangTextModel",
             "Qwen3OmniTalker": "sglang_omni.models.qwen3_omni.components.talker:Qwen3OmniTalker",
@@ -446,6 +455,7 @@ class SGLModelRunner(ModelRunner):
             "FunAsrNanoForConditionalGeneration": "sglang_omni.models.fun_asr.sglang_model:FunAsrNanoForConditionalGeneration",
             "ArkasrForConditionalGeneration": "sglang_omni.models.arkasr.sglang_model:ArkasrForConditionalGeneration",
             "DotsTTSForConditionalGeneration": "sglang_omni.models.dots_tts.sglang_model:DotsTTSSGLangModel",
+            "MossVLRealtimeForConditionalGeneration": "sglang_omni.models.moss_vl_realtime.sglang_model:MossVLRealtimeForConditionalGeneration",
         }
         for arch, path in sglang_omni_models.items():
             module_path, _, attr = path.partition(":")

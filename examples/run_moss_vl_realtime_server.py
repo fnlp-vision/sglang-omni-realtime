@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Launch the MOSS-VL realtime pipeline and binary-frame WebSocket API."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+
+def _ensure_python_bin_on_path() -> None:
+    """Expose venv console scripts to FlashInfer JIT subprocesses."""
+    python_bin = str(Path(sys.executable).parent)
+    path_entries = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and entry != python_bin
+    ]
+    os.environ["PATH"] = os.pathsep.join([python_bin, *path_entries])
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.25)
+    parser.add_argument("--context-length", type=int, default=32768)
+    parser.add_argument("--max-new-tokens", type=int, default=4096)
+    parser.add_argument("--parked-request-timeout", type=float, default=300.0)
+    parser.add_argument(
+        "--kv-page-size",
+        type=int,
+        default=1,
+        help="KV cache page size for paged allocation (must divide 4096). "
+        "Default 1 keeps token-granular allocation; >1 enables the "
+        "page-aware paths validated in P10.4.",
+    )
+    parser.add_argument(
+        "--enable-decode-cuda-graph",
+        dest="decode_cuda_graph",
+        action="store_true",
+        default=True,
+        help="Capture CUDA graphs for stable-shape decode steps "
+        "(frame extend stays eager). Default on; validated in P11.",
+    )
+    parser.add_argument(
+        "--disable-decode-cuda-graph",
+        dest="decode_cuda_graph",
+        action="store_false",
+        help="Fall back to eager decode.",
+    )
+    parser.add_argument(
+        "--decode-attention-backend",
+        default=None,
+        help="Optional server_args override for the decode attention backend "
+        "(e.g. flashinfer, to match a decode-graph run in comparisons). "
+        "Must be flashinfer when decode CUDA graph is on.",
+    )
+    parser.add_argument(
+        "--enable-async-decode",
+        dest="enable_async_decode",
+        action="store_true",
+        default=False,
+        help="Launch decode step N+1 before resolving step N (lookahead). "
+        "Requires --kv-page-size 1. Default off; validated in P10.5.",
+    )
+    args = parser.parse_args()
+    if args.enable_async_decode and args.kv_page_size != 1:
+        parser.error("--enable-async-decode requires --kv-page-size 1")
+    if args.decode_cuda_graph and args.decode_attention_backend not in (
+        None,
+        "flashinfer",
+    ):
+        # fa3 decode-graph replay overflows req_to_token rows for the
+        # encoder-prefix KV layout (see perf_p10_3/server_graph_blocking.log).
+        parser.error(
+            "--decode-attention-backend must be flashinfer when decode CUDA "
+            "graph is enabled"
+        )
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+    _ensure_python_bin_on_path()
+    from sglang_omni.models.moss_vl_realtime.config import (
+        MossVLRealtimePipelineConfig,
+    )
+    from sglang_omni.serve import launch_server
+
+    config = MossVLRealtimePipelineConfig(model_path=args.model_path)
+    stage = config.stages[0]
+    stage.gpu = args.gpu
+    factory_args = dict(stage.factory_args)
+    factory_args.update(
+        {
+            "device": f"cuda:{args.gpu}",
+            "mem_fraction_static": args.mem_fraction_static,
+            "context_length": args.context_length,
+            "max_new_tokens": args.max_new_tokens,
+            "parked_request_timeout_s": args.parked_request_timeout,
+            "disable_cuda_graph": not args.decode_cuda_graph,
+            "page_size": args.kv_page_size,
+            "enable_async_decode": args.enable_async_decode,
+        }
+    )
+    if args.decode_attention_backend is not None:
+        factory_args["server_args_overrides"] = {
+            # Setting any single backend dimension stops the upstream MossVL
+            # override from injecting its flashinfer prefill default; pin both.
+            "prefill_attention_backend": "flashinfer",
+            "decode_attention_backend": args.decode_attention_backend,
+        }
+    stage.factory_args = factory_args
+    launch_server(
+        config,
+        host=args.host,
+        port=args.port,
+        model_name="moss-vl-realtime",
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -16,6 +16,7 @@ Provides the following endpoints:
 - GET  /v1/fs/file           — Download a file
 - GET  /health               — Health check
 - WS   /v1/realtime          — OpenAI-compatible Realtime API (when enabled)
+- WS   /v1/video/realtime    — MOSS-VL timestamped binary-frame streaming
 """
 
 from __future__ import annotations
@@ -279,6 +280,10 @@ def create_app(
     register_translations(app)
     if enable_realtime:
         _register_realtime(app)
+    if "MossVLRealtimeForConditionalGeneration" in app.state.architectures:
+        from sglang_omni.serve.video_realtime import register_video_realtime
+
+        register_video_realtime(app)
 
     return app
 

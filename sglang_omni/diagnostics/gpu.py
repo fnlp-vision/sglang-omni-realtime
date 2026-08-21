@@ -33,7 +33,7 @@ _BACKENDS = (
         "compressed-tensors",
         "compressed_tensors",
     ),
-    ("communication", "nixl", "nixl._api"),
+    ("communication", "nixl", "nixl_cu13._api"),
     ("communication", "mooncake", "mooncake.engine"),
 )
 _IMPORT_PROBE_TIMEOUT_SECONDS = 30.0

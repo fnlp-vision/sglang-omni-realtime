@@ -260,6 +260,34 @@ class SubmitMessage:
 
 
 @dataclass
+class RequestUpdateMessage:
+    """Append one ordered event to an active, stateful request."""
+
+    request_id: str
+    data: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        _require_str(self.request_id, "request_id")
+        if not isinstance(self.data, dict):
+            raise TypeError("RequestUpdateMessage.data must be a dict")
+        return {
+            "type": "request_update",
+            "request_id": self.request_id,
+            "data": self.data.copy(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "RequestUpdateMessage":
+        data = d.get("data")
+        if not isinstance(data, dict):
+            raise TypeError("request_update data must be a dict")
+        return cls(
+            request_id=_require_str(d.get("request_id"), "request_id"),
+            data=data,
+        )
+
+
+@dataclass
 class ShutdownMessage:
     """Signal graceful shutdown to a stage."""
 
@@ -354,6 +382,7 @@ def parse_message(
     | CompleteMessage
     | StreamMessage
     | SubmitMessage
+    | RequestUpdateMessage
     | ShutdownMessage
     | ProfilerStartMessage
     | ProfilerStopMessage
@@ -376,6 +405,8 @@ def parse_message(
         return StreamMessage.from_dict(d)
     elif msg_type == "submit":
         return SubmitMessage.from_dict(d)
+    elif msg_type == "request_update":
+        return RequestUpdateMessage.from_dict(d)
     elif msg_type == "shutdown":
         return ShutdownMessage.from_dict(d)
     elif msg_type == "profiler_start":

@@ -289,6 +289,16 @@ class Client:
             return None
         return info.state
 
+    async def update_request(
+        self,
+        request_id: str,
+        data: dict[str, Any],
+        *,
+        stage_name: str | None = None,
+    ) -> None:
+        """Append an event to an already running stateful request."""
+        await self._coordinator.update_request(request_id, data, stage_name=stage_name)
+
     def health(self) -> dict[str, Any]:
         return self._coordinator.health()
 
@@ -556,6 +566,10 @@ class Client:
                 data.modality = chunk.modality
             return data
         if isinstance(data, dict):
+            control_event = data.get("event")
+            if isinstance(control_event, str):
+                chunk.control_event = control_event
+                chunk.control_data = dict(data)
             text = data.get("text")
             if isinstance(text, str):
                 chunk.text = text

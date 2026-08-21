@@ -44,6 +44,7 @@ _ARCH_CONFIG_MAP: dict[str, tuple[str, str | None]] = {
     "MossTTSDelaySGLangModel": ("language_config", None),
     "MossTTSLocalSGLangModel": ("language_config", None),
     "MossTranscribeDiarizeForConditionalGeneration": ("text_config", None),
+    "MossVLRealtimeForConditionalGeneration": ("text_config", None),
 }
 
 

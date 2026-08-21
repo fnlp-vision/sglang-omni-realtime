@@ -40,6 +40,7 @@ from sglang_omni.proto import (
     DataReadyMessage,
     ProfilerStartMessage,
     ProfilerStopMessage,
+    RequestUpdateMessage,
     ShutdownMessage,
     StageInfo,
     StagePayload,
@@ -333,6 +334,8 @@ class Stage:
     async def _handle_message(self, msg: Any) -> None:
         if isinstance(msg, SubmitMessage):
             await self._on_submit(msg)
+        elif isinstance(msg, RequestUpdateMessage):
+            self._on_request_update(msg)
         elif isinstance(msg, DataAckMessage):
             self._comm.ack_transfer(msg)
         elif isinstance(msg, DataReadyMessage):
@@ -414,6 +417,24 @@ class Stage:
 
         payload = msg.data  # StagePayload from coordinator
         await self._execute(payload)
+
+    def _on_request_update(self, msg: RequestUpdateMessage) -> None:
+        if msg.request_id in self._aborted:
+            return
+        if msg.request_id not in self._active_requests:
+            logger.warning(
+                "Stage %s: dropping update for inactive request %s",
+                self.name,
+                msg.request_id,
+            )
+            return
+        self.scheduler.inbox.put(
+            IncomingMessage(
+                request_id=msg.request_id,
+                type="request_update",
+                data=msg.data,
+            )
+        )
 
     async def _on_data_ready(
         self,

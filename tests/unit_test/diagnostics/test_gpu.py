@@ -221,7 +221,7 @@ def test_backend_inventory_reports_installed_but_unimportable(monkeypatch) -> No
     monkeypatch.setattr(
         gpu_diagnostics,
         "_BACKENDS",
-        (("communication", "nixl", "nixl._api"),),
+        (("communication", "nixl", "nixl_cu13._api"),),
     )
     monkeypatch.setattr(
         gpu_diagnostics,
@@ -247,7 +247,7 @@ def test_backend_inventory_resolves_cuda_variant_distributions(monkeypatch) -> N
         gpu_diagnostics,
         "_BACKENDS",
         (
-            ("communication", "nixl", "nixl._api"),
+            ("communication", "nixl", "nixl_cu13._api"),
             ("communication", "mooncake", "mooncake.engine"),
         ),
     )
@@ -256,12 +256,12 @@ def test_backend_inventory_resolves_cuda_variant_distributions(monkeypatch) -> N
         gpu_diagnostics.importlib.metadata,
         "packages_distributions",
         lambda: {
-            "nixl": ["nixl"],
+            "nixl_cu13": ["nixl-cu13"],
             "mooncake": ["mooncake-transfer-engine"],
         },
     )
     versions = {
-        "nixl": "1.2.0",
+        "nixl-cu13": "1.4.0",
         "mooncake-transfer-engine": "0.3.10",
     }
     monkeypatch.setattr(
@@ -273,7 +273,7 @@ def test_backend_inventory_resolves_cuda_variant_distributions(monkeypatch) -> N
     backends = gpu_diagnostics._backend_inventory()
 
     assert [(backend["distribution"], backend["version"]) for backend in backends] == [
-        ("nixl", "1.2.0"),
+        ("nixl-cu13", "1.4.0"),
         ("mooncake-transfer-engine", "0.3.10"),
     ]
     assert all(backend["installed"] for backend in backends)

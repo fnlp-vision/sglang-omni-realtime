@@ -20,6 +20,7 @@ from sglang_omni.proto import (
     OmniRequest,
     RequestInfo,
     RequestState,
+    RequestUpdateMessage,
     StageInfo,
     StagePayload,
     StreamMessage,
@@ -493,6 +494,33 @@ class Coordinator:
             lambda done, rid=request_id: self._on_abort_task_done(rid, done)
         )
         return await asyncio.shield(abort_task)
+
+    async def update_request(
+        self,
+        request_id: str,
+        data: dict[str, Any],
+        *,
+        stage_name: str | None = None,
+    ) -> None:
+        """Append an event to the stage that owns an active request's state."""
+        info = self._requests.get(request_id)
+        if info is None:
+            raise KeyError(f"Request {request_id} does not exist")
+        if info.state is not RequestState.RUNNING:
+            raise RuntimeError(
+                f"Request {request_id} is not running: {info.state.value}"
+            )
+        target = stage_name or info.current_stage or self.entry_stage
+        target_info = self._stages.get(target)
+        if target_info is None:
+            raise ValueError(f"Stage {target} is not registered")
+        if not isinstance(data, dict):
+            raise TypeError("request update data must be a dict")
+        await self.control_plane.submit_to_stage(
+            target,
+            target_info.control_endpoint,
+            RequestUpdateMessage(request_id=request_id, data=data),
+        )
 
     async def _run_abort(
         self,
