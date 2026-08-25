@@ -51,33 +51,25 @@ def test_generation_defaults_enable_decode_graph_only() -> None:
     assert defaults["decode_attention_backend"] == "flashinfer"
 
 
-def test_generation_defaults_pass_through_page_size() -> None:
+def test_generation_defaults_fix_page_size_to_one() -> None:
     assert _make_builder().generation_defaults(dtype="bfloat16")["page_size"] == 1
-    assert (
-        _make_builder(page_size=16).generation_defaults(dtype="bfloat16")["page_size"]
-        == 16
-    )
 
 
-def test_page_size_must_be_positive_and_divide_chunked_prefill() -> None:
+@pytest.mark.parametrize("page_size", [0, 16, 48])
+def test_page_size_must_be_one(page_size: int) -> None:
     with pytest.raises(ValueError, match="page_size"):
-        _make_builder(page_size=0)
-    # 4096 (chunked_prefill_size / max_prefill_tokens) % 48 != 0
-    with pytest.raises(ValueError, match="page_size"):
-        _make_builder(page_size=48)
+        _make_builder(page_size=page_size)
 
 
-def test_async_decode_defaults_off_and_requires_page_size_one() -> None:
+def test_async_decode_defaults_off() -> None:
     builder = _make_builder()
     assert builder.enable_async_decode is False
-
-    with pytest.raises(ValueError, match="page_size"):
-        _make_builder(enable_async_decode=True, page_size=16)
 
 
 def test_extra_scheduler_kwargs_pass_async_decode_through() -> None:
     builder = _make_builder(enable_async_decode=True)
     builder.processor = SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=0))
+    builder.silence_token_ids = (151671,)
     kwargs = builder.extra_scheduler_kwargs()
 
     assert kwargs["enable_overlap"] is False
@@ -88,6 +80,7 @@ def test_extra_scheduler_kwargs_pass_async_decode_through() -> None:
     default_builder.processor = SimpleNamespace(
         tokenizer=SimpleNamespace(eos_token_id=0)
     )
+    default_builder.silence_token_ids = (151671,)
     default_kwargs = default_builder.extra_scheduler_kwargs()
     assert default_kwargs["enable_async_decode"] is False
 

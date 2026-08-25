@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sglang_omni.models.moss_vl_realtime.benchmark_cases import (
-    compile_training_record,
-)
+from sglang_omni.models.moss_vl_realtime.benchmark_cases import compile_training_record
 
 
 def _compile(messages, segments):

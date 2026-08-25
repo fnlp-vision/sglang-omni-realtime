@@ -10,9 +10,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--context-length", type=int, default=32768)
+    parser.add_argument("--context-length", type=int, default=131072)
     parser.add_argument("--max-new-tokens", type=int, default=32)
-    parser.add_argument("--mem-fraction-static", type=float, default=0.25)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.40)
     return parser.parse_args()
 
 

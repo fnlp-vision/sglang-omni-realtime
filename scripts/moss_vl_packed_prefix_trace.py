@@ -145,7 +145,9 @@ def main() -> None:
             traces["rope_position_ids"] = tensor_summary(inputs[1])
 
     language_model = model.model.language_model
-    hooks.append(language_model.embed_tokens.register_forward_hook(capture("embedding")))
+    hooks.append(
+        language_model.embed_tokens.register_forward_hook(capture("embedding"))
+    )
     hooks.append(
         language_model.rotary_emb.register_forward_pre_hook(capture_rope_inputs)
     )
@@ -189,9 +191,7 @@ def main() -> None:
         "case_id": args.case_id,
         "through_seq_no": args.through_seq_no,
         "sequence_length": int(processed["input_ids"].shape[1]),
-        "grid_thw": (
-            processed["grid_thw"].tolist() if "grid_thw" in processed else []
-        ),
+        "grid_thw": (processed["grid_thw"].tolist() if "grid_thw" in processed else []),
         "top_tokens": top_tokens,
         "traces": traces,
         "parameter_traces": {

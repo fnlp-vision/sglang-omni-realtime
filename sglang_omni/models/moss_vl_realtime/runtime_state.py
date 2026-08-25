@@ -37,6 +37,7 @@ class MossVLRealtimeRuntimeState:
     decoder_length: int = 0
     visible_frame_count: int = 0
     next_mrope_position: int = 0
+    turn_id: int = 0
     pending_token_id: int | None = None
     mrope_positions: torch.Tensor | None = field(default=None, repr=False)
     visible_frame_counts: torch.Tensor | None = field(default=None, repr=False)
@@ -52,6 +53,7 @@ class MossVLRealtimeRuntimeState:
             "decoder_length",
             "visible_frame_count",
             "next_mrope_position",
+            "turn_id",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:

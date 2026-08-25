@@ -22,6 +22,7 @@ from sglang_omni.proto import (
     AdminResultMessage,
     ProfilerStartMessage,
     ProfilerStopMessage,
+    RequestUpdateMessage,
     ShutdownMessage,
 )
 
@@ -57,7 +58,11 @@ class TPLeaderFanout:
     async def fanout_control(
         self,
         msg: (
-            ShutdownMessage | ProfilerStartMessage | ProfilerStopMessage | AdminMessage
+            ShutdownMessage
+            | ProfilerStartMessage
+            | ProfilerStopMessage
+            | AdminMessage
+            | RequestUpdateMessage
         ),
     ) -> None:
         for q in self._follower_work_queues:
@@ -140,6 +145,7 @@ class TPFollowerControlPlane:
         | ShutdownMessage
         | ProfilerStartMessage
         | ProfilerStopMessage
+        | RequestUpdateMessage
         | TPWorkMessage
     ):
         msg = await self._recv_from_queue(self._work_queue)
@@ -150,6 +156,7 @@ class TPFollowerControlPlane:
                 ShutdownMessage,
                 ProfilerStartMessage,
                 ProfilerStopMessage,
+                RequestUpdateMessage,
                 TPWorkMessage,
             ),
         ):

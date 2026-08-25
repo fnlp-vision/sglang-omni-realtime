@@ -289,7 +289,9 @@ def test_backend_inventory_falls_back_to_standard_nixl_module(monkeypatch) -> No
     monkeypatch.setattr(
         gpu_diagnostics,
         "_module_import_error",
-        lambda module: "ModuleNotFoundError" if module.startswith("nixl_cu13") else None,
+        lambda module: (
+            "ModuleNotFoundError" if module.startswith("nixl_cu13") else None
+        ),
     )
     monkeypatch.setattr(
         gpu_diagnostics,

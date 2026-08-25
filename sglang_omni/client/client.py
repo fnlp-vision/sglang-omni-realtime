@@ -513,6 +513,9 @@ class Client:
             text = result.get("text")
             if isinstance(text, str):
                 chunk.text = text
+            turn_id = result.get("turn_id")
+            if turn_id is not None:
+                chunk.turn_id = int(turn_id)
             token_ids = result.get("token_ids")
             if token_ids is not None:
                 if not isinstance(token_ids, (list, tuple)):
@@ -566,13 +569,18 @@ class Client:
                 data.modality = chunk.modality
             return data
         if isinstance(data, dict):
-            control_event = data.get("event")
-            if isinstance(control_event, str):
-                chunk.control_event = control_event
-                chunk.control_data = dict(data)
+            data_modality = data.get("modality")
+            if msg.modality == "control" or data_modality == "control":
+                control_event = data.get("event")
+                if isinstance(control_event, str):
+                    chunk.control_event = control_event
+                    chunk.control_data = dict(data)
             text = data.get("text")
             if isinstance(text, str):
                 chunk.text = text
+            turn_id = data.get("turn_id")
+            if turn_id is not None:
+                chunk.turn_id = int(turn_id)
             token_ids = data.get("token_ids")
             if token_ids is not None:
                 if not isinstance(token_ids, (list, tuple)):

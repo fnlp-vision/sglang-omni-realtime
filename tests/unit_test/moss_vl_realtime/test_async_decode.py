@@ -12,12 +12,8 @@ from sglang_omni.models.moss_vl_realtime import (
     MossVLRealtimePhase,
     MossVLRealtimeRuntimeState,
 )
-from sglang_omni.models.moss_vl_realtime.model_runner import (
-    MossVLRealtimeModelRunner,
-)
-from sglang_omni.models.moss_vl_realtime.scheduler import (
-    MossVLRealtimeScheduler,
-)
+from sglang_omni.models.moss_vl_realtime.model_runner import MossVLRealtimeModelRunner
+from sglang_omni.models.moss_vl_realtime.scheduler import MossVLRealtimeScheduler
 from sglang_omni.models.moss_vl_realtime.session_state import (
     MossVLRealtimeSessionController,
 )

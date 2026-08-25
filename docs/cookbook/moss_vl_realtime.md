@@ -22,12 +22,23 @@ uv pip install -e .
 
 The validated environment uses SGLang 0.5.16 and Transformers 5.12.1. Keep the
 checkpoint outside the source tree and pass its path with `--model-path`.
+The project acceptance checkpoint is:
+
+```text
+/inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1
+```
+
+Do not substitute `MOSS-VL-0708-Instruct-sglang` for realtime semantic
+validation. That checkpoint can load through the same SGLang model class, but
+on the 1 FPS SB-Pro contract it produces ordinary video descriptions instead
+of the trained `<|silence|>` / event-trigger behavior. A successful model load
+therefore proves framework compatibility, not streaming-model correctness.
 
 ## Start the server
 
 ```bash
 python examples/run_moss_vl_realtime_server.py \
-  --model-path /path/to/moss-vl-realtime-checkpoint \
+  --model-path /inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1 \
   --gpu 0 \
   --host 0.0.0.0 \
   --port 8000
@@ -37,15 +48,26 @@ The default server configuration is the validated single-stream setup:
 
 | Setting | Default | Notes |
 |---|---:|---|
-| Context length | 32768 | Shared by the launcher, pipeline config, stage factory, and engine builder |
-| Static memory fraction | 0.25 | Validated on H200 |
+| Context length | 131072 (128K) | Shared by the launcher, pipeline config, stage factory, and engine builder |
+| Static memory fraction | 0.40 | Leaves enough H200 KV capacity for the 128K request row |
 | Decode CUDA Graph | On | FlashInfer decode; dynamic frame extend remains eager |
-| KV page size | 1 | Use `--kv-page-size` to opt into the validated paged path |
-| Async decode | Off | Optional `--enable-async-decode`; requires page size 1 |
+| KV page size | 1 | Fixed; realtime does not patch SGLang's paged allocator |
+| Async decode | Off | Optional `--enable-async-decode` |
 | Overlap scheduling | Off | Not supported by the realtime update invariants |
 
 Use `--disable-decode-cuda-graph` to run eager decode. When decode Graph is on,
 the launcher only accepts the FlashInfer decode backend.
+
+Before Uvicorn starts listening, the launcher opens an internal temporary
+request and processes one generated 640 x 352 RGB frame through the normal
+realtime update path. Startup only continues after `input.frame.processed`, so
+the first external WebSocket does not pay the one-time vision/JIT setup cost.
+The warmup request is then aborted and its shared-memory frame is cleaned up.
+It is excluded from radix-prefix insertion and does not consume the single
+user-session slot after startup, so its internal KV cannot cross into a real
+streaming session.
+Use `--disable-startup-warmup` only to isolate startup problems; warmup remains
+enabled by default.
 
 ## Send timestamped frames
 
@@ -92,9 +114,39 @@ Frame metadata contains `seq_no`, video `timestamp`, optional `prompt`, `final`,
 and `mime_type`. Prompt-only updates use `input.prompt` and the same ordered
 sequence number space.
 
+### Text barge-in and turns
+
+There is no separate turn-interrupt input. Any `input.prompt`, or an
+`input.frame` carrying a non-empty `prompt`, atomically closes the current
+assistant turn and opens the next user/assistant turn in the same persistent
+request. The appended training-format text is:
+
+```text
+<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
+```
+
+The scheduler applies the update at the next safe token boundary, retains the
+existing text and vision KV, and commits the prompt extend before confirming
+the transition. It does not abort the request or recreate the WebSocket.
+Already-running CUDA work is cooperative rather than forcibly cancelled.
+
+The observable event order is:
+
+```text
+input.prompt.accepted (or input.frame.accepted)
+response.turn.interrupted  turn_id=N, next_turn_id=N+1
+input.prompt.processed (or input.frame.processed)  turn_id=N+1
+response.text.delta  turn_id=N+1
+```
+
+`session.created`, `session.ready`, every text delta, and `response.done` carry
+a `turn_id`. Clients should stop rendering or speaking the old turn as soon as
+they submit the new prompt, and use the server-confirmed
+`response.turn.interrupted` boundary to reject any stale turn output.
+
 ### Backpressure
 
-The input queue defaults to 32 events and is configurable from 1 to 256. When it
+The input queue defaults to 4 events and is configurable from 1 to 256. When it
 is full, the server delays `input.frame.ready`; a conforming client keeps the
 next frame on the producer side until capacity is released. The server does not
 silently drop frames and does not create an unbounded overflow queue.
@@ -129,6 +181,6 @@ python -m pytest -q \
 ```
 
 The semantic acceptance baseline uses real 1 FPS streams. Decode Graph, eager
-decode, paged KV, and optional async decode must preserve greedy output against
+decode, and optional async decode must preserve greedy output against
 that baseline. Higher FPS is an exposed producer-control capability, not a
 model-accuracy acceptance matrix.

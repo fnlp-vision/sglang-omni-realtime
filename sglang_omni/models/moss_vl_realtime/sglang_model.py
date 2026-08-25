@@ -8,9 +8,7 @@ from typing import Any
 
 from sglang.srt.models.moss_vl import MossVLForConditionalGeneration
 
-from sglang_omni.models.moss_vl_realtime.segment import (
-    REALTIME_FULL_GRID_THW_KEY,
-)
+from sglang_omni.models.moss_vl_realtime.segment import REALTIME_FULL_GRID_THW_KEY
 
 
 @contextmanager

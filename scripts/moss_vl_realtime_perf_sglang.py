@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--measure-frames", type=int, default=8)
     parser.add_argument("--decode-tokens", type=int, default=64)
     parser.add_argument("--max-new-tokens", type=int, default=2048)
-    parser.add_argument("--input-queue-capacity", type=int, default=32)
+    parser.add_argument("--input-queue-capacity", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=120.0)
     return parser.parse_args()
 
@@ -188,7 +188,9 @@ async def connect_session(args: argparse.Namespace) -> Session:
             await asyncio.sleep(0.5)
 
 
-async def measure_prefill(args: argparse.Namespace, case: dict[str, Any]) -> list[float]:
+async def measure_prefill(
+    args: argparse.Namespace, case: dict[str, Any]
+) -> list[float]:
     samples: list[float] = []
     for _ in range(args.prefill_reps):
         session = await connect_session(args)
@@ -215,15 +217,13 @@ async def measure_prefill(args: argparse.Namespace, case: dict[str, Any]) -> lis
     return samples
 
 
-async def measure_session(args: argparse.Namespace, case: dict[str, Any]) -> dict[str, Any]:
-    frame_events = [
-        event for event in case["events"] if event.get("type") == "frame"
-    ]
+async def measure_session(
+    args: argparse.Namespace, case: dict[str, Any]
+) -> dict[str, Any]:
+    frame_events = [event for event in case["events"] if event.get("type") == "frame"]
     needed = args.warmup_frames + args.measure_frames
     if len(frame_events) < needed:
-        raise ValueError(
-            f"case has {len(frame_events)} frame events, need {needed}"
-        )
+        raise ValueError(f"case has {len(frame_events)} frame events, need {needed}")
     mime_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
     session = await connect_session(args)
@@ -241,9 +241,7 @@ async def measure_session(args: argparse.Namespace, case: dict[str, Any]) -> dic
         )
         # Prefill latency for this session is not reported here; the dedicated
         # fresh-session repetitions in measure_prefill carry that metric.
-        await session.wait_for(
-            "session.ready", timeout=args.timeout, after=cursor
-        )
+        await session.wait_for("session.ready", timeout=args.timeout, after=cursor)
 
         async def push_frame(event: dict[str, Any], *, final: bool) -> dict[str, float]:
             path = Path(event["frame_path"])
@@ -312,9 +310,7 @@ async def measure_session(args: argparse.Namespace, case: dict[str, Any]) -> dic
             later - earlier for earlier, later in itertools.pairwise(delta_times)
         ]
         tpot = summarize(intervals)
-        gap_flag = bool(
-            tpot.get("max") and tpot["max"] > 5.0 * tpot["p50"]
-        )
+        gap_flag = bool(tpot.get("max") and tpot["max"] > 5.0 * tpot["p50"])
         return {
             "frame_extend_seconds": {
                 "samples": extend_seconds,

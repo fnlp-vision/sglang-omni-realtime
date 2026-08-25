@@ -5,9 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from sglang_omni.models.moss_vl_realtime.batch_adapter import RUNTIME_STATE_ATTR
-from sglang_omni.models.moss_vl_realtime.config import (
-    MossVLRealtimePipelineConfig,
-)
+from sglang_omni.models.moss_vl_realtime.config import MossVLRealtimePipelineConfig
 from sglang_omni.models.moss_vl_realtime.request_builders import (
     make_moss_vl_realtime_scheduler_adapters,
     make_moss_vl_realtime_stream_output_builder,
@@ -34,6 +32,25 @@ class _Tokenizer:
     def decode(self, token_ids, **kwargs):
         del kwargs
         return "".join({10: "A", 11: "B", 12: "C"}.get(i, "") for i in token_ids)
+
+
+class _TurnBoundaryTokenizer(_Tokenizer):
+    def decode(self, token_ids, **kwargs):
+        del kwargs
+        values = list(token_ids)
+        if values == [10]:
+            return "old"
+        if values == [11]:
+            return "new"
+        if values == [10, 11]:
+            return "boundary-changed"
+        return ""
+
+
+class _SilenceTokenizer(_Tokenizer):
+    def decode(self, token_ids, **kwargs):
+        del kwargs
+        return "".join({10: "A", 11: "B"}.get(i, "") for i in token_ids)
 
 
 def _payload(*, stream: bool) -> StagePayload:
@@ -80,7 +97,10 @@ def test_stream_builder_accumulates_sampled_tokens_not_injected_context() -> Non
         max_new_tokens=100,
     )
     data = request_builder(_payload(stream=True))
-    stream_builder = make_moss_vl_realtime_stream_output_builder(tokenizer=tokenizer)
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(12,),
+    )
     data.req._moss_vl_realtime_processed_event = {
         "seq_no": 3,
         "timestamp": 1.5,
@@ -125,25 +145,198 @@ def test_stream_builder_emits_prompt_processed_control_event() -> None:
         "timestamp": 2.0,
         "prompt": "How many?",
         "final": True,
+        "interrupted_turn_id": 0,
+        "turn_id": 1,
     }
-    stream_builder = make_moss_vl_realtime_stream_output_builder(tokenizer=tokenizer)
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(12,),
+    )
 
     messages = stream_builder("req-1", data, SimpleNamespace(data=None))
 
-    assert messages[0].data["event"] == "input.prompt.processed"
-    assert messages[0].data["seq_no"] == 4
-    assert messages[0].data["final"] is True
+    assert messages[0].data == {
+        "event": "response.turn.interrupted",
+        "turn_id": 0,
+        "next_turn_id": 1,
+        "seq_no": 4,
+        "modality": "control",
+    }
+    assert messages[1].data["event"] == "input.prompt.processed"
+    assert messages[1].data["seq_no"] == 4
+    assert messages[1].data["final"] is True
+    assert messages[1].data["interrupted_turn_id"] == 0
+    assert messages[1].data["turn_id"] == 1
+    assert data.turn_generated_token_ids == []
+    assert data.turn_emitted_text == ""
+
+
+def test_stream_builder_decodes_text_within_each_turn() -> None:
+    tokenizer = _TurnBoundaryTokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer,
+        max_new_tokens=100,
+    )
+    data = request_builder(_payload(stream=True))
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(12,),
+    )
+
+    first = stream_builder("req-1", data, SimpleNamespace(data=10))
+    data.req._moss_vl_realtime_processed_event = {
+        "seq_no": 4,
+        "timestamp": 2.0,
+        "prompt": "Interrupt",
+        "final": False,
+        "interrupted_turn_id": 0,
+        "turn_id": 1,
+    }
+    data.runtime_state.turn_id = 1
+    second = stream_builder("req-1", data, SimpleNamespace(data=11))
+
+    assert [message.data["text"] for message in first if "text" in message.data] == [
+        "old"
+    ]
+    assert [message.data["text"] for message in second if "text" in message.data] == [
+        "new"
+    ]
+    assert data.generated_token_ids == [10, 11]
+    assert data.emitted_text == "boundary-changed"
+    assert data.turn_generated_token_ids == [11]
+    assert data.turn_emitted_text == "new"
+
+
+def test_stream_builder_emits_every_silence_without_deduplication() -> None:
+    tokenizer = _SilenceTokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer,
+        max_new_tokens=100,
+    )
+    data = request_builder(_payload(stream=True))
+    data.req._moss_vl_realtime_processed_event = {
+        "seq_no": 5,
+        "timestamp": 3.0,
+        "frame_ref": "shm://frame",
+        "final": False,
+    }
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(12,),
+    )
+
+    first = stream_builder("req-1", data, SimpleNamespace(data=12))
+    second = stream_builder("req-1", data, SimpleNamespace(data=12))
+
+    silence_events = [
+        message.data
+        for message in first + second
+        if message.data.get("event") == "response.turn.silence"
+    ]
+    assert silence_events == [
+        {
+            "event": "response.turn.silence",
+            "turn_id": 0,
+            "seq_no": 5,
+            "timestamp": 3.0,
+            "silence_seq": 0,
+            "modality": "control",
+        },
+        {
+            "event": "response.turn.silence",
+            "turn_id": 0,
+            "seq_no": 5,
+            "timestamp": 3.0,
+            "silence_seq": 1,
+            "modality": "control",
+        },
+    ]
+
+
+def test_stream_builder_silence_tracks_input_and_prompt_turn() -> None:
+    tokenizer = _SilenceTokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer,
+        max_new_tokens=100,
+    )
+    data = request_builder(_payload(stream=True))
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(12,),
+    )
+
+    data.req._moss_vl_realtime_processed_event = {
+        "seq_no": 0,
+        "timestamp": 0.0,
+        "frame_ref": "shm://frame-0",
+        "final": False,
+    }
+    frame_silence = stream_builder("req-1", data, SimpleNamespace(data=12))
+    data.req._moss_vl_realtime_processed_event = {
+        "seq_no": 1,
+        "timestamp": 1.0,
+        "frame_ref": "shm://frame-1",
+        "prompt": "What changed?",
+        "final": False,
+        "interrupted_turn_id": 0,
+        "turn_id": 1,
+    }
+    data.runtime_state.turn_id = 1
+    prompt_silence = stream_builder("req-1", data, SimpleNamespace(data=12))
+
+    events = [
+        message.data
+        for message in frame_silence + prompt_silence
+        if message.data.get("event") == "response.turn.silence"
+    ]
+    assert [
+        (event["seq_no"], event["timestamp"], event["turn_id"]) for event in events
+    ] == [
+        (0, 0.0, 0),
+        (1, 1.0, 1),
+    ]
+
+
+def test_stream_builder_waits_for_complete_multitoken_silence_marker() -> None:
+    tokenizer = _SilenceTokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer,
+        max_new_tokens=100,
+    )
+    data = request_builder(_payload(stream=True))
+    stream_builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer,
+        silence_token_ids=(70, 77),
+    )
+
+    first = stream_builder("req-1", data, SimpleNamespace(data=70))
+    second = stream_builder("req-1", data, SimpleNamespace(data=77))
+
+    assert not [
+        message
+        for message in first
+        if message.data.get("event") == "response.turn.silence"
+    ]
+    silence = [
+        message.data
+        for message in second
+        if message.data.get("event") == "response.turn.silence"
+    ]
+    assert len(silence) == 1
+    assert silence[0]["silence_seq"] == 0
 
 
 def test_pipeline_config_targets_realtime_stage() -> None:
     config = MossVLRealtimePipelineConfig(model_path="/models/moss-vl")
     assert config.entry_stage == "moss_vl_realtime"
+    assert type(config).supports_video_realtime is True
+    assert "MossVLForConditionalGeneration" not in type(config).architecture_aliases
     assert config.stages[0].factory.endswith(
         "moss_vl_realtime.stages.create_sglang_moss_vl_realtime_executor"
     )
     factory_args = config.stages[0].factory_args
-    assert factory_args["context_length"] == 32768
-    assert factory_args["mem_fraction_static"] == 0.25
+    assert factory_args["context_length"] == 131072
+    assert factory_args["mem_fraction_static"] == 0.40
     assert factory_args["disable_cuda_graph"] is False
     assert factory_args["page_size"] == 1
     assert factory_args["enable_async_decode"] is False
@@ -164,3 +357,17 @@ def test_request_builder_marks_benchmark_ignore_eos() -> None:
 
     default_data = request_builder(_payload(stream=True))
     assert not hasattr(default_data.req, "_moss_vl_realtime_keep_ignore_eos")
+
+
+def test_request_builder_keeps_warmup_out_of_radix_cache() -> None:
+    tokenizer = _Tokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer,
+        max_new_tokens=100,
+    )
+
+    warmup_payload = _payload(stream=True)
+    warmup_payload.request.params["realtime_warmup"] = True
+
+    assert request_builder(warmup_payload).req.skip_radix_cache_insert is True
+    assert request_builder(_payload(stream=True)).req.skip_radix_cache_insert is False

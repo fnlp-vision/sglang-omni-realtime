@@ -86,8 +86,7 @@ def processed_latencies(result: dict[str, Any]) -> list[dict[str, Any]]:
     accepted = {
         int(event["seq_no"]): float(event["elapsed_seconds"])
         for event in result.get("events", [])
-        if event.get("type")
-        in ("input.frame.accepted", "input.prompt.accepted")
+        if event.get("type") in ("input.frame.accepted", "input.prompt.accepted")
     }
     records = []
     for event in result.get("events", []):
@@ -123,9 +122,7 @@ def latency_stats(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
-def transport_checks(
-    case: dict[str, Any], result: dict[str, Any]
-) -> dict[str, Any]:
+def transport_checks(case: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     expected_frames = int(case["frame_count"])
     expected_prompts = sum(event["type"] == "prompt" for event in case["events"])
     if result.get("backend") == "sglang-omni":
@@ -212,9 +209,7 @@ def main() -> None:
         )
 
     all_latency_records = [
-        record
-        for summary in summaries
-        for record in summary["processed_latencies"]
+        record for summary in summaries for record in summary["processed_latencies"]
     ]
     frame_latencies = [
         record for record in all_latency_records if record["type"] == "frame"

@@ -21,8 +21,8 @@ def _stages() -> list[StageConfig]:
                 "device": "cuda:0",
                 "max_running_requests": 1,
                 "max_new_tokens": 4096,
-                "context_length": 32768,
-                "mem_fraction_static": 0.25,
+                "context_length": 131072,
+                "mem_fraction_static": 0.40,
                 "disable_cuda_graph": False,
                 "page_size": 1,
                 "enable_async_decode": False,
@@ -35,9 +35,7 @@ def _stages() -> list[StageConfig]:
 
 class MossVLRealtimePipelineConfig(PipelineConfig):
     architecture: ClassVar[str] = "MossVLRealtimeForConditionalGeneration"
-    architecture_aliases: ClassVar[tuple[str, ...]] = (
-        "MossVLForConditionalGeneration",
-    )
+    supports_video_realtime: ClassVar[bool] = True
 
     model_path: str
     entry_stage: str = "moss_vl_realtime"

@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--client", type=Path, required=True)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--fps", type=float)
-    parser.add_argument("--input-queue-capacity", type=int, default=32)
+    parser.add_argument("--input-queue-capacity", type=int, default=4)
     return parser.parse_args()
 
 

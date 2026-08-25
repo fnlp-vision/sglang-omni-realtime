@@ -3,13 +3,25 @@ from __future__ import annotations
 import asyncio
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from pydantic import ValidationError
 
+import sglang_omni.serve.video_realtime as video_realtime_module
 from sglang_omni.client.types import GenerateChunk
-from sglang_omni.models.moss_vl_realtime.frame_store import SharedMemoryFrameStore
+from sglang_omni.models.moss_vl_realtime.frame_store import (
+    SharedMemoryFrameStore,
+    resolve_shared_memory_frame,
+)
 from sglang_omni.serve.openai_api import create_app
-from sglang_omni.serve.video_realtime import VideoRealtimeSession
+from sglang_omni.serve.video_realtime import (
+    VideoFrameMetadata,
+    VideoPromptInput,
+    VideoRealtimeSession,
+    VideoSessionConfigure,
+    warmup_video_realtime,
+)
 
 
 def _png_bytes() -> bytes:
@@ -26,6 +38,12 @@ class _Client:
 
     async def generate(self, request, request_id=None):
         del request
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={},
+        )
         await self.update_event.wait()
         update = self.updates[0][1]
         control_event = (
@@ -33,6 +51,21 @@ class _Client:
             if update.get("frame_ref") is not None
             else "input.prompt.processed"
         )
+        turn_id = 0
+        turn_data = {}
+        if update.get("prompt") is not None:
+            turn_id = 1
+            turn_data = {"interrupted_turn_id": 0, "turn_id": 1}
+            yield GenerateChunk(
+                request_id=request_id,
+                modality="control",
+                control_event="response.turn.interrupted",
+                control_data={
+                    "turn_id": 0,
+                    "next_turn_id": 1,
+                    "seq_no": update["seq_no"],
+                },
+            )
         yield GenerateChunk(
             request_id=request_id,
             modality="control",
@@ -41,10 +74,16 @@ class _Client:
                 "seq_no": update["seq_no"],
                 "timestamp": update["timestamp"],
                 "final": update["final"],
+                **turn_data,
             },
         )
-        yield GenerateChunk(request_id=request_id, text="car")
-        yield GenerateChunk(request_id=request_id, text="car", finish_reason="stop")
+        yield GenerateChunk(request_id=request_id, text="car", turn_id=turn_id)
+        yield GenerateChunk(
+            request_id=request_id,
+            text="car",
+            finish_reason="stop",
+            turn_id=turn_id,
+        )
 
     async def update_request(self, request_id, data, *, stage_name=None):
         del stage_name
@@ -59,6 +98,12 @@ class _Client:
 class _HoldingClient(_Client):
     async def generate(self, request, request_id=None):
         del request
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={},
+        )
         await asyncio.Event().wait()
         yield GenerateChunk(request_id=request_id)
 
@@ -67,12 +112,192 @@ class _HoldingClient(_Client):
         self.updates.append((request_id, data))
 
 
+class _WarmupClient(_Client):
+    def __init__(self) -> None:
+        super().__init__()
+        self.request = None
+        self.frame_sizes: list[tuple[int, int]] = []
+
+    async def generate(self, request, request_id=None):
+        self.request = request
+        async for chunk in super().generate(request, request_id=request_id):
+            yield chunk
+
+    async def update_request(self, request_id, data, *, stage_name=None):
+        frame = resolve_shared_memory_frame(data["frame_ref"])
+        self.frame_sizes.append(frame.size)
+        await super().update_request(request_id, data, stage_name=stage_name)
+
+
+class _SilenceClient(_Client):
+    async def generate(self, request, request_id=None):
+        del request
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={"turn_id": 0},
+        )
+        await self.update_event.wait()
+        update = self.updates[0][1]
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="input.frame.processed",
+            control_data={
+                "seq_no": update["seq_no"],
+                "timestamp": update["timestamp"],
+                "final": update["final"],
+            },
+        )
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="response.turn.silence",
+            control_data={
+                "turn_id": 0,
+                "seq_no": update["seq_no"],
+                "timestamp": update["timestamp"],
+                "silence_seq": 0,
+            },
+        )
+        yield GenerateChunk(request_id=request_id, finish_reason="stop", turn_id=0)
+
+
+class _RejectingUpdateClient(_HoldingClient):
+    async def update_request(self, request_id, data, *, stage_name=None):
+        del request_id, data, stage_name
+        raise RuntimeError("coordinator rejected active request update")
+
+
+class _CapacityFailureClient(_Client):
+    async def generate(self, request, request_id=None):
+        del request
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={},
+        )
+        await self.update_event.wait()
+        raise RuntimeError("KV layout does not fit in req_to_token row")
+
+
+class _BrokenWebSocket:
+    async def send_json(self, payload):
+        del payload
+        raise RuntimeError("WebSocket is already closed")
+
+
+def test_video_realtime_defaults_to_four_outstanding_inputs() -> None:
+    config = VideoSessionConfigure(type="session.configure")
+    session = VideoRealtimeSession(
+        _BrokenWebSocket(),  # type: ignore[arg-type]
+        client=None,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        frame_store=SharedMemoryFrameStore(),
+    )
+
+    assert config.input_queue_capacity == 4
+    assert session.input_queue_capacity == 4
+
+
+def test_video_realtime_normalizes_or_rejects_blank_prompts() -> None:
+    frame = VideoFrameMetadata(
+        type="input.frame",
+        seq_no=0,
+        timestamp=0.0,
+        mime_type="image/png",
+        prompt="   ",
+    )
+    assert frame.prompt is None
+
+    with pytest.raises(ValidationError, match="non-whitespace"):
+        VideoPromptInput(
+            type="input.prompt",
+            seq_no=0,
+            prompt="   ",
+        )
+
+
+def test_frame_event_construction_failure_releases_reserved_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _BrokenFramePromptEvent:
+        def __init__(self, **kwargs):
+            del kwargs
+            raise ValueError("synthetic event construction failure")
+
+    client = _HoldingClient()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+    manager = app.state.video_realtime_manager
+
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        created = websocket.receive_json()
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+        monkeypatch.setattr(
+            video_realtime_module,
+            "FramePromptEvent",
+            _BrokenFramePromptEvent,
+        )
+        websocket.send_json(
+            {
+                "type": "input.frame",
+                "seq_no": 0,
+                "timestamp": 0.0,
+                "prompt": "What changed?",
+                "mime_type": "image/png",
+            }
+        )
+        assert websocket.receive_json()["type"] == "input.frame.ready"
+        websocket.send_bytes(_png_bytes())
+        error = websocket.receive_json()
+
+        assert error["type"] == "error"
+        assert error["code"] == "invalid_request"
+        assert "synthetic event construction failure" in error["message"]
+        session = manager.sessions[created["session_id"]]
+        assert session.outstanding_seq_nos == set()
+        assert session.accepted_by_seq == {}
+        assert session.frame_refs_by_seq == {}
+        assert dict(manager.frame_store._names_by_request) == {}
+
+
+def test_video_realtime_warmup_processes_one_final_frame() -> None:
+    client = _WarmupClient()
+
+    asyncio.run(
+        warmup_video_realtime(
+            client,  # type: ignore[arg-type]
+            model_name="moss-vl-realtime",
+            timeout_s=1.0,
+        )
+    )
+
+    assert client.request is not None
+    assert client.request.model == "moss-vl-realtime"
+    assert client.request.extra_params == {"realtime_warmup": True}
+    assert client.frame_sizes == [(640, 352)]
+    assert len(client.updates) == 1
+    request_id, event = client.updates[0]
+    assert event["seq_no"] == 0
+    assert event["timestamp"] == 0.0
+    assert event["final"] is True
+    assert client.aborted == [request_id]
+
+
 def test_video_realtime_binary_frame_reaches_request_update() -> None:
     client = _Client()
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
         created = websocket.receive_json()
@@ -84,6 +309,7 @@ def test_video_realtime_binary_frame_reaches_request_update() -> None:
             }
         )
         assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
         websocket.send_json(
             {
                 "type": "input.frame",
@@ -120,12 +346,57 @@ def test_video_realtime_binary_frame_reaches_request_update() -> None:
     assert update["frame_ref"].startswith("shm://")
 
 
+def test_video_realtime_forwards_silence_control_event() -> None:
+    client = _SilenceClient()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        websocket.receive_json()
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(
+            {
+                "type": "input.frame",
+                "seq_no": 0,
+                "timestamp": 2.0,
+                "final": True,
+                "mime_type": "image/png",
+            }
+        )
+        assert websocket.receive_json()["type"] == "input.frame.ready"
+        websocket.send_bytes(_png_bytes())
+        events = []
+        while not any(event["type"] == "response.done" for event in events):
+            events.append(websocket.receive_json())
+
+    event_types = [event["type"] for event in events]
+    assert (
+        event_types.index("input.frame.accepted")
+        < event_types.index("input.frame.processed")
+        < event_types.index("response.turn.silence")
+    )
+    silence = next(
+        event for event in events if event["type"] == "response.turn.silence"
+    )
+    assert silence == {
+        "type": "response.turn.silence",
+        "turn_id": 0,
+        "seq_no": 0,
+        "timestamp": 2.0,
+        "silence_seq": 0,
+    }
+
+
 def test_video_realtime_allows_only_one_websocket() -> None:
     client = _Client()
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
     )
     with (
         TestClient(app) as test_client,
@@ -143,12 +414,13 @@ def test_video_realtime_prompt_only_event_reaches_request_update() -> None:
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
         created = websocket.receive_json()
         websocket.send_json({"type": "session.configure", "prompt": "Watch."})
         assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
         websocket.send_json(
             {
                 "type": "input.prompt",
@@ -157,11 +429,32 @@ def test_video_realtime_prompt_only_event_reaches_request_update() -> None:
                 "final": True,
             }
         )
+        events = []
         event_types = set()
         while "response.done" not in event_types:
-            event_types.add(websocket.receive_json()["type"])
+            event = websocket.receive_json()
+            events.append(event)
+            event_types.add(event["type"])
 
-    assert {"input.prompt.accepted", "input.prompt.processed"} <= event_types
+    assert {
+        "input.prompt.accepted",
+        "response.turn.interrupted",
+        "input.prompt.processed",
+    } <= event_types
+    by_type = {event["type"]: event for event in events}
+    assert [event["type"] for event in events].index("input.prompt.accepted") < [
+        event["type"] for event in events
+    ].index("response.turn.interrupted")
+    assert by_type["response.turn.interrupted"] == {
+        "type": "response.turn.interrupted",
+        "turn_id": 0,
+        "next_turn_id": 1,
+        "seq_no": 0,
+    }
+    assert by_type["input.prompt.processed"]["interrupted_turn_id"] == 0
+    assert by_type["input.prompt.processed"]["turn_id"] == 1
+    assert by_type["response.text.delta"]["turn_id"] == 1
+    assert by_type["response.done"]["turn_id"] == 1
     request_id, update = client.updates[0]
     assert request_id == created["request_id"]
     assert update["session_id"] == created["session_id"]
@@ -175,12 +468,13 @@ def test_video_realtime_accepts_multiple_inflight_frames() -> None:
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
         assert websocket.receive_json()["type"] == "session.created"
         websocket.send_json({"type": "session.configure"})
         assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
         websocket.send_json(
             {
                 "type": "input.frame",
@@ -232,6 +526,120 @@ def test_video_realtime_applies_bounded_input_backpressure() -> None:
     asyncio.run(_run())
 
 
+def test_video_realtime_rejects_input_before_session_ready() -> None:
+    async def _run() -> None:
+        session = VideoRealtimeSession(
+            None,  # type: ignore[arg-type]
+            client=None,  # type: ignore[arg-type]
+            model_name="moss-vl-realtime",
+            frame_store=SharedMemoryFrameStore(),
+        )
+        session.configured = True
+
+        with pytest.raises(ValueError, match="session.ready"):
+            await session.handle_prompt(
+                VideoPromptInput(
+                    type="input.prompt",
+                    seq_no=0,
+                    prompt="How many?",
+                )
+            )
+
+    asyncio.run(_run())
+
+
+def test_video_realtime_reports_input_submission_failure() -> None:
+    client = _RejectingUpdateClient()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        created = websocket.receive_json()
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json(
+            {
+                "type": "input.prompt",
+                "seq_no": 0,
+                "prompt": "How many?",
+            }
+        )
+        error = websocket.receive_json()
+
+    assert error["type"] == "error"
+    assert error["code"] == "input_submission_failed"
+    assert "coordinator rejected" in error["message"]
+    assert created["request_id"] in client.aborted
+    assert app.state.video_realtime_manager.sessions == {}
+
+
+def test_video_realtime_capacity_failure_cleans_resources_and_allows_reconnect() -> (
+    None
+):
+    client = _CapacityFailureClient()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+    manager = app.state.video_realtime_manager
+
+    with TestClient(app) as test_client:
+        with test_client.websocket_connect("/v1/video/realtime") as websocket:
+            created = websocket.receive_json()
+            websocket.send_json({"type": "session.configure"})
+            assert websocket.receive_json()["type"] == "session.configured"
+            assert websocket.receive_json()["type"] == "session.ready"
+            websocket.send_json(
+                {
+                    "type": "input.frame",
+                    "seq_no": 0,
+                    "timestamp": 0.0,
+                    "mime_type": "image/png",
+                }
+            )
+            assert websocket.receive_json()["type"] == "input.frame.ready"
+            websocket.send_bytes(_png_bytes())
+            events = []
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "error":
+                    break
+
+        assert events[-1]["code"] == "response_failed"
+        assert "KV layout does not fit" in events[-1]["message"]
+        assert created["request_id"] in client.aborted
+        assert manager.sessions == {}
+        assert dict(manager.frame_store._names_by_request) == {}
+
+        with test_client.websocket_connect("/v1/video/realtime") as replacement:
+            assert replacement.receive_json()["type"] == "session.created"
+
+
+def test_video_realtime_error_delivery_is_safe_after_disconnect() -> None:
+    async def _run() -> None:
+        session = VideoRealtimeSession(
+            _BrokenWebSocket(),  # type: ignore[arg-type]
+            client=None,  # type: ignore[arg-type]
+            model_name="moss-vl-realtime",
+            frame_store=SharedMemoryFrameStore(),
+        )
+
+        delivered = await session.send_error_safely(
+            "backend failed",
+            code="response_failed",
+        )
+
+        assert delivered is False
+
+    asyncio.run(_run())
+
+
 class _RequestCaptureClient(_Client):
     captured_request = None
 
@@ -246,7 +654,7 @@ def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
         video_realtime_benchmark_mode=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
@@ -259,6 +667,7 @@ def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
             }
         )
         assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
         websocket.send_json(
             {
                 "type": "input.prompt",
@@ -280,7 +689,7 @@ def test_video_realtime_rejects_benchmark_option_in_production_mode() -> None:
     app = create_app(
         client,  # type: ignore[arg-type]
         model_name="moss-vl-realtime",
-        architectures=["MossVLRealtimeForConditionalGeneration"],
+        enable_video_realtime=True,
     )
     with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
         websocket.receive_json()

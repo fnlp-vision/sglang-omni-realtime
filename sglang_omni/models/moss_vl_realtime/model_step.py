@@ -8,9 +8,7 @@ from typing import Any
 
 import torch
 
-from sglang_omni.models.moss_vl_realtime.payload_types import (
-    build_realtime_append_text,
-)
+from sglang_omni.models.moss_vl_realtime.payload_types import build_realtime_append_text
 
 
 @dataclass(slots=True)

@@ -301,6 +301,7 @@ class Stage:
                             ProfilerStartMessage,
                             ProfilerStopMessage,
                             AdminMessage,
+                            RequestUpdateMessage,
                         ),
                     )
                 ):
@@ -308,7 +309,7 @@ class Stage:
                 if isinstance(msg, ShutdownMessage):
                     break
                 if isinstance(msg, TPWorkMessage):
-                    await self._execute(msg.data)
+                    await self._on_tp_work(msg)
                     continue
                 await self._handle_message(msg)
         except asyncio.CancelledError:
@@ -417,6 +418,12 @@ class Stage:
 
         payload = msg.data  # StagePayload from coordinator
         await self._execute(payload)
+
+    async def _on_tp_work(self, msg: TPWorkMessage) -> None:
+        if msg.request_id in self._aborted:
+            return
+        self._active_requests.add(msg.request_id)
+        await self._execute(msg.data)
 
     def _on_request_update(self, msg: RequestUpdateMessage) -> None:
         if msg.request_id in self._aborted:

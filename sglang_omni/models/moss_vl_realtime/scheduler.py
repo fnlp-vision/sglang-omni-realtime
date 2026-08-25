@@ -15,10 +15,11 @@ from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch
 from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats
 from sglang.srt.observability.metrics_collector import QueueCount
 
-from sglang_omni.models.moss_vl_realtime.batch_adapter import RUNTIME_STATE_ATTR
-from sglang_omni.models.moss_vl_realtime.frame_store import (
-    resolve_shared_memory_frame,
+from sglang_omni.models.moss_vl_realtime.batch_adapter import (
+    RUNTIME_STATE_ATTR,
+    MossVLRealtimeScheduleBatch,
 )
+from sglang_omni.models.moss_vl_realtime.frame_store import resolve_shared_memory_frame
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimePhase,
@@ -50,17 +51,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
     ) -> None:
         if kwargs.get("enable_overlap", False):
             raise ValueError("MOSS-VL realtime requires overlap scheduling disabled")
-        if kwargs.get("enable_async_decode", False):
-            server_args = kwargs.get("server_args")
-            if server_args is not None and int(server_args.page_size) > 1:
-                # The overrun step-slot free is only implemented for
-                # page_size == 1 (OmniScheduler._free_overrun_step_slots).
-                raise ValueError(
-                    "MOSS-VL realtime async decode requires page_size == 1"
-                )
         server_args = kwargs.get("server_args")
-        if server_args is not None and int(server_args.page_size) < 1:
-            raise ValueError("MOSS-VL realtime requires a positive page_size")
+        if server_args is not None and int(server_args.page_size) != 1:
+            raise ValueError("MOSS-VL realtime requires page_size == 1")
         self.segment_builder = segment_builder
         self.frame_resolver = frame_resolver or resolve_local_frame
         self.realtime_sessions = MossVLRealtimeSessionController()
@@ -184,7 +177,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
             return None
 
         reqs = [req for req, _, _ in selected]
-        extend_batch = ScheduleBatch.init_new(
+        extend_batch = MossVLRealtimeScheduleBatch.init_new(
             reqs=reqs,
             req_to_token_pool=self.req_to_token_pool,
             token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
@@ -437,6 +430,11 @@ def _append_segment_to_request(
     )
     req._moss_vl_realtime_staged_full_grid_thw = segment.full_grid_thw.clone()
     req._moss_vl_realtime_staged_event = segment.event.to_dict()
+    if segment.event.prompt is not None:
+        req._moss_vl_realtime_staged_turn_transition = {
+            "interrupted_turn_id": state.turn_id,
+            "turn_id": state.turn_id + 1,
+        }
     if segment.event.final:
         req._moss_vl_realtime_final_extend = True
     req.output_ids.extend(segment.raw_append_ids)
@@ -466,6 +464,8 @@ def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     del req._moss_vl_realtime_staged_visible_frame_counts
     del req._moss_vl_realtime_staged_full_grid_thw
     del req._moss_vl_realtime_staged_event
+    if hasattr(req, "_moss_vl_realtime_staged_turn_transition"):
+        del req._moss_vl_realtime_staged_turn_transition
     if hasattr(req, "_moss_vl_realtime_final_extend"):
         del req._moss_vl_realtime_final_extend
     req._refresh_fill_ids()

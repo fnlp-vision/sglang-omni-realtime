@@ -51,6 +51,7 @@ def test_compute_realtime_mrope_for_one_frame() -> None:
 
 
 @pytest.mark.skipif(not __import__("torch").cuda.is_available(), reason="requires CUDA")
+@pytest.mark.gpu
 def test_split_decode_then_extend_matches_tf512_packed_step() -> None:
     torch = pytest.importorskip("torch")
     transformers = pytest.importorskip("transformers")

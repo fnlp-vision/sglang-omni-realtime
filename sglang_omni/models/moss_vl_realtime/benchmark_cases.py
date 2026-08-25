@@ -40,7 +40,9 @@ def _singleton_timestamps(record: dict[str, Any]) -> tuple[str, list[list[float]
             raise TypeError(f"segment {index} timestamp must be numeric")
         timestamp = float(timestamp)
         if not math.isfinite(timestamp) or timestamp < 0:
-            raise ValueError(f"segment {index} timestamp must be finite and non-negative")
+            raise ValueError(
+                f"segment {index} timestamp must be finite and non-negative"
+            )
         segments.append([timestamp])
     return video_path, segments
 
@@ -83,7 +85,9 @@ def compile_training_record(
                 initial_prompt = content
             else:
                 if pending_prompt is not None:
-                    raise ValueError("consecutive user messages cannot map to one frame event")
+                    raise ValueError(
+                        "consecutive user messages cannot map to one frame event"
+                    )
                 pending_prompt = content
             continue
         if role != "assistant":
@@ -136,9 +140,7 @@ def compile_training_record(
         event["seq_no"] = seq_no
         event["final"] = seq_no == len(events) - 1
 
-    timestamps = [
-        event["timestamp"] for event in events if event["type"] == "frame"
-    ]
+    timestamps = [event["timestamp"] for event in events if event["type"] == "frame"]
     intervals = [right - left for left, right in pairwise(timestamps)]
     one_fps = all(math.isclose(value, 1.0, abs_tol=1e-6) for value in intervals)
     return {

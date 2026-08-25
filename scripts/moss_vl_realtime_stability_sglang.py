@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-window-s", type=float, default=20.0)
     parser.add_argument("--disconnect-at-s", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=2048)
-    parser.add_argument("--input-queue-capacity", type=int, default=32)
+    parser.add_argument("--input-queue-capacity", type=int, default=4)
     parser.add_argument("--mem-sample-s", type=float, default=2.0)
     parser.add_argument("--gpu-index", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=60.0)

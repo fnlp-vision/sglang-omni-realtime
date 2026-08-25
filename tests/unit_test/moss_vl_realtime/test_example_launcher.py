@@ -4,6 +4,8 @@ import importlib.util
 import os
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).parents[3]
 _LAUNCHER_PATH = _REPO_ROOT / "examples" / "run_moss_vl_realtime_server.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -41,9 +43,10 @@ def test_launcher_async_decode_flag_defaults_off(monkeypatch) -> None:
 
     assert args.enable_async_decode is False
     assert args.decode_cuda_graph is True
-    assert args.context_length == 32768
-    assert args.mem_fraction_static == 0.25
+    assert args.context_length == 131072
+    assert args.mem_fraction_static == 0.40
     assert args.enable_benchmark_mode is False
+    assert args.disable_startup_warmup is False
 
 
 def test_launcher_async_decode_flag_opt_in(monkeypatch) -> None:
@@ -58,15 +61,12 @@ def test_launcher_benchmark_mode_is_explicit_opt_in(monkeypatch) -> None:
     assert args.enable_benchmark_mode is True
 
 
-def test_launcher_async_decode_requires_page_size_one(monkeypatch) -> None:
-    import pytest
-
+def test_launcher_does_not_expose_paged_kv(monkeypatch) -> None:
     with pytest.raises(SystemExit):
         _parse(
             monkeypatch,
             "--model-path",
             "/models/x",
-            "--enable-async-decode",
             "--kv-page-size",
             "16",
         )

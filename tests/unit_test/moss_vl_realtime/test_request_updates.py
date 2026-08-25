@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 
 import pytest
 
@@ -8,11 +9,13 @@ from sglang_omni.models.moss_vl_realtime import (
     FramePromptEvent,
     MossVLRealtimeSessionController,
 )
-from sglang_omni.pipeline.control_plane import (
-    deserialize_message,
-    serialize_message,
-)
+from sglang_omni.pipeline.control_plane import deserialize_message, serialize_message
 from sglang_omni.pipeline.coordinator import Coordinator
+from sglang_omni.pipeline.tp_control import (
+    TPFollowerControlPlane,
+    TPLeaderFanout,
+    TPWorkMessage,
+)
 from sglang_omni.proto import RequestUpdateMessage
 from sglang_omni.scheduling.messages import IncomingMessage
 from sglang_omni.scheduling.omni_scheduler import OmniScheduler
@@ -125,6 +128,48 @@ def test_stage_delivers_request_update_to_scheduler_inbox() -> None:
             RequestUpdateMessage("late-request", _event(0, 0.0).to_dict())
         )
         assert scheduler.inbox.empty()
+
+    asyncio.run(_run())
+
+
+def test_request_update_fans_out_to_tp_followers() -> None:
+    async def _run() -> None:
+        work_queue: queue.Queue = queue.Queue()
+        fanout = TPLeaderFanout(
+            "decode",
+            follower_work_queues=[work_queue],
+            follower_abort_queues=[],
+        )
+        message = RequestUpdateMessage("req-1", _event(0, 0.0).to_dict())
+
+        await fanout.fanout_control(message)
+
+        follower = TPFollowerControlPlane(
+            stage_name="decode",
+            work_queue=work_queue,
+            abort_queue=queue.Queue(),
+        )
+        assert await follower.recv() == message
+        follower.close()
+
+    asyncio.run(_run())
+
+
+def test_tp_work_marks_request_active_before_updates() -> None:
+    async def _run() -> None:
+        scheduler = FakeScheduler()
+        stage = make_stage(name="decode", role="follower", scheduler=scheduler)
+        payload = type("Payload", (), {"request_id": "req-1"})()
+
+        await stage._on_tp_work(TPWorkMessage("req-1", payload))
+        await stage._handle_message(
+            RequestUpdateMessage("req-1", _event(0, 0.0).to_dict())
+        )
+
+        first = scheduler.inbox.get_nowait()
+        second = scheduler.inbox.get_nowait()
+        assert first.type == "new_request"
+        assert second.type == "request_update"
 
     asyncio.run(_run())
 

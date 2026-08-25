@@ -26,18 +26,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--gpu", type=int, default=0)
-    parser.add_argument("--mem-fraction-static", type=float, default=0.25)
-    parser.add_argument("--context-length", type=int, default=32768)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.40)
+    parser.add_argument("--context-length", type=int, default=131072)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--parked-request-timeout", type=float, default=300.0)
-    parser.add_argument(
-        "--kv-page-size",
-        type=int,
-        default=1,
-        help="KV cache page size for paged allocation (must divide 4096). "
-        "Default 1 keeps token-granular allocation; >1 enables the "
-        "page-aware paths validated in P10.4.",
-    )
     parser.add_argument(
         "--enable-decode-cuda-graph",
         dest="decode_cuda_graph",
@@ -65,7 +57,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Launch decode step N+1 before resolving step N (lookahead). "
-        "Requires --kv-page-size 1. Default off; validated in P10.5.",
+        "Default off; validated in P10.5.",
     )
     parser.add_argument(
         "--enable-benchmark-mode",
@@ -74,9 +66,12 @@ def parse_args() -> argparse.Namespace:
         help="Allow benchmark-only WebSocket options such as "
         "benchmark_ignore_eos. Never enable for production traffic.",
     )
+    parser.add_argument(
+        "--disable-startup-warmup",
+        action="store_true",
+        help="Skip the default internal frame warmup for diagnostics.",
+    )
     args = parser.parse_args()
-    if args.enable_async_decode and args.kv_page_size != 1:
-        parser.error("--enable-async-decode requires --kv-page-size 1")
     if args.decode_cuda_graph and args.decode_attention_backend not in (
         None,
         "flashinfer",
@@ -93,9 +88,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     _ensure_python_bin_on_path()
-    from sglang_omni.models.moss_vl_realtime.config import (
-        MossVLRealtimePipelineConfig,
-    )
+    from sglang_omni.models.moss_vl_realtime.config import MossVLRealtimePipelineConfig
     from sglang_omni.serve import launch_server
 
     config = MossVLRealtimePipelineConfig(model_path=args.model_path)
@@ -110,7 +103,7 @@ def main() -> None:
             "max_new_tokens": args.max_new_tokens,
             "parked_request_timeout_s": args.parked_request_timeout,
             "disable_cuda_graph": not args.decode_cuda_graph,
-            "page_size": args.kv_page_size,
+            "page_size": 1,
             "enable_async_decode": args.enable_async_decode,
         }
     )
@@ -127,6 +120,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         model_name="moss-vl-realtime",
+        video_realtime_warmup=not args.disable_startup_warmup,
         video_realtime_benchmark_mode=args.enable_benchmark_mode,
     )
 

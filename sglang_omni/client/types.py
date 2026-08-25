@@ -144,6 +144,7 @@ class GenerateChunk:
     sample_rate: int | None = None
     control_event: str | None = None
     control_data: dict[str, Any] | None = None
+    turn_id: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -164,6 +165,7 @@ class GenerateChunk:
             "sample_rate": self.sample_rate,
             "control_event": self.control_event,
             "control_data": self.control_data,
+            "turn_id": self.turn_id,
         }
 
 

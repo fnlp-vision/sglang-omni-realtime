@@ -41,7 +41,11 @@ class SharedMemoryFrameStore:
 
     def discard(self, request_id: str, frame_ref: str) -> None:
         name = _shared_memory_name(frame_ref)
-        self._names_by_request.get(request_id, set()).discard(name)
+        names = self._names_by_request.get(request_id)
+        if names is not None:
+            names.discard(name)
+            if not names:
+                self._names_by_request.pop(request_id, None)
         _unlink_if_present(name)
 
     def forget(self, request_id: str, frame_ref: str) -> None:

@@ -39,8 +39,14 @@ class MossVLRealtimeModelRunner(ModelRunner):
         del result, forward_batch, requests
         if is_moss_vl_realtime_batch(schedule_batch):
             commit_moss_vl_realtime_batch(schedule_batch)
-            for req in schedule_batch.reqs:
+            for index, req in enumerate(schedule_batch.reqs):
                 state = getattr(req, RUNTIME_STATE_ATTR)
+                if state.req_pool_index is None:
+                    state.bind_req_pool_index(int(req.req_pool_idx))
+                    decoder_length = int(schedule_batch.seq_lens_cpu[index].item())
+                    state.decoder_length = decoder_length
+                    state.next_mrope_position = decoder_length
+                    state.phase = MossVLRealtimePhase.DECODING
                 state.pending_token_id = None
                 staged_event = getattr(
                     req,
@@ -48,7 +54,17 @@ class MossVLRealtimeModelRunner(ModelRunner):
                     None,
                 )
                 if staged_event is not None:
-                    req._moss_vl_realtime_processed_event = staged_event
+                    processed_event = dict(staged_event)
+                    turn_transition = getattr(
+                        req,
+                        "_moss_vl_realtime_staged_turn_transition",
+                        None,
+                    )
+                    if turn_transition is not None:
+                        processed_event.update(turn_transition)
+                        state.turn_id = int(turn_transition["turn_id"])
+                        del req._moss_vl_realtime_staged_turn_transition
+                    req._moss_vl_realtime_processed_event = processed_event
                     del req._moss_vl_realtime_staged_event
                 for attr_name, state_name in (
                     ("_moss_vl_realtime_staged_mrope_positions", "mrope_positions"),

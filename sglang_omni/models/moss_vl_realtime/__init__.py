@@ -3,6 +3,7 @@
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     KV_TRANSACTION_ATTR,
     RUNTIME_STATE_ATTR,
+    MossVLRealtimeScheduleBatch,
     commit_moss_vl_realtime_batch,
     is_moss_vl_realtime_batch,
     prepare_moss_vl_realtime_encoder_info_extend,
@@ -10,14 +11,11 @@ from sglang_omni.models.moss_vl_realtime.batch_adapter import (
 )
 from sglang_omni.models.moss_vl_realtime.kv_layout import (
     MossVLRealtimeKVLayout,
-    count_shared_tail_page_slots,
     insert_encoder_slots,
     read_req_to_token_layout,
     write_req_to_token_layout,
 )
-from sglang_omni.models.moss_vl_realtime.model_runner import (
-    MossVLRealtimeModelRunner,
-)
+from sglang_omni.models.moss_vl_realtime.model_runner import MossVLRealtimeModelRunner
 from sglang_omni.models.moss_vl_realtime.model_step import (
     MossVLRealtimeRequestState,
     MossVLRealtimeStepper,
@@ -58,6 +56,7 @@ __all__ = [
     "MossVLRealtimePhase",
     "MossVLRealtimeRequestState",
     "MossVLRealtimeRuntimeState",
+    "MossVLRealtimeScheduleBatch",
     "MossVLRealtimeSegment",
     "MossVLRealtimeSegmentBuilder",
     "MossVLRealtimeSession",
@@ -69,7 +68,6 @@ __all__ = [
     "commit_moss_vl_realtime_batch",
     "compute_realtime_mrope_for_segment",
     "compute_visible_frame_counts",
-    "count_shared_tail_page_slots",
     "insert_encoder_slots",
     "is_moss_vl_realtime_batch",
     "prepare_moss_vl_realtime_encoder_info_extend",

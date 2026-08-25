@@ -59,7 +59,9 @@ def resolve_frame_interval(args: argparse.Namespace, case: dict[str, Any]) -> fl
     return 1.0
 
 
-def drain_outputs(session: Any, outputs: list[dict[str, Any]], started_at: float) -> None:
+def drain_outputs(
+    session: Any, outputs: list[dict[str, Any]], started_at: float
+) -> None:
     while True:
         chunk = session.poll_output(timeout=0.0)
         if chunk is None:
@@ -88,7 +90,9 @@ def wait_and_drain(
         time.sleep(min(0.05, remaining))
 
 
-def run_case(model: Any, processor: Any, case: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+def run_case(
+    model: Any, processor: Any, case: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
     frame_interval = resolve_frame_interval(args, case)
     if frame_interval < 0:
         raise ValueError("--frame-interval must be non-negative")

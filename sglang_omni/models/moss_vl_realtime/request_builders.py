@@ -11,9 +11,7 @@ from sglang.srt.managers.schedule_batch import Req
 from sglang.srt.sampling.sampling_params import SamplingParams
 
 from sglang_omni.models.moss_vl_realtime.batch_adapter import RUNTIME_STATE_ATTR
-from sglang_omni.models.moss_vl_realtime.runtime_state import (
-    MossVLRealtimeRuntimeState,
-)
+from sglang_omni.models.moss_vl_realtime.runtime_state import MossVLRealtimeRuntimeState
 from sglang_omni.proto import StagePayload
 from sglang_omni.scheduling.messages import OutgoingMessage
 from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
@@ -33,6 +31,11 @@ class MossVLRealtimeRequestData(SGLangARRequestData):
     initial_input_ids: list[int] = field(default_factory=list)
     generated_token_ids: list[int] = field(default_factory=list)
     emitted_text: str = ""
+    turn_generated_token_ids: list[int] = field(default_factory=list)
+    turn_emitted_text: str = ""
+    current_input_seq_no: int | None = None
+    current_input_timestamp: float | None = None
+    silence_output_seq: int = 0
     ready_emitted: bool = False
 
 
@@ -95,6 +98,9 @@ def make_moss_vl_realtime_scheduler_adapters(
             session_id=session_id,
         )
         setattr(req, RUNTIME_STATE_ATTR, state)
+        if params.get("realtime_warmup"):
+            # Warmup KV must never become a cross-session radix prefix.
+            req.skip_radix_cache_insert = True
         if params.get("benchmark_ignore_eos"):
             # Benchmark mode: keep ignore_eos=True even after the final extend so
             # the request decodes exactly max_new_tokens without an EOS stop.
@@ -121,6 +127,7 @@ def make_moss_vl_realtime_scheduler_adapters(
                 "completion_tokens": len(data.generated_token_ids),
                 "finish_reason": data.finish_reason,
                 "modality": "text",
+                "turn_id": data.runtime_state.turn_id,
             },
         )
 
@@ -130,8 +137,12 @@ def make_moss_vl_realtime_scheduler_adapters(
 def make_moss_vl_realtime_stream_output_builder(
     *,
     tokenizer: Any,
+    silence_token_ids: tuple[int, ...],
 ) -> Callable[[str, MossVLRealtimeRequestData, Any], list[OutgoingMessage]]:
     eos_token_id = int(tokenizer.eos_token_id)
+    silence_token_ids = tuple(int(token_id) for token_id in silence_token_ids)
+    if not silence_token_ids:
+        raise ValueError("silence_token_ids must not be empty")
 
     def build(
         request_id: str,
@@ -145,22 +156,49 @@ def make_moss_vl_realtime_stream_output_builder(
             None,
         )
         if processed_event is not None:
+            data.current_input_seq_no = int(processed_event["seq_no"])
+            data.current_input_timestamp = float(processed_event["timestamp"])
+            if processed_event.get("prompt") is not None:
+                data.turn_generated_token_ids.clear()
+                data.turn_emitted_text = ""
+                messages.append(
+                    OutgoingMessage(
+                        request_id=request_id,
+                        type="stream",
+                        data={
+                            "event": "response.turn.interrupted",
+                            "turn_id": processed_event["interrupted_turn_id"],
+                            "next_turn_id": processed_event["turn_id"],
+                            "seq_no": processed_event["seq_no"],
+                            "modality": "control",
+                        },
+                        metadata={"modality": "control"},
+                    )
+                )
             processed_type = (
                 "input.frame.processed"
                 if processed_event.get("frame_ref") is not None
                 else "input.prompt.processed"
             )
+            processed_data = {
+                "event": processed_type,
+                "seq_no": processed_event["seq_no"],
+                "timestamp": processed_event["timestamp"],
+                "final": processed_event["final"],
+                "modality": "control",
+            }
+            if processed_event.get("prompt") is not None:
+                processed_data.update(
+                    {
+                        "interrupted_turn_id": processed_event["interrupted_turn_id"],
+                        "turn_id": processed_event["turn_id"],
+                    }
+                )
             messages.append(
                 OutgoingMessage(
                     request_id=request_id,
                     type="stream",
-                    data={
-                        "event": processed_type,
-                        "seq_no": processed_event["seq_no"],
-                        "timestamp": processed_event["timestamp"],
-                        "final": processed_event["final"],
-                        "modality": "control",
-                    },
+                    data=processed_data,
                     metadata={"modality": "control"},
                 )
             )
@@ -177,6 +215,7 @@ def make_moss_vl_realtime_stream_output_builder(
                     data={
                         "event": "session.ready",
                         "session_id": data.runtime_state.session_id,
+                        "turn_id": data.runtime_state.turn_id,
                         "modality": "control",
                     },
                     metadata={"modality": "control"},
@@ -185,9 +224,33 @@ def make_moss_vl_realtime_stream_output_builder(
             data.ready_emitted = True
         if token_id != eos_token_id:
             data.generated_token_ids.append(token_id)
+            data.turn_generated_token_ids.append(token_id)
+        if _ends_with_token_ids(data.turn_generated_token_ids, silence_token_ids):
+            messages.append(
+                OutgoingMessage(
+                    request_id=request_id,
+                    type="stream",
+                    data={
+                        "event": "response.turn.silence",
+                        "turn_id": data.runtime_state.turn_id,
+                        "seq_no": data.current_input_seq_no,
+                        "timestamp": data.current_input_timestamp,
+                        "silence_seq": data.silence_output_seq,
+                        "modality": "control",
+                    },
+                    metadata={
+                        "modality": "control",
+                        "token_id": token_id,
+                        "turn_id": data.runtime_state.turn_id,
+                    },
+                )
+            )
+            data.silence_output_seq += 1
         full_text = _decode(tokenizer, data.generated_token_ids)
-        delta = _text_delta(data.emitted_text, full_text)
         data.emitted_text = full_text
+        turn_text = _decode(tokenizer, data.turn_generated_token_ids)
+        delta = _text_delta(data.turn_emitted_text, turn_text)
+        data.turn_emitted_text = turn_text
         payload = data.stage_payload
         if not delta or not (payload.request.params or {}).get("stream", False):
             return messages
@@ -195,8 +258,16 @@ def make_moss_vl_realtime_stream_output_builder(
             OutgoingMessage(
                 request_id=request_id,
                 type="stream",
-                data={"text": delta, "modality": "text"},
-                metadata={"modality": "text", "token_id": token_id},
+                data={
+                    "text": delta,
+                    "modality": "text",
+                    "turn_id": data.runtime_state.turn_id,
+                },
+                metadata={
+                    "modality": "text",
+                    "token_id": token_id,
+                    "turn_id": data.runtime_state.turn_id,
+                },
             )
         )
         return messages
@@ -231,3 +302,9 @@ def _text_delta(previous: str, current: str) -> str:
     while common < limit and previous[common] == current[common]:
         common += 1
     return current[common:]
+
+
+def _ends_with_token_ids(values: list[int], suffix: tuple[int, ...]) -> bool:
+    if len(values) < len(suffix):
+        return False
+    return tuple(values[-len(suffix) :]) == suffix

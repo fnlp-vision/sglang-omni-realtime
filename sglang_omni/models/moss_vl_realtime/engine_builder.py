@@ -7,16 +7,10 @@ from typing import Any
 from transformers import AutoProcessor
 
 from sglang_omni.models.moss_vl_realtime import request_builders
-from sglang_omni.models.moss_vl_realtime.model_runner import (
-    MossVLRealtimeModelRunner,
-)
+from sglang_omni.models.moss_vl_realtime.model_runner import MossVLRealtimeModelRunner
 from sglang_omni.models.moss_vl_realtime.payload_types import SILENCE_TOKEN
-from sglang_omni.models.moss_vl_realtime.scheduler import (
-    MossVLRealtimeScheduler,
-)
-from sglang_omni.models.moss_vl_realtime.segment import (
-    MossVLRealtimeSegmentBuilder,
-)
+from sglang_omni.models.moss_vl_realtime.scheduler import MossVLRealtimeScheduler
+from sglang_omni.models.moss_vl_realtime.segment import MossVLRealtimeSegmentBuilder
 from sglang_omni.scheduling.engine_factory import SGLangGenerationEngineBuilder
 
 # Representative encoder length used as the CUDA-graph capture fill value;
@@ -49,15 +43,10 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         self.parked_request_timeout_s = float(parked_request_timeout_s)
         self.disable_cuda_graph = bool(disable_cuda_graph)
         page_size = int(page_size)
-        # chunked_prefill_size / max_prefill_tokens are fixed at 4096 below and
-        # upstream requires chunked_prefill_size % page_size == 0.
-        if page_size < 1 or 4096 % page_size:
-            raise ValueError("page_size must be positive and divide 4096")
+        if page_size != 1:
+            raise ValueError("MOSS-VL realtime requires page_size == 1")
         self.page_size = page_size
         self.enable_async_decode = bool(enable_async_decode)
-        if self.enable_async_decode and self.page_size > 1:
-            # Overrun-slot release assumes token-granular allocation.
-            raise ValueError("enable_async_decode requires page_size == 1")
         self.processor: Any = None
         self.segment_builder: MossVLRealtimeSegmentBuilder | None = None
         self.silence_token_ids: tuple[int, ...] = ()
@@ -103,14 +92,8 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             "max_prefill_tokens": 4096,
             "chunked_prefill_size": 4096,
             "sampling_backend": "pytorch",
-            # Token-granular KV allocation by default. page_size > 1 opts into
-            # page-granular allocation: req_to_token rows still store flat
-            # token slots (the paged allocator returns flat slots and the
-            # FlashInfer backends plan with logical page_size=1), so the
-            # encoder-prefix layout is page-size agnostic; rollback release is
-            # page-aware (batch_adapter retains slots sharing the committed
-            # tail page), and sglang_patch fixes the upstream paged decode
-            # alloc for encoder-decoder layouts.
+            # Incremental encoder insertion currently requires token-granular
+            # allocation. Do not patch SGLang's process-global paged allocator.
             "page_size": self.page_size,
             "dtype": dtype,
             # FlashInfer is the project's decode backend. (It is also required
@@ -163,6 +146,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         return {
             "stream_output_builder": request_builders.make_moss_vl_realtime_stream_output_builder(
                 tokenizer=self.processor.tokenizer,
+                silence_token_ids=self.silence_token_ids,
             ),
             "enable_overlap": False,
             "enable_async_decode": self.enable_async_decode,

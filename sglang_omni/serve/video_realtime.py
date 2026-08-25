@@ -5,17 +5,103 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any, Literal
 
 from fastapi import FastAPI, WebSocket
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from starlette.websockets import WebSocketState
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from sglang_omni.client import Client, GenerateRequest, SamplingParams
 from sglang_omni.models.moss_vl_realtime.frame_store import SharedMemoryFrameStore
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
+
+logger = logging.getLogger(__name__)
+
+
+class VideoRealtimeSubmissionError(RuntimeError):
+    """An input could not be submitted to the active model request."""
+
+
+async def warmup_video_realtime(
+    client: Client,
+    *,
+    model_name: str,
+    timeout_s: float = 180.0,
+) -> None:
+    """Exercise the dynamic vision path before accepting user traffic."""
+    if timeout_s <= 0:
+        raise ValueError("video realtime warmup timeout must be positive")
+
+    request_id = f"video_warmup_req_{uuid.uuid4().hex}"
+    session_id = f"video_warmup_sess_{uuid.uuid4().hex}"
+    frame_store = SharedMemoryFrameStore()
+    frame_ref: str | None = None
+    processed = False
+
+    request = GenerateRequest(
+        model=model_name,
+        prompt={
+            "initial_prompt": "Warm up the realtime vision path.",
+            "session_id": session_id,
+        },
+        sampling=SamplingParams(
+            temperature=0.0,
+            top_p=1.0,
+            max_new_tokens=8,
+        ),
+        stream=True,
+        max_tokens=8,
+        output_modalities=["text"],
+        extra_params={"realtime_warmup": True},
+    )
+
+    async def _run() -> None:
+        nonlocal frame_ref, processed
+        submitted = False
+        async for chunk in client.generate(request, request_id=request_id):
+            if chunk.control_event == "session.ready" and not submitted:
+                output = BytesIO()
+                Image.new("RGB", (640, 352), color=(127, 127, 127)).save(
+                    output,
+                    format="PNG",
+                )
+                frame_ref = frame_store.put(request_id, output.getvalue())
+                event = FramePromptEvent(
+                    request_id=request_id,
+                    session_id=session_id,
+                    seq_no=0,
+                    timestamp=0.0,
+                    frame_ref=frame_ref,
+                    final=True,
+                )
+                await client.update_request(request_id, event.to_dict())
+                submitted = True
+                continue
+            if chunk.control_event == "input.frame.processed":
+                processed = True
+                if frame_ref is not None:
+                    frame_store.forget(request_id, frame_ref)
+
+        if not submitted:
+            raise RuntimeError("video realtime warmup never reached session.ready")
+        if not processed:
+            raise RuntimeError("video realtime warmup frame was not processed")
+
+    try:
+        await asyncio.wait_for(_run(), timeout=timeout_s)
+    finally:
+        try:
+            await client.abort(request_id)
+        except Exception:
+            logger.debug(
+                "Video realtime warmup request was already closed", exc_info=True
+            )
+        frame_store.cleanup(request_id)
 
 
 class VideoSessionConfigure(BaseModel):
@@ -27,7 +113,7 @@ class VideoSessionConfigure(BaseModel):
     max_new_tokens: int = Field(default=4096, gt=0)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
-    input_queue_capacity: int = Field(default=32, ge=1, le=256)
+    input_queue_capacity: int = Field(default=4, ge=1, le=256)
     benchmark_ignore_eos: bool = False
 
 
@@ -41,6 +127,13 @@ class VideoFrameMetadata(BaseModel):
     final: bool = False
     mime_type: Literal["image/jpeg", "image/png", "image/webp"]
 
+    @field_validator("prompt")
+    @classmethod
+    def normalize_optional_prompt(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            return None
+        return value
+
 
 class VideoPromptInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -49,6 +142,13 @@ class VideoPromptInput(BaseModel):
     seq_no: int = Field(ge=0)
     prompt: str = Field(min_length=1)
     final: bool = False
+
+    @field_validator("prompt")
+    @classmethod
+    def reject_blank_prompt(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("prompt must contain non-whitespace text")
+        return value
 
 
 @dataclass
@@ -76,7 +176,7 @@ class VideoRealtimeSession:
         self.session_id = f"video_sess_{uuid.uuid4().hex}"
         self.request_id = f"video_req_{uuid.uuid4().hex}"
         self.pending_frame: _PendingFrame | None = None
-        self.input_queue_capacity = 32
+        self.input_queue_capacity = 4
         self.input_capacity_changed = asyncio.Condition()
         self.outstanding_seq_nos: set[int] = set()
         self.accepted_by_seq: dict[int, asyncio.Event] = {}
@@ -85,6 +185,8 @@ class VideoRealtimeSession:
         self.response_task: asyncio.Task[None] | None = None
         self.send_lock = asyncio.Lock()
         self.configured = False
+        self.ready = False
+        self.current_turn_id = 0
         self.final_received = False
         self.request_finished = False
         self.abort_sent = False
@@ -97,6 +199,7 @@ class VideoRealtimeSession:
                 "session_id": self.session_id,
                 "request_id": self.request_id,
                 "model": self.model_name,
+                "turn_id": self.current_turn_id,
             }
         )
         try:
@@ -123,7 +226,20 @@ class VideoRealtimeSession:
                     ValidationError,
                     ValueError,
                 ) as exc:
-                    await self.send_error(str(exc))
+                    await self.send_error_safely(
+                        str(exc),
+                        code="invalid_request",
+                    )
+                except VideoRealtimeSubmissionError as exc:
+                    logger.exception(
+                        "Realtime input submission failed for request %s",
+                        self.request_id,
+                    )
+                    await self.send_error_safely(
+                        str(exc),
+                        code="input_submission_failed",
+                    )
+                    self.closed = True
         finally:
             await self.teardown()
 
@@ -139,15 +255,13 @@ class VideoRealtimeSession:
             self.closed = True
             await self.abort_request()
         else:
-            await self.send_error(f"unsupported event type: {event_type!r}")
+            raise ValueError(f"unsupported event type: {event_type!r}")
 
     async def configure(self, config: VideoSessionConfigure) -> None:
         if self.configured:
             raise ValueError("session is already configured")
         if config.benchmark_ignore_eos and not self.allow_benchmark_mode:
-            raise ValueError(
-                "benchmark_ignore_eos requires server benchmark mode"
-            )
+            raise ValueError("benchmark_ignore_eos requires server benchmark mode")
         self.input_queue_capacity = config.input_queue_capacity
         self.configured = True
         await self.send(
@@ -182,6 +296,8 @@ class VideoRealtimeSession:
     async def prepare_frame(self, metadata: VideoFrameMetadata) -> None:
         if not self.configured:
             raise ValueError("configure the session before sending frames")
+        if not self.ready:
+            raise ValueError("wait for session.ready before sending frames")
         if self.final_received:
             raise ValueError("session already received its final frame")
         if self.pending_frame is not None:
@@ -198,25 +314,33 @@ class VideoRealtimeSession:
     async def handle_prompt(self, metadata: VideoPromptInput) -> None:
         if not self.configured:
             raise ValueError("configure the session before sending prompts")
+        if not self.ready:
+            raise ValueError("wait for session.ready before sending prompts")
         if self.final_received:
             raise ValueError("session already received its final event")
         if self.pending_frame is not None:
             raise ValueError("previous frame metadata is still awaiting binary data")
         await self._reserve_input(metadata.seq_no)
-        event = FramePromptEvent(
-            request_id=self.request_id,
-            session_id=self.session_id,
-            seq_no=metadata.seq_no,
-            timestamp=self.last_timestamp,
-            frame_ref=None,
-            prompt=metadata.prompt,
-            final=metadata.final,
-        )
         try:
-            await self.client.update_request(self.request_id, event.to_dict())
+            event = FramePromptEvent(
+                request_id=self.request_id,
+                session_id=self.session_id,
+                seq_no=metadata.seq_no,
+                timestamp=self.last_timestamp,
+                frame_ref=None,
+                prompt=metadata.prompt,
+                final=metadata.final,
+            )
         except Exception:
             await self._release_input(metadata.seq_no)
             raise
+        try:
+            await self.client.update_request(self.request_id, event.to_dict())
+        except Exception as exc:
+            await self._release_input(metadata.seq_no)
+            raise VideoRealtimeSubmissionError(
+                f"failed to submit prompt event {metadata.seq_no}: {exc}"
+            ) from exc
         self.final_received = metadata.final
         await self._send_accepted(
             metadata.seq_no,
@@ -225,7 +349,8 @@ class VideoRealtimeSession:
                 "seq_no": metadata.seq_no,
                 "final": metadata.final,
                 "pending_events": len(self.outstanding_seq_nos),
-            }
+                "interrupts_current_turn": True,
+            },
         )
 
     async def handle_frame_bytes(self, payload: bytes) -> None:
@@ -237,28 +362,40 @@ class VideoRealtimeSession:
         frame_ref: str | None = None
         try:
             frame_ref = self.frame_store.put(self.request_id, payload)
-        except Exception:
+        except ValueError:
             await self._release_input(metadata.seq_no)
             raise
-        event = FramePromptEvent(
-            request_id=self.request_id,
-            session_id=self.session_id,
-            seq_no=metadata.seq_no,
-            timestamp=metadata.timestamp,
-            frame_ref=frame_ref,
-            prompt=metadata.prompt,
-            final=metadata.final,
-            fingerprint=hashlib.sha256(payload).hexdigest(),
-        )
+        except Exception as exc:
+            await self._release_input(metadata.seq_no)
+            raise VideoRealtimeSubmissionError(
+                f"failed to store frame event {metadata.seq_no}: {exc}"
+            ) from exc
+        try:
+            event = FramePromptEvent(
+                request_id=self.request_id,
+                session_id=self.session_id,
+                seq_no=metadata.seq_no,
+                timestamp=metadata.timestamp,
+                frame_ref=frame_ref,
+                prompt=metadata.prompt,
+                final=metadata.final,
+                fingerprint=hashlib.sha256(payload).hexdigest(),
+            )
+        except Exception:
+            await self._release_input(metadata.seq_no)
+            self.frame_store.discard(self.request_id, frame_ref)
+            raise
         assert frame_ref is not None
         self.frame_refs_by_seq[metadata.seq_no] = frame_ref
         try:
             await self.client.update_request(self.request_id, event.to_dict())
-        except Exception:
+        except Exception as exc:
             await self._release_input(metadata.seq_no)
             self.frame_refs_by_seq.pop(metadata.seq_no, None)
             self.frame_store.discard(self.request_id, frame_ref)
-            raise
+            raise VideoRealtimeSubmissionError(
+                f"failed to submit frame event {metadata.seq_no}: {exc}"
+            ) from exc
         self.final_received = metadata.final
         self.last_timestamp = float(metadata.timestamp)
         await self._send_accepted(
@@ -269,7 +406,8 @@ class VideoRealtimeSession:
                 "timestamp": metadata.timestamp,
                 "final": metadata.final,
                 "pending_events": len(self.outstanding_seq_nos),
-            }
+                "interrupts_current_turn": metadata.prompt is not None,
+            },
         )
 
     async def stream_response(self, request: GenerateRequest) -> None:
@@ -279,11 +417,42 @@ class VideoRealtimeSession:
                 request, request_id=self.request_id
             ):
                 if chunk.control_event == "session.ready":
+                    self.ready = True
                     await self.send(
                         {
                             "type": "session.ready",
                             "session_id": self.session_id,
                             "request_id": self.request_id,
+                            "turn_id": int(
+                                (chunk.control_data or {}).get("turn_id", 0)
+                            ),
+                        }
+                    )
+                    continue
+                if chunk.control_event == "response.turn.interrupted":
+                    control_data = dict(chunk.control_data or {})
+                    seq_no = int(control_data["seq_no"])
+                    accepted = self.accepted_by_seq.get(seq_no)
+                    if accepted is not None:
+                        await accepted.wait()
+                    await self.send(
+                        {
+                            "type": "response.turn.interrupted",
+                            "turn_id": int(control_data["turn_id"]),
+                            "next_turn_id": int(control_data["next_turn_id"]),
+                            "seq_no": seq_no,
+                        }
+                    )
+                    continue
+                if chunk.control_event == "response.turn.silence":
+                    control_data = dict(chunk.control_data or {})
+                    await self.send(
+                        {
+                            "type": "response.turn.silence",
+                            "turn_id": int(control_data["turn_id"]),
+                            "seq_no": control_data.get("seq_no"),
+                            "timestamp": control_data.get("timestamp"),
+                            "silence_seq": int(control_data["silence_seq"]),
                         }
                     )
                     continue
@@ -300,15 +469,24 @@ class VideoRealtimeSession:
                     if frame_ref is not None:
                         self.frame_store.forget(self.request_id, frame_ref)
                     await self._release_input(seq_no)
-                    await self.send(
-                        {
-                            "type": chunk.control_event,
-                            "seq_no": seq_no,
-                            "timestamp": control_data["timestamp"],
-                            "final": control_data["final"],
-                            "pending_events": len(self.outstanding_seq_nos),
-                        }
-                    )
+                    processed_payload = {
+                        "type": chunk.control_event,
+                        "seq_no": seq_no,
+                        "timestamp": control_data["timestamp"],
+                        "final": control_data["final"],
+                        "pending_events": len(self.outstanding_seq_nos),
+                    }
+                    if control_data.get("turn_id") is not None:
+                        self.current_turn_id = int(control_data["turn_id"])
+                        processed_payload.update(
+                            {
+                                "interrupted_turn_id": int(
+                                    control_data["interrupted_turn_id"]
+                                ),
+                                "turn_id": self.current_turn_id,
+                            }
+                        )
+                    await self.send(processed_payload)
                     continue
                 text = chunk.text
                 if text and chunk.finish_reason is None:
@@ -320,6 +498,11 @@ class VideoRealtimeSession:
                         {
                             "type": "response.text.delta",
                             "delta": text,
+                            "turn_id": (
+                                self.current_turn_id
+                                if chunk.turn_id is None
+                                else int(chunk.turn_id)
+                            ),
                         }
                     )
                 if chunk.finish_reason is not None:
@@ -327,6 +510,7 @@ class VideoRealtimeSession:
                         {
                             "type": "response.done",
                             "finish_reason": chunk.finish_reason,
+                            "turn_id": self.current_turn_id,
                         }
                     )
             self.request_finished = True
@@ -337,8 +521,12 @@ class VideoRealtimeSession:
             await self.close_websocket()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
-            await self.send_error(str(exc))
+        except Exception as exc:
+            logger.exception("Realtime response failed for request %s", self.request_id)
+            await self.send_error_safely(
+                str(exc),
+                code="response_failed",
+            )
             self.closed = True
             await self._close_input_queue()
             await self.close_websocket()
@@ -348,7 +536,13 @@ class VideoRealtimeSession:
             return
         self.closed = True
         if not self.request_finished and self.configured:
-            await self.abort_request()
+            try:
+                await self.abort_request()
+            except Exception:
+                logger.exception(
+                    "Failed to abort realtime request %s during teardown",
+                    self.request_id,
+                )
         task = self.response_task
         if task is not None and not task.done():
             task.cancel()
@@ -364,11 +558,18 @@ class VideoRealtimeSession:
         await self.client.abort(self.request_id)
 
     async def close_websocket(self) -> None:
-        if (
-            self.websocket.application_state is WebSocketState.CONNECTED
-            and self.websocket.client_state is WebSocketState.CONNECTED
-        ):
-            await self.websocket.close()
+        try:
+            if (
+                self.websocket.application_state is WebSocketState.CONNECTED
+                and self.websocket.client_state is WebSocketState.CONNECTED
+            ):
+                await self.websocket.close()
+        except (OSError, RuntimeError, WebSocketDisconnect):
+            logger.debug(
+                "Realtime WebSocket was already closed for request %s",
+                self.request_id,
+                exc_info=True,
+            )
 
     async def send(self, payload: dict[str, Any]) -> None:
         async with self.send_lock:
@@ -422,6 +623,31 @@ class VideoRealtimeSession:
         if retryable:
             payload["retryable"] = True
         await self.send(payload)
+
+    async def send_error_safely(
+        self,
+        message: str,
+        *,
+        code: str,
+        retryable: bool = False,
+    ) -> bool:
+        """Best-effort error delivery that never replaces the original failure."""
+        try:
+            await self.send_error(
+                message,
+                code=code,
+                retryable=retryable,
+            )
+        except (OSError, RuntimeError, WebSocketDisconnect):
+            logger.debug(
+                "Could not deliver realtime error %s for request %s",
+                code,
+                self.request_id,
+                exc_info=True,
+            )
+            return False
+        return True
+
 
 class VideoRealtimeSessionManager:
     def __init__(

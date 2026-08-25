@@ -9,9 +9,7 @@ from sglang_omni.models.moss_vl_realtime import (
     FramePromptEvent,
     MossVLRealtimeSegmentBuilder,
 )
-from sglang_omni.models.moss_vl_realtime.sglang_model import (
-    use_realtime_full_grid_thw,
-)
+from sglang_omni.models.moss_vl_realtime.sglang_model import use_realtime_full_grid_thw
 
 
 class _Processor:

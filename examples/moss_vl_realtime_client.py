@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-delay", type=float, default=0.0)
     parser.add_argument("--frame-interval", type=float)
     parser.add_argument("--fps", type=float)
-    parser.add_argument("--input-queue-capacity", type=int, default=32)
+    parser.add_argument("--input-queue-capacity", type=int, default=4)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -36,7 +36,9 @@ def load_manifest_case(path: Path, case_id: str | None) -> dict[str, Any]:
         raise ValueError(f"manifest is empty: {path}")
     if case_id is None:
         if len(cases) != 1:
-            raise ValueError("--case-id is required when the manifest has multiple cases")
+            raise ValueError(
+                "--case-id is required when the manifest has multiple cases"
+            )
         return cases[0]
     matches = [case for case in cases if case.get("case_id") == case_id]
     if len(matches) != 1:
@@ -44,7 +46,9 @@ def load_manifest_case(path: Path, case_id: str | None) -> dict[str, Any]:
     return matches[0]
 
 
-def resolve_frame_interval(args: argparse.Namespace, case: dict[str, Any] | None) -> float:
+def resolve_frame_interval(
+    args: argparse.Namespace, case: dict[str, Any] | None
+) -> float:
     if args.fps is not None and args.frame_interval is not None:
         raise ValueError("--fps and --frame-interval cannot be used together")
     if args.fps is not None:
@@ -64,7 +68,9 @@ def resolve_frame_interval(args: argparse.Namespace, case: dict[str, Any] | None
     return 1.0
 
 
-def resolve_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
+def resolve_inputs(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
     if args.manifest is not None:
         if args.frame or args.timestamp:
             raise ValueError("--manifest cannot be combined with --frame/--timestamp")
@@ -93,7 +99,9 @@ def resolve_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[
             "frame_path": frame,
             "final": seq_no == len(frames) - 1,
         }
-        for seq_no, (frame, timestamp) in enumerate(zip(frames, timestamps, strict=True))
+        for seq_no, (frame, timestamp) in enumerate(
+            zip(frames, timestamps, strict=True)
+        )
     ]
     interval = resolve_frame_interval(args, None)
     return {"prompt": args.prompt, "system_prompt": None}, events, interval
@@ -280,9 +288,7 @@ async def run(args: argparse.Namespace) -> None:
             "elapsed_seconds": time.monotonic() - started_at,
             "session_ready_seconds": stream_started_at - started_at,
             "stream_elapsed_seconds": time.monotonic() - stream_started_at,
-            "normalized_text": "".join(
-                event.get("delta", "") for event in received
-            ),
+            "normalized_text": "".join(event.get("delta", "") for event in received),
             "events": received,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

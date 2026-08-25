@@ -8,38 +8,6 @@ from dataclasses import dataclass
 import torch
 
 
-def count_shared_tail_page_slots(
-    *,
-    committed_length: int,
-    append_length: int,
-    page_size: int,
-) -> int:
-    """Leading append slots that share the committed tail page.
-
-    Paged allocation continues filling the request's old partial page before
-    opening fresh pages (``alloc_extend`` Part 1), so the first
-    ``(-committed_length) % page_size`` appended slots live in a page that
-    also holds committed tokens. Those slots must survive a rollback free:
-    ``PagedTokenToKVPoolAllocator.free`` reclaims whole pages, and passing
-    them would release the shared page and corrupt the committed prefix.
-    """
-    if isinstance(page_size, bool) or not isinstance(page_size, int):
-        raise TypeError("page_size must be an integer")
-    if page_size < 1:
-        raise ValueError("page_size must be positive")
-    for name, value in (
-        ("committed_length", committed_length),
-        ("append_length", append_length),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError(f"{name} must be an integer")
-        if value < 0:
-            raise ValueError(f"{name} must be non-negative")
-    if page_size == 1:
-        return 0
-    return min(append_length, (-committed_length) % page_size)
-
-
 def _slot_tuple(slots: Iterable[int], name: str) -> tuple[int, ...]:
     if isinstance(slots, torch.Tensor):
         if slots.ndim != 1:

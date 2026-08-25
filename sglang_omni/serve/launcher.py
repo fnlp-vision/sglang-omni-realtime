@@ -372,6 +372,7 @@ async def _run_server(
     log_level: str = "info",
     client_kwargs: dict[str, Any] | None = None,
     enable_realtime: bool = False,
+    video_realtime_warmup: bool = True,
     video_realtime_benchmark_mode: bool = False,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
@@ -413,9 +414,19 @@ async def _run_server(
     try:
         cl_kwargs = client_kwargs or {}
         client = Client(coordinator, **cl_kwargs)
+        served_model_name = model_name or pipeline_config.name
+        if type(pipeline_config).supports_video_realtime and video_realtime_warmup:
+            from sglang_omni.serve.video_realtime import warmup_video_realtime
+
+            logger.info("Warming up realtime vision path")
+            await warmup_video_realtime(
+                client,
+                model_name=served_model_name,
+            )
+            logger.info("Realtime vision warmup complete")
         app = create_app(
             client,
-            model_name=model_name or pipeline_config.name,
+            model_name=served_model_name,
             requires_uploaded_voice_for_named_voice=(
                 pipeline_config.requires_uploaded_voice_for_named_voice()
             ),
@@ -431,6 +442,7 @@ async def _run_server(
             ),
             additional_speech_languages=pipeline_config.additional_speech_languages,
             enable_realtime=enable_realtime,
+            enable_video_realtime=type(pipeline_config).supports_video_realtime,
             video_realtime_benchmark_mode=video_realtime_benchmark_mode,
             supports_realtime_audio_output=(
                 type(pipeline_config).code2wav_stage() is not None
@@ -507,6 +519,7 @@ def launch_server(
     log_level: str = "info",
     client_kwargs: dict[str, Any] | None = None,
     enable_realtime: bool = False,
+    video_realtime_warmup: bool = True,
     video_realtime_benchmark_mode: bool = False,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
@@ -525,6 +538,8 @@ def launch_server(
             :class:`~sglang_omni.client.Client`.
         enable_realtime: If True, mount the WebSocket ``/v1/realtime``
             endpoint (OpenAI Realtime API).
+        video_realtime_warmup: Process one internal video frame before
+            accepting MOSS-VL realtime traffic.
         video_realtime_benchmark_mode: Allow benchmark-only MOSS-VL realtime
             session options. Keep False for production traffic.
         allowed_local_media_path: Directory allowed for ``file://`` media
@@ -543,6 +558,7 @@ def launch_server(
             log_level=log_level,
             client_kwargs=client_kwargs,
             enable_realtime=enable_realtime,
+            video_realtime_warmup=video_realtime_warmup,
             video_realtime_benchmark_mode=video_realtime_benchmark_mode,
             allowed_local_media_path=allowed_local_media_path,
             allowed_media_domains=allowed_media_domains,

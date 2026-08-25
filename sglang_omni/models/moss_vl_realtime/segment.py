@@ -20,9 +20,7 @@ from sglang_omni.models.moss_vl_realtime.payload_types import (
     FramePromptEvent,
     build_realtime_append_text,
 )
-from sglang_omni.models.moss_vl_realtime.visibility import (
-    append_visible_frame_counts,
-)
+from sglang_omni.models.moss_vl_realtime.visibility import append_visible_frame_counts
 
 REALTIME_FULL_GRID_THW_KEY = "realtime_full_grid_thw"
 

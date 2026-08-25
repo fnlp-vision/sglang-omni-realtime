@@ -15,11 +15,6 @@ from sglang_omni.models.moss_vl_realtime.benchmark_cases import (
     materialize_case_frames,
 )
 
-DATA_ROOT = Path(
-    "/inspire/hdd/project/video-understanding/public/personal/cktan/"
-    "reps/streaming/realtime_qa/data"
-)
-
 
 @dataclass(frozen=True)
 class SourceSpec:
@@ -28,41 +23,53 @@ class SourceSpec:
     path: Path
 
 
-SOURCES = (
-    SourceSpec(
+SOURCE_DEFINITIONS = (
+    (
         "cd067_sbpro_L2_stream",
         "step trigger with one short response",
-        DATA_ROOT / "feeder_sbpro/reanchored.clean_v1.jsonl",
+        Path("feeder_sbpro/reanchored.clean_v1.jsonl"),
     ),
-    SourceSpec(
+    (
         "cd067_pvqabase_L2_magqa",
         "answer evolution as evidence changes",
-        DATA_ROOT
-        / "output_cd052_pvqa_feeder/L3_magqa_answer_evolution.clean_v1.jsonl",
+        Path("output_cd052_pvqa_feeder/" "L3_magqa_answer_evolution.clean_v1.jsonl"),
     ),
-    SourceSpec(
+    (
         "cd067_pvqatv_L2_inject",
         "streaming question answering with subtitle injection",
-        DATA_ROOT
-        / "output_cd052_tvqa6_ceilfix/tv_TVQA_injection_answer_silence.clean_v1.jsonl",
+        Path(
+            "output_cd052_tvqa6_ceilfix/"
+            "tv_TVQA_injection_answer_silence.clean_v1.jsonl"
+        ),
     ),
-    SourceSpec(
+    (
         "cd067_omnimmipa_L2_pa",
         "proactive event or action description",
-        DATA_ROOT
-        / "output_cd050_omnimmi_pa/L1_PA_omnimmi_token_silence.clean_v1.jsonl",
+        Path("output_cd050_omnimmi_pa/L1_PA_omnimmi_token_silence.clean_v1.jsonl"),
     ),
-    SourceSpec(
+    (
         "cd067_ovorec_L2_slow1fps",
         "progressive 1-fps counting and recognition",
-        DATA_ROOT
-        / "output_cd049_rec_slow1fps_v2/REC_slow1fps_train.clean_v1.jsonl",
+        Path("output_cd049_rec_slow1fps_v2/REC_slow1fps_train.clean_v1.jsonl"),
     ),
 )
 
 
+def source_specs(data_root: Path) -> tuple[SourceSpec, ...]:
+    return tuple(
+        SourceSpec(source_tag, task_shape, data_root / relative_path)
+        for source_tag, task_shape, relative_path in SOURCE_DEFINITIONS
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        required=True,
+        help="Root containing the five realtime QA source subdirectories.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--target-frames", type=int, default=20)
     parser.add_argument("--max-frames", type=int, default=60)
@@ -125,7 +132,7 @@ def main() -> None:
         raise ValueError("--candidates-per-source must be positive")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    cases = [select_case(spec, args) for spec in SOURCES]
+    cases = [select_case(spec, args) for spec in source_specs(args.data_root)]
     for case in cases:
         materialize_case_frames(case, args.output_dir)
         print(

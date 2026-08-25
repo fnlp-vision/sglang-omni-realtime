@@ -98,9 +98,7 @@ def main() -> None:
         raise ValueError("--decode-tokens must be >= 2")
 
     case = load_case(args.manifest, args.case_id)
-    frame_events = [
-        event for event in case["events"] if event.get("type") == "frame"
-    ]
+    frame_events = [event for event in case["events"] if event.get("type") == "frame"]
     if len(frame_events) < args.warmup_frames + args.measure_frames:
         raise ValueError(
             f"case has {len(frame_events)} frame events, need "
@@ -233,9 +231,7 @@ def main() -> None:
         },
         "final_prompt_extend_seconds": prompt_extend_seconds,
         "decode_tpot_seconds": {"samples": token_seconds, **tpot},
-        "decode_tokens_per_second": (
-            1.0 / tpot["mean"] if tpot.get("mean") else None
-        ),
+        "decode_tokens_per_second": (1.0 / tpot["mean"] if tpot.get("mean") else None),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2))

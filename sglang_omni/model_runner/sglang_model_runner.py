@@ -428,15 +428,6 @@ class SGLModelRunner(ModelRunner):
 
         from sglang.srt.models.registry import ModelRegistry
 
-        if getattr(self, "_model_arch_override", None) == "MossVLRealtimeForConditionalGeneration":
-            from sglang_omni.models.moss_vl_realtime.sglang_patch import (
-                install_moss_vl_realtime_paged_decode_alloc_patch,
-                install_moss_vl_realtime_schedule_batch_patch,
-            )
-
-            install_moss_vl_realtime_schedule_batch_patch()
-            install_moss_vl_realtime_paged_decode_alloc_patch()
-
         sglang_omni_models = {
             "S2ProSGLangTextModel": "sglang_omni.models.fishaudio_s2_pro.sglang_model:S2ProSGLangTextModel",
             "Qwen3OmniTalker": "sglang_omni.models.qwen3_omni.components.talker:Qwen3OmniTalker",

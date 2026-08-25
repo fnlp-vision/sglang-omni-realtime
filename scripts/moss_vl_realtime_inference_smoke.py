@@ -18,9 +18,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timestamp", type=float, default=0.0)
     parser.add_argument("--second-timestamp", type=float, default=1.0)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--context-length", type=int, default=32768)
+    parser.add_argument("--context-length", type=int, default=131072)
     parser.add_argument("--max-new-tokens", type=int, default=16)
-    parser.add_argument("--mem-fraction-static", type=float, default=0.25)
+    parser.add_argument("--mem-fraction-static", type=float, default=0.40)
     parser.add_argument("--timeout", type=float, default=180.0)
     return parser.parse_args()
 

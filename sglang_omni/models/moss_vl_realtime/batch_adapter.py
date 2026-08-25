@@ -7,11 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.utils.common import is_pin_memory_available
 
-from sglang_omni.models.moss_vl_realtime.kv_layout import (
-    count_shared_tail_page_slots,
-)
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimeKVAppendTransaction,
     MossVLRealtimeRuntimeState,
@@ -21,7 +19,24 @@ RUNTIME_STATE_ATTR = "_moss_vl_realtime_state"
 KV_TRANSACTION_ATTR = "_moss_vl_realtime_kv_transaction"
 _ALLOCATED_SLOTS_ATTR = "_moss_vl_realtime_allocated_slots"
 _ALLOCATION_RELEASED_ATTR = "_moss_vl_realtime_allocation_released"
-_REQ_ALLOCATED_SLOTS_ATTR = "_moss_vl_realtime_req_allocated_slots"
+
+
+class MossVLRealtimeScheduleBatch(ScheduleBatch):
+    """ScheduleBatch with request-local incremental vision preparation."""
+
+    def prepare_encoder_info_extend(
+        self,
+        input_ids: list[Sequence[int]],
+        seq_lens: list[int],
+    ) -> None:
+        prepare_moss_vl_realtime_encoder_info_extend(self, input_ids, seq_lens)
+
+    def prepare_for_extend(self) -> None:
+        try:
+            super().prepare_for_extend()
+        except Exception:
+            rollback_moss_vl_realtime_batch(self)
+            raise
 
 
 @dataclass(slots=True)
@@ -131,39 +146,15 @@ def _release_allocated_slots(batch: Any) -> None:
     if getattr(batch, _ALLOCATION_RELEASED_ATTR, False):
         return
     allocator = batch.token_to_kv_pool_allocator
-    page_size = int(getattr(allocator, "page_size", 1))
-    if page_size == 1:
-        slots = getattr(
-            batch,
-            _ALLOCATED_SLOTS_ATTR,
-            getattr(batch, "out_cache_loc", None),
-        )
-        if isinstance(slots, torch.Tensor) and slots.numel():
-            allocator.free(slots)
-    else:
-        # Paged free() reclaims whole pages, so slots sharing the committed
-        # tail page must be retained; they are freed with the request. The
-        # leading (-committed) % page_size append slots live in that page.
-        freeable: list[torch.Tensor] = []
-        for req in batch.reqs:
-            slots = getattr(req, _REQ_ALLOCATED_SLOTS_ATTR, None)
-            if not isinstance(slots, torch.Tensor):
-                # Slice unknown: prepare failed before staging this request.
-                # Its slots are reclaimed when the request is aborted.
-                continue
-            state = getattr(req, RUNTIME_STATE_ATTR, None)
-            committed = 0
-            if isinstance(state, MossVLRealtimeRuntimeState):
-                committed = state.encoder_length + state.decoder_length
-            keep = count_shared_tail_page_slots(
-                committed_length=committed,
-                append_length=int(slots.numel()),
-                page_size=page_size,
-            )
-            if slots.numel() > keep:
-                freeable.append(slots[keep:])
-        if freeable:
-            allocator.free(freeable[0] if len(freeable) == 1 else torch.cat(freeable))
+    if int(getattr(allocator, "page_size", 1)) != 1:
+        raise RuntimeError("MOSS-VL realtime rollback requires page_size == 1")
+    slots = getattr(
+        batch,
+        _ALLOCATED_SLOTS_ATTR,
+        getattr(batch, "out_cache_loc", None),
+    )
+    if isinstance(slots, torch.Tensor) and slots.numel():
+        allocator.free(slots)
     setattr(batch, _ALLOCATION_RELEASED_ATTR, True)
 
 
@@ -171,9 +162,6 @@ def _clear_allocation_rollback_metadata(batch: Any) -> None:
     for name in (_ALLOCATED_SLOTS_ATTR, _ALLOCATION_RELEASED_ATTR):
         if hasattr(batch, name):
             delattr(batch, name)
-    for req in batch.reqs:
-        if hasattr(req, _REQ_ALLOCATED_SLOTS_ATTR):
-            delattr(req, _REQ_ALLOCATED_SLOTS_ATTR)
 
 
 def _build_plans(
@@ -240,16 +228,6 @@ def _build_plans(
         new_slots = batch.out_cache_loc[out_offset : out_offset + raw_extend_length]
         if new_slots.numel() != raw_extend_length:
             raise RuntimeError("allocated KV slots are not request aligned")
-        allocated = getattr(batch, _ALLOCATED_SLOTS_ATTR, None)
-        if isinstance(allocated, torch.Tensor):
-            # Per-request view of the cloned allocation for page-aware
-            # rollback release; batch.out_cache_loc is replaced later by
-            # _install_batch_metadata, so the clone keeps the slots valid.
-            setattr(
-                req,
-                _REQ_ALLOCATED_SLOTS_ATTR,
-                allocated[out_offset : out_offset + raw_extend_length],
-            )
         leading_decoder_length = 1 if state.pending_token_id is not None else 0
         encoder_start = leading_decoder_length
         encoder_end = encoder_start + encoder_delta_length

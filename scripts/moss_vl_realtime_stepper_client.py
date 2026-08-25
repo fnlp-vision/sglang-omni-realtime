@@ -80,7 +80,9 @@ def main() -> None:
             if token_id == silence_token_id:
                 return
             stepper.commit_pending_tokens(state)
-        raise RuntimeError("model did not emit silence within the per-event token limit")
+        raise RuntimeError(
+            "model did not emit silence within the per-event token limit"
+        )
 
     drive_until_silence()
     for event in case["events"]:
