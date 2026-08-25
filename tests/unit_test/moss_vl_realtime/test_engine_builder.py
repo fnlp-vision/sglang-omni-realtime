@@ -55,6 +55,14 @@ def test_generation_defaults_fix_page_size_to_one() -> None:
     assert _make_builder().generation_defaults(dtype="bfloat16")["page_size"] == 1
 
 
+def test_tp_uses_nccl_in_one_visible_device_per_rank_topology() -> None:
+    overrides = {"tp_size": 2, "disable_custom_all_reduce": False}
+
+    _make_builder().adjust_overrides(overrides)
+
+    assert overrides["disable_custom_all_reduce"] is True
+
+
 @pytest.mark.parametrize("page_size", [0, 16, 48])
 def test_page_size_must_be_one(page_size: int) -> None:
     with pytest.raises(ValueError, match="page_size"):
@@ -64,6 +72,40 @@ def test_page_size_must_be_one(page_size: int) -> None:
 def test_async_decode_defaults_off() -> None:
     builder = _make_builder()
     assert builder.enable_async_decode is False
+
+
+def test_realtime_builder_rejects_multiple_live_requests() -> None:
+    with pytest.raises(ValueError, match="exactly one live request"):
+        _make_builder(max_running_requests=2)
+
+
+def test_stage_factory_forwards_tensor_parallel_runtime(monkeypatch) -> None:
+    from sglang_omni.models.moss_vl_realtime import stages
+
+    seen = {}
+
+    def fake_build(self, model_path, **kwargs):
+        del self
+        seen["model_path"] = model_path
+        seen.update(kwargs)
+        return "scheduler"
+
+    monkeypatch.setattr(MossVLRealtimeEngineBuilder, "build", fake_build)
+
+    result = stages.create_sglang_moss_vl_realtime_executor(
+        "/models/moss",
+        gpu_id=0,
+        tp_rank=1,
+        tp_size=2,
+        nccl_port=29500,
+    )
+
+    assert result == "scheduler"
+    assert seen["model_path"] == "/models/moss"
+    assert seen["gpu_id"] == 0
+    assert seen["tp_rank"] == 1
+    assert seen["tp_size"] == 2
+    assert seen["nccl_port"] == 29500
 
 
 def test_extra_scheduler_kwargs_pass_async_decode_through() -> None:

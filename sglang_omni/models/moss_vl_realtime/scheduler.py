@@ -111,7 +111,38 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 # committed pending token" invariant holds at materialize time.
                 self._resolve_pending_async()
             self._realtime_extend_batch = self._materialize_realtime_extensions()
+        if self._realtime_extend_batch is None and self._decode_rate_limited():
+            return None
         return super().get_next_batch_to_run()
+
+    def _decode_rate_limited(self) -> bool:
+        """Defer ordinary decode without delaying frame or prompt ingestion.
+
+        Realtime deployment currently admits one live request. Keeping the
+        request in ``running_batch`` lets the scheduler continue draining
+        control messages while preserving its KV ownership.
+        """
+        reqs = tuple(getattr(self.running_batch, "reqs", ()))
+        if not reqs:
+            return False
+        if len(reqs) != 1:
+            raise AssertionError("MOSS-VL realtime admitted multiple live requests")
+        state = getattr(reqs[0], RUNTIME_STATE_ATTR, None)
+        return (
+            isinstance(state, MossVLRealtimeRuntimeState)
+            and time.monotonic() < state.next_decode_not_before
+        )
+
+    def _stamp_batch_launch(self, batch: Any) -> None:
+        """Start the token-rate interval at forward launch, matching HF."""
+        super()._stamp_batch_launch(batch)
+        launch_time = float(batch.launch_ts)
+        for req in batch.reqs:
+            state = getattr(req, RUNTIME_STATE_ATTR, None)
+            if isinstance(state, MossVLRealtimeRuntimeState):
+                state.next_decode_not_before = (
+                    launch_time + 1.0 / state.max_tokens_per_turn
+                )
 
     def _has_pending_realtime_events(self) -> bool:
         running_reqs = tuple(getattr(self.running_batch, "reqs", ()))

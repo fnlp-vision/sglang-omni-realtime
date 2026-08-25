@@ -105,3 +105,13 @@ def test_kv_append_accepts_allocator_tensor_slots() -> None:
     transaction.commit()
 
     assert table[1, :7].tolist() == [11, 12, 13, 14, 21, 22, 23]
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_runtime_state_rejects_invalid_token_rate(value: float) -> None:
+    with pytest.raises(ValueError, match="max_tokens_per_turn"):
+        MossVLRealtimeRuntimeState(
+            request_id="req-rate",
+            session_id="session-rate",
+            max_tokens_per_turn=value,
+        )

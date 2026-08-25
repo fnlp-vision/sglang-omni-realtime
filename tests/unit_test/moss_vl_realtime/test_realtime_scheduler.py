@@ -4,6 +4,7 @@ from array import array
 from collections import namedtuple
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from sglang_omni.models.moss_vl_realtime import (
@@ -202,6 +203,62 @@ def test_result_processing_delegates_before_park(monkeypatch) -> None:
     scheduler.process_batch_result(batch, result)
 
     assert calls == [("upstream", batch, result), ("park", batch)]
+
+
+def test_decode_rate_gate_uses_monotonic_deadline(monkeypatch) -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-rate",
+        session_id="session-rate",
+        max_tokens_per_turn=4,
+        next_decode_not_before=10.25,
+    )
+    req = SimpleNamespace(_moss_vl_realtime_state=state)
+    scheduler.running_batch = SimpleNamespace(reqs=[req])
+
+    monkeypatch.setattr("time.monotonic", lambda: 10.0)
+    assert scheduler._decode_rate_limited() is True
+
+    monkeypatch.setattr("time.monotonic", lambda: 10.25)
+    assert scheduler._decode_rate_limited() is False
+
+
+def test_batch_launch_sets_next_decode_deadline(monkeypatch) -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-rate",
+        session_id="session-rate",
+        max_tokens_per_turn=4,
+    )
+    req = SimpleNamespace(_moss_vl_realtime_state=state)
+    batch = SimpleNamespace(reqs=[req])
+    monkeypatch.setattr(
+        OmniScheduler,
+        "_stamp_batch_launch",
+        lambda self, value: setattr(value, "launch_ts", 12.0),
+    )
+
+    scheduler._stamp_batch_launch(batch)
+
+    assert state.next_decode_not_before == pytest.approx(12.25)
+
+
+def test_realtime_extend_bypasses_decode_rate_gate(monkeypatch) -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler._expire_parked_requests = lambda: None
+    scheduler._async_pending = None
+    scheduler._realtime_extend_batch = object()
+    scheduler._decode_rate_limited = lambda: (_ for _ in ()).throw(
+        AssertionError("rate gate must not inspect a realtime extend")
+    )
+    expected = object()
+    monkeypatch.setattr(
+        OmniScheduler,
+        "get_next_batch_to_run",
+        lambda self: expected,
+    )
+
+    assert scheduler.get_next_batch_to_run() is expected
 
 
 def _ingest_scheduler() -> tuple[MossVLRealtimeScheduler, list, list]:

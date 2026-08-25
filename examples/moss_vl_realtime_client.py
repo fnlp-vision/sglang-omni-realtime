@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case-id")
     parser.add_argument("--prompt", default="Describe relevant changes.")
     parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument("--max-tokens-per-turn", type=float, default=86400.0)
     parser.add_argument("--initial-delay", type=float, default=0.0)
     parser.add_argument("--frame-interval", type=float)
     parser.add_argument("--fps", type=float)
@@ -175,6 +176,8 @@ async def run(args: argparse.Namespace) -> None:
         raise ValueError("--frame-interval must be non-negative")
     if not 1 <= args.input_queue_capacity <= 256:
         raise ValueError("--input-queue-capacity must be between 1 and 256")
+    if args.max_tokens_per_turn <= 0:
+        raise ValueError("--max-tokens-per-turn must be positive")
     frame_payloads: dict[int, tuple[str, bytes]] = {}
     for event in events:
         if event.get("type") != "frame":
@@ -205,6 +208,7 @@ async def run(args: argparse.Namespace) -> None:
                     "prompt": config["prompt"],
                     "system_prompt": config["system_prompt"],
                     "max_new_tokens": args.max_new_tokens,
+                    "max_tokens_per_turn": args.max_tokens_per_turn,
                     "input_queue_capacity": args.input_queue_capacity,
                 }
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -38,6 +39,8 @@ class MossVLRealtimeRuntimeState:
     visible_frame_count: int = 0
     next_mrope_position: int = 0
     turn_id: int = 0
+    max_tokens_per_turn: float = 86400.0
+    next_decode_not_before: float = 0.0
     pending_token_id: int | None = None
     mrope_positions: torch.Tensor | None = field(default=None, repr=False)
     visible_frame_counts: torch.Tensor | None = field(default=None, repr=False)
@@ -60,6 +63,22 @@ class MossVLRealtimeRuntimeState:
                 raise ValueError(f"{name} must be a non-negative integer")
         if self.req_pool_index is not None:
             self.bind_req_pool_index(self.req_pool_index)
+        if (
+            isinstance(self.max_tokens_per_turn, bool)
+            or not isinstance(self.max_tokens_per_turn, (int, float))
+            or not math.isfinite(self.max_tokens_per_turn)
+            or self.max_tokens_per_turn <= 0
+        ):
+            raise ValueError("max_tokens_per_turn must be finite and positive")
+        self.max_tokens_per_turn = float(self.max_tokens_per_turn)
+        if (
+            isinstance(self.next_decode_not_before, bool)
+            or not isinstance(self.next_decode_not_before, (int, float))
+            or not math.isfinite(self.next_decode_not_before)
+            or self.next_decode_not_before < 0
+        ):
+            raise ValueError("next_decode_not_before must be finite and non-negative")
+        self.next_decode_not_before = float(self.next_decode_not_before)
 
     def bind_req_pool_index(self, req_pool_index: int) -> None:
         if isinstance(req_pool_index, bool) or not isinstance(req_pool_index, int):

@@ -111,6 +111,12 @@ class VideoSessionConfigure(BaseModel):
     prompt: str = "Describe relevant changes in the video."
     system_prompt: str | None = None
     max_new_tokens: int = Field(default=4096, gt=0)
+    max_tokens_per_turn: float = Field(
+        default=86400.0,
+        gt=0.0,
+        allow_inf_nan=False,
+        description="Maximum generation rate in tokens per second.",
+    )
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
     input_queue_capacity: int = Field(default=4, ge=1, le=256)
@@ -270,8 +276,14 @@ class VideoRealtimeSession:
                 "session_id": self.session_id,
                 "request_id": self.request_id,
                 "input_queue_capacity": self.input_queue_capacity,
+                "max_tokens_per_turn": config.max_tokens_per_turn,
             }
         )
+        extra_params: dict[str, Any] = {
+            "max_tokens_per_turn": config.max_tokens_per_turn,
+        }
+        if config.benchmark_ignore_eos:
+            extra_params["benchmark_ignore_eos"] = True
         request = GenerateRequest(
             model=self.model_name,
             prompt={
@@ -287,9 +299,7 @@ class VideoRealtimeSession:
             stream=True,
             max_tokens=config.max_new_tokens,
             output_modalities=["text"],
-            extra_params=(
-                {"benchmark_ignore_eos": True} if config.benchmark_ignore_eos else {}
-            ),
+            extra_params=extra_params,
         )
         self.response_task = asyncio.create_task(self.stream_response(request))
 

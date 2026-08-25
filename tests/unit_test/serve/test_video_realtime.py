@@ -199,6 +199,7 @@ def test_video_realtime_defaults_to_four_outstanding_inputs() -> None:
     )
 
     assert config.input_queue_capacity == 4
+    assert config.max_tokens_per_turn == 86400.0
     assert session.input_queue_capacity == 4
 
 
@@ -218,6 +219,13 @@ def test_video_realtime_normalizes_or_rejects_blank_prompts() -> None:
             seq_no=0,
             prompt="   ",
         )
+
+    for value in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValidationError, match="max_tokens_per_turn"):
+            VideoSessionConfigure(
+                type="session.configure",
+                max_tokens_per_turn=value,
+            )
 
 
 def test_frame_event_construction_failure_releases_reserved_resources(
@@ -649,6 +657,25 @@ class _RequestCaptureClient(_Client):
             yield chunk
 
 
+class _ImmediateRequestCaptureClient(_Client):
+    captured_request = None
+
+    async def generate(self, request, request_id=None):
+        self.captured_request = request
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={},
+        )
+        yield GenerateChunk(
+            request_id=request_id,
+            text="",
+            finish_reason="stop",
+            turn_id=0,
+        )
+
+
 def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
     client = _RequestCaptureClient()
     app = create_app(
@@ -681,7 +708,52 @@ def test_video_realtime_benchmark_ignore_eos_flows_to_extra_params() -> None:
             event_types.add(websocket.receive_json()["type"])
 
     assert client.captured_request is not None
-    assert client.captured_request.extra_params == {"benchmark_ignore_eos": True}
+    assert client.captured_request.extra_params == {
+        "benchmark_ignore_eos": True,
+        "max_tokens_per_turn": 86400.0,
+    }
+
+
+def test_video_realtime_token_rate_flows_to_request() -> None:
+    class _CaptureWebSocket:
+        def __init__(self) -> None:
+            self.messages = []
+            self.application_state = video_realtime_module.WebSocketState.DISCONNECTED
+            self.client_state = video_realtime_module.WebSocketState.DISCONNECTED
+
+        async def send_json(self, payload):
+            self.messages.append(payload)
+
+    async def _run():
+        websocket = _CaptureWebSocket()
+        client = _ImmediateRequestCaptureClient()
+        session = VideoRealtimeSession(
+            websocket,  # type: ignore[arg-type]
+            client=client,  # type: ignore[arg-type]
+            model_name="moss-vl-realtime",
+            frame_store=SharedMemoryFrameStore(),
+        )
+        await session.configure(
+            VideoSessionConfigure(
+                type="session.configure",
+                prompt="Watch.",
+                max_tokens_per_turn=12.5,
+            )
+        )
+        assert session.response_task is not None
+        await session.response_task
+        return websocket.messages, client
+
+    messages, client = asyncio.run(_run())
+    assert messages[0]["type"] == "session.configured"
+    assert messages[0]["max_tokens_per_turn"] == 12.5
+    assert [message["type"] for message in messages[1:]] == [
+        "session.ready",
+        "response.done",
+        "session.done",
+    ]
+    assert client.captured_request is not None
+    assert client.captured_request.extra_params["max_tokens_per_turn"] == 12.5
 
 
 def test_video_realtime_rejects_benchmark_option_in_production_mode() -> None:

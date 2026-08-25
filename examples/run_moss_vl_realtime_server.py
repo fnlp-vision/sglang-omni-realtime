@@ -26,6 +26,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--tp-size", type=int, default=1)
+    parser.add_argument(
+        "--gpus",
+        default=None,
+        help="Comma-separated GPU ids for TP deployment, one GPU per rank.",
+    )
     parser.add_argument("--mem-fraction-static", type=float, default=0.40)
     parser.add_argument("--context-length", type=int, default=131072)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
@@ -72,6 +78,21 @@ def parse_args() -> argparse.Namespace:
         help="Skip the default internal frame warmup for diagnostics.",
     )
     args = parser.parse_args()
+    if args.tp_size < 1:
+        parser.error("--tp-size must be at least 1")
+    if args.tp_size > 1:
+        if args.gpus is None:
+            parser.error("--tp-size > 1 requires --gpus")
+        try:
+            args.gpus = [int(value.strip()) for value in args.gpus.split(",")]
+        except ValueError:
+            parser.error("--gpus must be a comma-separated list of integers")
+        if len(args.gpus) != args.tp_size:
+            parser.error("--gpus must contain exactly --tp-size GPU ids")
+        if len(set(args.gpus)) != len(args.gpus):
+            parser.error("--gpus must not contain duplicate GPU ids")
+    elif args.gpus is not None:
+        parser.error("--gpus only applies when --tp-size > 1; use --gpu for TP=1")
     if args.decode_cuda_graph and args.decode_attention_backend not in (
         None,
         "flashinfer",
@@ -93,11 +114,13 @@ def main() -> None:
 
     config = MossVLRealtimePipelineConfig(model_path=args.model_path)
     stage = config.stages[0]
-    stage.gpu = args.gpu
+    stage.gpu = args.gpus if args.tp_size > 1 else args.gpu
+    stage.tp_size = args.tp_size
+    stage.parallelism.tp = args.tp_size
     factory_args = dict(stage.factory_args)
     factory_args.update(
         {
-            "device": f"cuda:{args.gpu}",
+            "device": "cuda:0" if args.tp_size > 1 else f"cuda:{args.gpu}",
             "mem_fraction_static": args.mem_fraction_static,
             "context_length": args.context_length,
             "max_new_tokens": args.max_new_tokens,
@@ -107,13 +130,18 @@ def main() -> None:
             "enable_async_decode": args.enable_async_decode,
         }
     )
+    server_args_overrides = dict(factory_args.get("server_args_overrides") or {})
     if args.decode_attention_backend is not None:
-        factory_args["server_args_overrides"] = {
-            # Setting any single backend dimension stops the upstream MossVL
-            # override from injecting its flashinfer prefill default; pin both.
-            "prefill_attention_backend": "flashinfer",
-            "decode_attention_backend": args.decode_attention_backend,
-        }
+        server_args_overrides.update(
+            {
+                # Setting any single backend dimension stops the upstream MossVL
+                # override from injecting its flashinfer prefill default; pin both.
+                "prefill_attention_backend": "flashinfer",
+                "decode_attention_backend": args.decode_attention_backend,
+            }
+        )
+    if server_args_overrides:
+        factory_args["server_args_overrides"] = server_args_overrides
     stage.factory_args = factory_args
     launch_server(
         config,

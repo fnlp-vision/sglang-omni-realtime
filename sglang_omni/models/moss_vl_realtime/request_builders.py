@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,6 +77,9 @@ def make_moss_vl_realtime_scheduler_adapters(
         request_max_new_tokens = int(params.get("max_new_tokens", max_new_tokens))
         if request_max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be positive")
+        max_tokens_per_turn = float(params.get("max_tokens_per_turn", 86400))
+        if not math.isfinite(max_tokens_per_turn) or max_tokens_per_turn <= 0:
+            raise ValueError("max_tokens_per_turn must be finite and positive")
         temperature = float(params.get("temperature", 0.0) or 0.0)
         sampling_params = SamplingParams(
             max_new_tokens=request_max_new_tokens,
@@ -96,6 +100,7 @@ def make_moss_vl_realtime_scheduler_adapters(
         state = MossVLRealtimeRuntimeState(
             request_id=payload.request_id,
             session_id=session_id,
+            max_tokens_per_turn=max_tokens_per_turn,
         )
         setattr(req, RUNTIME_STATE_ATTR, state)
         if params.get("realtime_warmup"):

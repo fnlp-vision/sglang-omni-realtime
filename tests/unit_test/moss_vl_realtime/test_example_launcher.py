@@ -47,6 +47,37 @@ def test_launcher_async_decode_flag_defaults_off(monkeypatch) -> None:
     assert args.mem_fraction_static == 0.40
     assert args.enable_benchmark_mode is False
     assert args.disable_startup_warmup is False
+    assert args.tp_size == 1
+    assert args.gpus is None
+
+
+def test_launcher_accepts_distinct_gpu_per_tp_rank(monkeypatch) -> None:
+    args = _parse(
+        monkeypatch,
+        "--model-path",
+        "/models/x",
+        "--tp-size",
+        "2",
+        "--gpus",
+        "3,5",
+    )
+
+    assert args.tp_size == 2
+    assert args.gpus == [3, 5]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--tp-size", "2"),
+        ("--tp-size", "2", "--gpus", "0"),
+        ("--tp-size", "2", "--gpus", "0,0"),
+        ("--gpus", "0"),
+    ],
+)
+def test_launcher_rejects_invalid_tp_placement(monkeypatch, argv) -> None:
+    with pytest.raises(SystemExit):
+        _parse(monkeypatch, "--model-path", "/models/x", *argv)
 
 
 def test_launcher_async_decode_flag_opt_in(monkeypatch) -> None:

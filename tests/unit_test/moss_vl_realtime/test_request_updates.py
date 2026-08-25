@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import queue
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,11 +11,7 @@ from sglang_omni.models.moss_vl_realtime import (
 )
 from sglang_omni.pipeline.control_plane import deserialize_message, serialize_message
 from sglang_omni.pipeline.coordinator import Coordinator
-from sglang_omni.pipeline.tp_control import (
-    TPFollowerControlPlane,
-    TPLeaderFanout,
-    TPWorkMessage,
-)
+from sglang_omni.pipeline.tp_control import TPWorkMessage
 from sglang_omni.proto import RequestUpdateMessage
 from sglang_omni.scheduling.messages import IncomingMessage
 from sglang_omni.scheduling.omni_scheduler import OmniScheduler
@@ -132,29 +128,6 @@ def test_stage_delivers_request_update_to_scheduler_inbox() -> None:
     asyncio.run(_run())
 
 
-def test_request_update_fans_out_to_tp_followers() -> None:
-    async def _run() -> None:
-        work_queue: queue.Queue = queue.Queue()
-        fanout = TPLeaderFanout(
-            "decode",
-            follower_work_queues=[work_queue],
-            follower_abort_queues=[],
-        )
-        message = RequestUpdateMessage("req-1", _event(0, 0.0).to_dict())
-
-        await fanout.fanout_control(message)
-
-        follower = TPFollowerControlPlane(
-            stage_name="decode",
-            work_queue=work_queue,
-            abort_queue=queue.Queue(),
-        )
-        assert await follower.recv() == message
-        follower.close()
-
-    asyncio.run(_run())
-
-
 def test_tp_work_marks_request_active_before_updates() -> None:
     async def _run() -> None:
         scheduler = FakeScheduler()
@@ -204,6 +177,35 @@ def test_omni_scheduler_buffers_early_update_and_replays_after_build() -> None:
 
     assert list(req_data.request_updates) == [{"seq_no": 0}]
     assert "req-1" not in scheduler._pending_request_updates
+
+
+def test_tp_scheduler_broadcasts_request_update_from_entry_rank(monkeypatch) -> None:
+    scheduler = OmniScheduler.__new__(OmniScheduler)
+    scheduler.inbox = __import__("queue").Queue()
+    scheduler.tp_size = 2
+    scheduler.is_entry_rank = True
+    scheduler.tp_group = SimpleNamespace(rank=0, ranks=[0, 1])
+    scheduler.tp_cpu_group = object()
+    message = IncomingMessage("req-1", "request_update", {"seq_no": 0})
+    scheduler.inbox.put(message)
+    seen = {}
+
+    def fake_broadcast(messages, rank, group, *, src):
+        seen.update(messages=messages, rank=rank, group=group, src=src)
+        return messages
+
+    monkeypatch.setattr(
+        "sglang_omni.scheduling.omni_scheduler.broadcast_pyobj",
+        fake_broadcast,
+    )
+
+    assert scheduler._recv_scheduler_messages() == [message]
+    assert seen == {
+        "messages": [message],
+        "rank": 0,
+        "group": scheduler.tp_cpu_group,
+        "src": 0,
+    }
 
 
 def test_session_controller_enforces_order_time_and_final() -> None:

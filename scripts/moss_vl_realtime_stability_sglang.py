@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-window-s", type=float, default=20.0)
     parser.add_argument("--disconnect-at-s", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=2048)
+    parser.add_argument("--max-tokens-per-turn", type=float, default=86400.0)
     parser.add_argument("--input-queue-capacity", type=int, default=4)
     parser.add_argument("--mem-sample-s", type=float, default=2.0)
     parser.add_argument("--gpu-index", type=int, default=1)
@@ -164,6 +165,7 @@ async def configure(
             "prompt": case["initial_prompt"],
             "system_prompt": case.get("system_prompt"),
             "max_new_tokens": args.max_new_tokens,
+            "max_tokens_per_turn": args.max_tokens_per_turn,
             "input_queue_capacity": args.input_queue_capacity,
         }
     )
@@ -385,6 +387,8 @@ async def run_reconnect_probe(
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
+    if args.max_tokens_per_turn <= 0:
+        raise ValueError("--max-tokens-per-turn must be positive")
     case = load_case(args.manifest, args.case_id)
     result: dict[str, Any] = {
         "backend": "sglang-omni",
@@ -396,6 +400,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "probe_at_s": args.probe_at_s,
             "disconnect_at_s": args.disconnect_at_s,
             "input_queue_capacity": args.input_queue_capacity,
+            "max_tokens_per_turn": args.max_tokens_per_turn,
         },
     }
     result["stream"] = await run_stream(args, case)

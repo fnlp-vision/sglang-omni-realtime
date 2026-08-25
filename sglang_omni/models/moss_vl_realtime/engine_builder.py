@@ -36,6 +36,10 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         enable_async_decode: bool = False,
     ) -> None:
         self.max_running_requests = int(max_running_requests)
+        if self.max_running_requests != 1:
+            raise ValueError(
+                "MOSS-VL realtime currently supports exactly one live request"
+            )
         self.max_new_tokens = int(max_new_tokens)
         self.context_length = int(context_length)
         self.mem_fraction_static = mem_fraction_static
@@ -112,6 +116,13 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             # multimodal frame extend stays on the eager path.
             defaults["disable_prefill_cuda_graph"] = True
         return defaults
+
+    def adjust_overrides(self, overrides: dict[str, Any]) -> None:
+        if int(overrides.get("tp_size", 1)) > 1:
+            # Omni maps every TP rank to one visible local cuda:0. SGLang's
+            # custom all-reduce rendezvous requires distinct visible device
+            # ordinals, so this topology must use NCCL collectives.
+            overrides["disable_custom_all_reduce"] = True
 
     def setup_model(
         self,

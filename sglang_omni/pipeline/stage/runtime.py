@@ -301,7 +301,6 @@ class Stage:
                             ProfilerStartMessage,
                             ProfilerStopMessage,
                             AdminMessage,
-                            RequestUpdateMessage,
                         ),
                     )
                 ):

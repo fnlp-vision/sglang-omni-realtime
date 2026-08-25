@@ -49,6 +49,9 @@ class SGLangGenerationEngineBuilder(ABC):
         *,
         device: str | None = None,
         gpu_id: int | None = None,
+        tp_rank: int = 0,
+        tp_size: int = 1,
+        nccl_port: int | None = None,
         dtype: str = "bfloat16",
         server_args_overrides: dict[str, Any] | None = None,
     ) -> Any:
@@ -70,6 +73,15 @@ class SGLangGenerationEngineBuilder(ABC):
         self.gpu_id = gpu_id
         self.dtype = dtype
 
+        tp_rank = int(tp_rank)
+        tp_size = int(tp_size)
+        if tp_size < 1:
+            raise ValueError("tp_size must be at least 1")
+        if not 0 <= tp_rank < tp_size:
+            raise ValueError(f"tp_rank must be in [0, {tp_size}), got {tp_rank}")
+        if tp_size > 1 and nccl_port is None:
+            raise ValueError("nccl_port is required when tp_size > 1")
+
         self.pre_infra_setup(checkpoint_dir)
 
         operator_selected_prefill_backend = _operator_selected_prefill_graph_backend(
@@ -79,6 +91,13 @@ class SGLangGenerationEngineBuilder(ABC):
             server_args_overrides=server_args_overrides,
             **self.generation_defaults(dtype=dtype),
         )
+        configured_tp_size = overrides.get("tp_size")
+        if configured_tp_size is not None and int(configured_tp_size) != tp_size:
+            raise ValueError(
+                "server_args_overrides tp_size conflicts with stage placement: "
+                f"{configured_tp_size} != {tp_size}"
+            )
+        overrides["tp_size"] = tp_size
         self.adjust_overrides(overrides)
         # Left unset, SGLang re-detects off a CUDA-first ladder that can contradict
         # placement. It owns the type, not the index.
@@ -101,6 +120,9 @@ class SGLangGenerationEngineBuilder(ABC):
         self.validate_before_infrastructure(server_args)
 
         infra_kwargs = dict(self.infra_kwargs())
+        if tp_size > 1:
+            infra_kwargs.setdefault("tp_rank", tp_rank)
+            infra_kwargs.setdefault("nccl_port", nccl_port)
         if self.model_arch_override is not None:
             infra_kwargs.setdefault("model_arch_override", self.model_arch_override)
         prefill_graph_backend = get_prefill_cuda_graph_backend(server_args)

@@ -9,6 +9,10 @@ def create_sglang_moss_vl_realtime_executor(
     model_path: str,
     *,
     device: str = "cuda:0",
+    gpu_id: int = 0,
+    tp_rank: int = 0,
+    tp_size: int = 1,
+    nccl_port: int | None = None,
     dtype: str = "bfloat16",
     max_running_requests: int = 1,
     max_new_tokens: int = 4096,
@@ -36,6 +40,10 @@ def create_sglang_moss_vl_realtime_executor(
     ).build(
         model_path,
         device=device,
+        gpu_id=gpu_id,
+        tp_rank=tp_rank,
+        tp_size=tp_size,
+        nccl_port=nccl_port,
         dtype=dtype,
         server_args_overrides=server_args_overrides,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from sglang_omni.models.moss_vl_realtime.batch_adapter import RUNTIME_STATE_ATTR
@@ -53,12 +54,15 @@ class _SilenceTokenizer(_Tokenizer):
         return "".join({10: "A", 11: "B"}.get(i, "") for i in token_ids)
 
 
-def _payload(*, stream: bool) -> StagePayload:
+def _payload(*, stream: bool, max_tokens_per_turn: float | None = None) -> StagePayload:
+    params = {"stream": stream, "max_new_tokens": 20}
+    if max_tokens_per_turn is not None:
+        params["max_tokens_per_turn"] = max_tokens_per_turn
     return StagePayload(
         request_id="req-1",
         request=OmniRequest(
             inputs={"initial_prompt": "Track the cup", "session_id": "session-1"},
-            params={"stream": stream, "max_new_tokens": 20},
+            params=params,
         ),
         data={},
     )
@@ -81,6 +85,7 @@ def test_request_builder_creates_pure_text_persistent_request() -> None:
     state = getattr(data.req, RUNTIME_STATE_ATTR)
     assert state is data.runtime_state
     assert state.session_id == "session-1"
+    assert state.max_tokens_per_turn == 86400.0
 
     data.generated_token_ids[:] = [10, 11]
     data.finish_reason = "stop"
@@ -88,6 +93,28 @@ def test_request_builder_creates_pure_text_persistent_request() -> None:
     assert result.data["text"] == "AB"
     assert result.data["session_id"] == "session-1"
     assert result.data["completion_tokens"] == 2
+
+
+def test_request_builder_sets_token_rate_on_runtime_state() -> None:
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=_Tokenizer(),
+        max_new_tokens=100,
+    )
+
+    data = request_builder(_payload(stream=False, max_tokens_per_turn=12.5))
+
+    assert data.runtime_state.max_tokens_per_turn == 12.5
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_request_builder_rejects_invalid_token_rate(value: float) -> None:
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=_Tokenizer(),
+        max_new_tokens=100,
+    )
+
+    with pytest.raises(ValueError, match="max_tokens_per_turn"):
+        request_builder(_payload(stream=False, max_tokens_per_turn=value))
 
 
 def test_stream_builder_accumulates_sampled_tokens_not_injected_context() -> None:

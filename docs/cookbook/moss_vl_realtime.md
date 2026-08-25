@@ -44,6 +44,22 @@ python examples/run_moss_vl_realtime_server.py \
   --port 8000
 ```
 
+For tensor parallel deployment, provide one distinct GPU per rank:
+
+```bash
+python examples/run_moss_vl_realtime_server.py \
+  --model-path /inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1 \
+  --tp-size 2 \
+  --gpus 0,1 \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+`--gpus` must contain exactly `--tp-size` unique GPU ids. Omni starts one
+process per rank and exposes only that rank's GPU as local `cuda:0`. This
+topology uses NCCL collectives; SGLang custom all-reduce is disabled because
+its rendezvous requires distinct visible device ordinals in every rank.
+
 The default server configuration is the validated single-stream setup:
 
 | Setting | Default | Notes |
@@ -53,6 +69,7 @@ The default server configuration is the validated single-stream setup:
 | Decode CUDA Graph | On | FlashInfer decode; dynamic frame extend remains eager |
 | KV page size | 1 | Fixed; realtime does not patch SGLang's paged allocator |
 | Async decode | Off | Optional `--enable-async-decode` |
+| Tensor parallelism | 1 | Use `--tp-size N --gpus g0,...,gN-1` |
 | Overlap scheduling | Off | Not supported by the realtime update invariants |
 
 Use `--disable-decode-cuda-graph` to run eager decode. When decode Graph is on,
@@ -96,6 +113,20 @@ same structure used by offline singleton video segments:
 ```
 
 ## WebSocket protocol
+
+`session.configure` accepts `max_tokens_per_turn`, matching the Transformers
+realtime API. Despite its historical name, this is a generation-rate cap in
+tokens per second, not a per-turn token-count limit. Its default `86400` is
+effectively unlimited. `max_new_tokens` remains the total generation budget for
+the persistent request.
+
+Rate limiting happens in the scheduler before model execution. The request
+keeps its KV allocation while ordinary decode waits, and the event loop
+continues accepting frames and prompt interrupts. Frame/prompt extend always
+takes priority over the decode-rate deadline, so a low output rate does not add
+the same delay to user input handling. All TP ranks receive the same request
+configuration and rank 0 broadcasts scheduler inputs to keep their forward
+sequence aligned.
 
 A normal frame follows this sequence:
 
