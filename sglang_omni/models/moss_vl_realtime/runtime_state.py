@@ -50,6 +50,14 @@ class MossVLRealtimeRuntimeState:
     # byte-identical to the un-windowed server.
     frame_records: list | None = field(default=None, repr=False)
     evicted_frame_count: int = 0
+    # Token-space encoder history: total encoder slots ever appended, counting
+    # frames the window already evicted. ``full_untruncated_fill_ids`` keeps
+    # one pad placeholder per historical encoder slot, so all token-space
+    # accounting (pending-token check, extend_range, prefix_indices length)
+    # must use this instead of encoder_length once frames are dropped. None
+    # means "not tracked yet" and behaves as encoder_length: no eviction can
+    # have happened, so the two spaces coincide.
+    appended_encoder_length: int | None = None
     phase: MossVLRealtimePhase = MossVLRealtimePhase.WAITING_FOR_EVENT
     _append_inflight: bool = field(default=False, init=False, repr=False)
 
@@ -85,6 +93,21 @@ class MossVLRealtimeRuntimeState:
         ):
             raise ValueError("next_decode_not_before must be finite and non-negative")
         self.next_decode_not_before = float(self.next_decode_not_before)
+        if self.appended_encoder_length is not None and (
+            isinstance(self.appended_encoder_length, bool)
+            or not isinstance(self.appended_encoder_length, int)
+            or self.appended_encoder_length < 0
+        ):
+            raise ValueError(
+                "appended_encoder_length must be a non-negative integer or None"
+            )
+
+    @property
+    def effective_appended_encoder_length(self) -> int:
+        """Token-space encoder-slot history, including evicted frames."""
+        if self.appended_encoder_length is None:
+            return self.encoder_length
+        return self.appended_encoder_length
 
     def bind_req_pool_index(self, req_pool_index: int) -> None:
         if isinstance(req_pool_index, bool) or not isinstance(req_pool_index, int):
@@ -239,6 +262,14 @@ class MossVLRealtimeKVAppendTransaction:
         self.state.encoder_length = self.after.encoder_length
         self.state.decoder_length = self.after.decoder_length
         self.state.visible_frame_count += self.added_frames
+        appended_baseline = (
+            self.before.encoder_length
+            if self.state.appended_encoder_length is None
+            else self.state.appended_encoder_length
+        )
+        self.state.appended_encoder_length = appended_baseline + (
+            self.after.encoder_length - self.before.encoder_length
+        )
         self.state.next_mrope_position = self.staged_next_mrope_position
         self.state._append_inflight = False
         self.state.phase = MossVLRealtimePhase.DECODING

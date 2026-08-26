@@ -115,8 +115,36 @@ def commit_moss_vl_realtime_batch(batch: Any) -> None:
             continue
         transaction.commit()
         delattr(req, KV_TRANSACTION_ATTR)
+        _reconcile_committed_kv_bookkeeping(batch, req)
     setattr(batch, _ALLOCATION_COMMITTED_ATTR, True)
     _clear_allocation_rollback_metadata(batch)
+
+
+def _reconcile_committed_kv_bookkeeping(batch: Any, req: Any) -> None:
+    """Restore KV-space accounting after upstream's token-space bookkeeping.
+
+    ``prepare_for_extend`` records ``kv_committed_len``/``kv.kv_allocated_len``
+    in token space (extend_range.end). Once the frame window has evicted
+    frames, token space includes pad placeholders of dropped frames and leads
+    the live KV layout; release would read duplicate slot ids out of the row's
+    dead zone. Resync to the committed KV layout and zero the dead zone so no
+    path can observe it. Without eviction the two spaces coincide and this is
+    a value-preserving no-op.
+    """
+    state = getattr(req, RUNTIME_STATE_ATTR, None)
+    if not isinstance(state, MossVLRealtimeRuntimeState):
+        return
+    kv_total = state.encoder_length + state.decoder_length
+    token_total = state.effective_appended_encoder_length + state.decoder_length
+    kv = getattr(req, "kv", None)
+    if kv is not None:
+        kv.kv_allocated_len = kv_total
+    if hasattr(req, "kv_committed_len"):
+        req.kv_committed_len = kv_total
+    if token_total > kv_total and state.req_pool_index is not None:
+        batch.req_to_token_pool.req_to_token[
+            state.req_pool_index, kv_total:token_total
+        ] = 0
 
 
 def rollback_moss_vl_realtime_batch(batch: Any) -> None:
@@ -221,13 +249,20 @@ def _build_plans(
             raise RuntimeError("realtime extend must contain at least one text token")
         if len(input_ids[index]) != raw_extend_length:
             raise RuntimeError("raw extend input length does not match request range")
-        expected_prefix_length = state.encoder_length + state.decoder_length
+        # prefix_indices is token-space by upstream contract
+        # (seq_len - len(prefix_indices) == extend_len); the committed row
+        # prefix itself is KV-space (surviving slots only after frame window
+        # evictions compacted the encoder region).
+        expected_prefix_length = (
+            state.effective_appended_encoder_length + state.decoder_length
+        )
         if len(req.prefix_indices) != expected_prefix_length:
             raise RuntimeError(
                 "cached prefix does not match committed realtime KV lengths"
             )
+        committed_row_length = state.encoder_length + state.decoder_length
         committed_row = batch.req_to_token_pool.req_to_token[
-            req_pool_index, :expected_prefix_length
+            req_pool_index, :committed_row_length
         ]
         invalid = torch.nonzero(committed_row <= 0, as_tuple=False).flatten()
         if invalid.numel():
@@ -243,7 +278,10 @@ def _build_plans(
                 f"raw_extend_length={req.extend_range.length})"
             )
         expected_raw_seq_len = (
-            total_encoder_length + state.decoder_length + decoder_extend_length
+            state.effective_appended_encoder_length
+            + encoder_delta_length
+            + state.decoder_length
+            + decoder_extend_length
         )
         if seq_lens[index] != expected_raw_seq_len:
             raise RuntimeError("raw sequence length is inconsistent with runtime state")

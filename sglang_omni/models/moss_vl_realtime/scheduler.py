@@ -577,7 +577,11 @@ class MossVLRealtimeScheduler(OmniScheduler):
         state: MossVLRealtimeRuntimeState,
         events: list[FramePromptEvent],
     ) -> MossVLRealtimeSegment:
-        committed_total = state.encoder_length + state.decoder_length
+        # Token space: fill ids retain one pad placeholder per historical
+        # encoder slot, including frames the sliding window already evicted.
+        committed_total = (
+            state.effective_appended_encoder_length + state.decoder_length
+        )
         req._refresh_fill_ids()
         pending_count = len(req.full_untruncated_fill_ids) - committed_total
         if pending_count != 1:
@@ -672,9 +676,15 @@ def _append_segment_to_request(
     state: MossVLRealtimeRuntimeState,
     segment: MossVLRealtimeSegment,
 ) -> None:
+    # Two coordinate spaces once the frame window has evicted frames:
+    # - KV space (encoder_length): surviving page-table entries only.
+    # - Token space (appended_encoder_length): every pad placeholder ever
+    #   appended; fill ids, extend ranges and prefix_indices lengths live here
+    #   because upstream asserts seq_len - len(prefix_indices) == extend_len.
     committed_total = state.encoder_length + state.decoder_length
+    token_total = state.effective_appended_encoder_length + state.decoder_length
     req._refresh_fill_ids()
-    if len(req.full_untruncated_fill_ids) != committed_total + 1:
+    if len(req.full_untruncated_fill_ids) != token_total + 1:
         raise RuntimeError("request does not have exactly one pending sampled token")
     state.pending_token_id = int(req.full_untruncated_fill_ids[-1])
     page_prefix = req._moss_vl_realtime_page_row[:committed_total]
@@ -719,10 +729,14 @@ def _append_segment_to_request(
     req.sampling_params.max_new_tokens += len(segment.raw_append_ids)
     req.multimodal_inputs = segment.multimodal_inputs
     req._refresh_fill_ids()
-    req.prefix_indices = req._moss_vl_realtime_page_row[:committed_total].to(
+    # Token-length prefix for the upstream extend invariants; its content is
+    # the current row itself, so the extend kernel's prefix rewrite is
+    # idempotent (the token-only dead zone past the compacted KV prefix
+    # round-trips unchanged).
+    req.prefix_indices = req._moss_vl_realtime_page_row[:token_total].to(
         dtype=torch.int64
     )
-    req.set_extend_range(committed_total, len(req.full_untruncated_fill_ids))
+    req.set_extend_range(token_total, len(req.full_untruncated_fill_ids))
 
 
 def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
@@ -768,8 +782,12 @@ def _guard_realtime_context_capacity(
     finished through the normal error path.
     """
     context_length = int(req_to_token_pool.req_to_token.shape[1])
-    committed_total = state.encoder_length + state.decoder_length
-    projected_total = committed_total + len(segment.raw_append_ids)
+    # The extend kernel writes token-space positions [token_total, +extend);
+    # the transaction layout needs KV-space [kv_total, +extend). Token space
+    # is the larger of the two once evicted frames drifted them apart.
+    kv_total = state.encoder_length + state.decoder_length
+    token_total = state.effective_appended_encoder_length + state.decoder_length
+    projected_total = max(kv_total, token_total) + len(segment.raw_append_ids)
     if projected_total + 1 > context_length:
         raise RuntimeError(
             "realtime request exhausted the context length: "
