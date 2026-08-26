@@ -55,7 +55,7 @@ def _segment():
         frame_ref="relay://frame-0",
     )
     return SimpleNamespace(
-        event=event,
+        events=(event,),
         raw_append_ids=(-101, -101, 301, 302),
         full_grid_thw=torch.tensor([[1, 2, 2]]),
         multimodal_inputs=SimpleNamespace(
@@ -109,6 +109,75 @@ def test_append_segment_keeps_pending_token_before_frame_event() -> None:
     assert req.skip_radix_cache_insert is False
     assert state.pending_token_id is None
     assert not hasattr(req, "_moss_vl_realtime_staged_visible_frame_counts")
+
+
+def test_append_segment_stages_multi_event_turn_transitions() -> None:
+    req = _Req()
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-1",
+        session_id="session-1",
+        req_pool_index=0,
+        decoder_length=2,
+        next_mrope_position=2,
+        turn_id=3,
+    )
+    req._moss_vl_realtime_state = state
+    page_table = torch.zeros((1, 12), dtype=torch.int32)
+    page_table[0, :2] = torch.tensor([11, 12])
+    bind_realtime_page_row(req, page_table)
+
+    events = (
+        FramePromptEvent(
+            request_id="req-1",
+            session_id="session-1",
+            seq_no=0,
+            timestamp=0.0,
+            frame_ref=None,
+            prompt="one",
+        ),
+        FramePromptEvent(
+            request_id="req-1",
+            session_id="session-1",
+            seq_no=1,
+            timestamp=1.0,
+            frame_ref="relay://frame-1",
+        ),
+        FramePromptEvent(
+            request_id="req-1",
+            session_id="session-1",
+            seq_no=2,
+            timestamp=2.0,
+            frame_ref=None,
+            prompt="two",
+        ),
+    )
+    segment = SimpleNamespace(
+        events=events,
+        raw_append_ids=(301, 302),
+        full_grid_thw=torch.tensor([[1, 2, 2]]),
+        multimodal_inputs=SimpleNamespace(
+            name="new-mm",
+            mrope_positions=torch.tensor([[1, 2], [1, 2], [1, 2]]),
+            visible_frame_counts=torch.tensor([0, 1]),
+        ),
+    )
+
+    _append_segment_to_request(req, state, segment)
+
+    assert req._moss_vl_realtime_staged_turn_transition == {
+        "interrupted_turn_id": 3,
+        "turn_id": 5,
+        "prompt_seq_nos": [0, 2],
+    }
+    assert [event["seq_no"] for event in req._moss_vl_realtime_staged_events] == [
+        0,
+        1,
+        2,
+    ]
+
+    _undo_appended_segment(req, segment)
+    assert not hasattr(req, "_moss_vl_realtime_staged_events")
+    assert not hasattr(req, "_moss_vl_realtime_staged_turn_transition")
 
 
 def test_silence_parks_request_without_releasing_kv() -> None:
@@ -344,3 +413,102 @@ def test_event_after_final_aborts_request_without_raising() -> None:
     assert [rid for rid, _ in errors] == ["req-ingest"]
     assert isinstance(errors[0][1], RuntimeError)
     assert aborted == ["req-ingest"]
+
+
+def test_parked_overrun_free_reconciles_request_accounting() -> None:
+    """Freeing a parked row's overrun slot must also repair its bookkeeping,
+    or the later abort path would free the same slot a second time."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.page_size = 1
+    scheduler.server_args = SimpleNamespace(disable_radix_cache=False)
+    freed: list[list[int]] = []
+    scheduler.token_to_kv_pool_allocator = SimpleNamespace(
+        free=lambda slots: freed.append([int(v) for v in slots])
+    )
+    req_to_token = torch.zeros((1, 16), dtype=torch.int64)
+    req_to_token[0, 8] = 77  # overrun slot at the committed offset
+    scheduler.req_to_token_pool = SimpleNamespace(req_to_token=req_to_token)
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-park",
+        session_id="session-park",
+        req_pool_index=0,
+        encoder_length=3,
+        decoder_length=5,
+        phase=MossVLRealtimePhase.WAITING_FOR_EVENT,
+    )
+    req = SimpleNamespace(
+        rid="req-park",
+        kv_committed_len=8,
+        kv=SimpleNamespace(kv_allocated_len=9),
+    )
+    req._moss_vl_realtime_state = state
+    batch = SimpleNamespace(reqs=[req], out_cache_loc=torch.tensor([77]))
+
+    scheduler._free_parked_overrun_step_slots(batch, [0])
+
+    assert freed == [[77]]
+    assert req.kv.kv_allocated_len == 8
+    assert req.kv_committed_len == 8
+    assert req_to_token[0, 8].item() == 0
+
+
+def test_park_also_filters_live_running_batch() -> None:
+    """Async resolve parks via a snapshot; the live batch must drop the row
+    too, otherwise the parked request ghost-decodes every step."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.silence_token_ids = (77,)
+    scheduler.parked_reqs = {}
+    scheduler.parked_since = {}
+    scheduler.realtime_sessions = MossVLRealtimeSessionController()
+    scheduler.realtime_sessions.open("req-park", "session-park")
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-park",
+        session_id="session-park",
+        phase=MossVLRealtimePhase.DECODING,
+    )
+    req = SimpleNamespace(
+        rid="req-park",
+        output_ids=array("q", [77]),
+        finished=lambda: False,
+    )
+    req._moss_vl_realtime_state = state
+
+    def _batch():
+        batch = SimpleNamespace(reqs=[req], batch_is_full=True)
+        def _filter(*, keep_indices, batch=batch):
+            batch.reqs = [batch.reqs[i] for i in keep_indices]
+        batch.filter_batch = _filter
+        return batch
+
+    snapshot = _batch()
+    live = _batch()
+    scheduler.running_batch = live
+
+    scheduler._park_silent_requests(snapshot)
+
+    assert snapshot.reqs == []
+    assert live.reqs == []
+    assert scheduler.parked_reqs == {"req-park": req}
+    assert state.phase is MossVLRealtimePhase.WAITING_FOR_EVENT
+
+
+def test_context_capacity_guard_rejects_overlength_extend() -> None:
+    from sglang_omni.models.moss_vl_realtime.scheduler import (
+        _guard_realtime_context_capacity,
+    )
+
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-full",
+        session_id="session-full",
+        req_pool_index=0,
+        encoder_length=10,
+        decoder_length=20,
+    )
+    segment = SimpleNamespace(raw_append_ids=tuple(range(50)))
+    pool = SimpleNamespace(req_to_token=torch.zeros((1, 64)))
+
+    with pytest.raises(RuntimeError, match="context length"):
+        _guard_realtime_context_capacity(SimpleNamespace(), state, segment, pool)
+
+    small = SimpleNamespace(raw_append_ids=tuple(range(10)))
+    _guard_realtime_context_capacity(SimpleNamespace(), state, small, pool)

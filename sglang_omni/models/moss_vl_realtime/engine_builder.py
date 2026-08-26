@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from transformers import AutoProcessor
+from transformers import AutoConfig, AutoProcessor
 
 from sglang_omni.models.moss_vl_realtime import request_builders
 from sglang_omni.models.moss_vl_realtime.model_runner import MossVLRealtimeModelRunner
@@ -51,6 +51,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             raise ValueError("MOSS-VL realtime requires page_size == 1")
         self.page_size = page_size
         self.enable_async_decode = bool(enable_async_decode)
+        self.model_vocab_size: int | None = None
         self.processor: Any = None
         self.segment_builder: MossVLRealtimeSegmentBuilder | None = None
         self.silence_token_ids: tuple[int, ...] = ()
@@ -85,6 +86,17 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         self.silence_token_ids = tuple(int(token_id) for token_id in silence_token_ids)
         if not self.silence_token_ids:
             raise ValueError("tokenizer cannot encode the silence marker")
+        hf_config = AutoConfig.from_pretrained(
+            checkpoint_dir,
+            trust_remote_code=True,
+        )
+        model_vocab_size = getattr(hf_config, "vocab_size", None)
+        text_config = getattr(hf_config, "text_config", None)
+        if model_vocab_size is None and text_config is not None:
+            model_vocab_size = getattr(text_config, "vocab_size", None)
+        self.model_vocab_size = (
+            None if model_vocab_size is None else int(model_vocab_size)
+        )
 
     def generation_defaults(self, *, dtype: str) -> dict[str, Any]:
         defaults = {
@@ -151,6 +163,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         return request_builders.make_moss_vl_realtime_scheduler_adapters(
             tokenizer=self.processor.tokenizer,
             max_new_tokens=self.max_new_tokens,
+            vocab_size=self.model_vocab_size,
         )
 
     def extra_scheduler_kwargs(self) -> dict[str, Any]:

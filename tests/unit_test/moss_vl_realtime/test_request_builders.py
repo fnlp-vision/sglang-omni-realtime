@@ -128,12 +128,14 @@ def test_stream_builder_accumulates_sampled_tokens_not_injected_context() -> Non
         tokenizer=tokenizer,
         silence_token_ids=(12,),
     )
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 3,
-        "timestamp": 1.5,
-        "frame_ref": "shm://frame",
-        "final": False,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 3,
+            "timestamp": 1.5,
+            "frame_ref": "shm://frame",
+            "final": False,
+        },
+    ]
 
     first = stream_builder("req-1", data, SimpleNamespace(data=10))
     second = stream_builder("req-1", data, SimpleNamespace(data=11))
@@ -167,14 +169,16 @@ def test_stream_builder_emits_prompt_processed_control_event() -> None:
         max_new_tokens=100,
     )
     data = request_builder(_payload(stream=True))
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 4,
-        "timestamp": 2.0,
-        "prompt": "How many?",
-        "final": True,
-        "interrupted_turn_id": 0,
-        "turn_id": 1,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 4,
+            "timestamp": 2.0,
+            "prompt": "How many?",
+            "final": True,
+            "interrupted_turn_id": 0,
+            "turn_id": 1,
+        },
+    ]
     stream_builder = make_moss_vl_realtime_stream_output_builder(
         tokenizer=tokenizer,
         silence_token_ids=(12,),
@@ -211,14 +215,16 @@ def test_stream_builder_decodes_text_within_each_turn() -> None:
     )
 
     first = stream_builder("req-1", data, SimpleNamespace(data=10))
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 4,
-        "timestamp": 2.0,
-        "prompt": "Interrupt",
-        "final": False,
-        "interrupted_turn_id": 0,
-        "turn_id": 1,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 4,
+            "timestamp": 2.0,
+            "prompt": "Interrupt",
+            "final": False,
+            "interrupted_turn_id": 0,
+            "turn_id": 1,
+        },
+    ]
     data.runtime_state.turn_id = 1
     second = stream_builder("req-1", data, SimpleNamespace(data=11))
 
@@ -241,12 +247,14 @@ def test_stream_builder_emits_every_silence_without_deduplication() -> None:
         max_new_tokens=100,
     )
     data = request_builder(_payload(stream=True))
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 5,
-        "timestamp": 3.0,
-        "frame_ref": "shm://frame",
-        "final": False,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 5,
+            "timestamp": 3.0,
+            "frame_ref": "shm://frame",
+            "final": False,
+        },
+    ]
     stream_builder = make_moss_vl_realtime_stream_output_builder(
         tokenizer=tokenizer,
         silence_token_ids=(12,),
@@ -292,22 +300,26 @@ def test_stream_builder_silence_tracks_input_and_prompt_turn() -> None:
         silence_token_ids=(12,),
     )
 
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 0,
-        "timestamp": 0.0,
-        "frame_ref": "shm://frame-0",
-        "final": False,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 0,
+            "timestamp": 0.0,
+            "frame_ref": "shm://frame-0",
+            "final": False,
+        },
+    ]
     frame_silence = stream_builder("req-1", data, SimpleNamespace(data=12))
-    data.req._moss_vl_realtime_processed_event = {
-        "seq_no": 1,
-        "timestamp": 1.0,
-        "frame_ref": "shm://frame-1",
-        "prompt": "What changed?",
-        "final": False,
-        "interrupted_turn_id": 0,
-        "turn_id": 1,
-    }
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 1,
+            "timestamp": 1.0,
+            "frame_ref": "shm://frame-1",
+            "prompt": "What changed?",
+            "final": False,
+            "interrupted_turn_id": 0,
+            "turn_id": 1,
+        },
+    ]
     data.runtime_state.turn_id = 1
     prompt_silence = stream_builder("req-1", data, SimpleNamespace(data=12))
 

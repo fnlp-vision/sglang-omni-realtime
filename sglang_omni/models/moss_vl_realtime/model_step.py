@@ -253,14 +253,17 @@ class MossVLRealtimeStepper:
         state: MossVLRealtimeRequestState,
         *,
         prompt: str | None = None,
+        prompts: Sequence[str] = (),
         frames: Sequence[tuple[Any, float]] = (),
     ) -> None:
-        """Append one atomic prompt/frame event and cache the new segment."""
+        """Append one drain cycle of prompts/frames and cache the new segment."""
+        all_prompts: list[str] = [prompt] if prompt is not None else []
+        all_prompts.extend(prompts)
         ordered_frames = sorted(frames, key=lambda item: item[1])
         frame_images = [image for image, _ in ordered_frames]
         frame_timestamps = [float(timestamp) for _, timestamp in ordered_frames]
         append_text = build_realtime_append_text(
-            prompt=prompt, frame_timestamps=frame_timestamps
+            prompts=all_prompts, frame_timestamps=frame_timestamps
         )
         if not append_text:
             raise ValueError("event must contain a prompt or at least one frame")

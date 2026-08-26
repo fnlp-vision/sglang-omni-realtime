@@ -89,15 +89,18 @@ def test_model_runner_commits_prompt_turn_transition() -> None:
         turn_id=2,
     )
     req = SimpleNamespace(
-        _moss_vl_realtime_staged_event={
-            "seq_no": 7,
-            "timestamp": 4.0,
-            "prompt": "What changed?",
-            "final": False,
-        },
+        _moss_vl_realtime_staged_events=[
+            {
+                "seq_no": 7,
+                "timestamp": 4.0,
+                "prompt": "What changed?",
+                "final": False,
+            },
+        ],
         _moss_vl_realtime_staged_turn_transition={
             "interrupted_turn_id": 2,
             "turn_id": 3,
+            "prompt_seq_nos": [7],
         },
     )
     setattr(req, RUNTIME_STATE_ATTR, state)
@@ -107,6 +110,45 @@ def test_model_runner_commits_prompt_turn_transition() -> None:
     runner.post_prefill(None, None, batch, [])
 
     assert state.turn_id == 3
-    assert req._moss_vl_realtime_processed_event["interrupted_turn_id"] == 2
-    assert req._moss_vl_realtime_processed_event["turn_id"] == 3
+    (processed,) = req._moss_vl_realtime_processed_events
+    assert processed["interrupted_turn_id"] == 2
+    assert processed["turn_id"] == 3
     assert not hasattr(req, "_moss_vl_realtime_staged_turn_transition")
+
+
+def test_model_runner_assigns_turn_per_prompt_in_batch() -> None:
+    state = MossVLRealtimeRuntimeState(
+        request_id="req-batch",
+        session_id="session-batch",
+        req_pool_index=0,
+        turn_id=0,
+    )
+    req = SimpleNamespace(
+        _moss_vl_realtime_staged_events=[
+            {"seq_no": 0, "timestamp": 0.0, "prompt": "p0", "final": False},
+            {"seq_no": 1, "timestamp": 1.0, "frame_ref": "relay://f1", "final": False},
+            {"seq_no": 2, "timestamp": 2.0, "prompt": "p2", "final": False},
+        ],
+        _moss_vl_realtime_staged_turn_transition={
+            "interrupted_turn_id": 0,
+            "turn_id": 2,
+            "prompt_seq_nos": [0, 2],
+        },
+    )
+    setattr(req, RUNTIME_STATE_ATTR, state)
+    batch = SimpleNamespace(reqs=[req], seq_lens_cpu=torch.tensor([3]))
+    runner = MossVLRealtimeModelRunner.__new__(MossVLRealtimeModelRunner)
+
+    runner.post_prefill(None, None, batch, [])
+
+    assert state.turn_id == 2
+    processed = req._moss_vl_realtime_processed_events
+    assert [
+        (
+            event["seq_no"],
+            event.get("interrupted_turn_id"),
+            event.get("turn_id"),
+        )
+        for event in processed
+    ] == [(0, 0, 1), (1, None, None), (2, 1, 2)]
+    assert not hasattr(req, "_moss_vl_realtime_staged_events")

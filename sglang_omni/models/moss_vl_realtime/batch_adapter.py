@@ -14,11 +14,13 @@ from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimeKVAppendTransaction,
     MossVLRealtimeRuntimeState,
 )
+from sglang_omni.models.moss_vl_realtime.segment import REALTIME_ADDED_FRAMES_KEY
 
 RUNTIME_STATE_ATTR = "_moss_vl_realtime_state"
 KV_TRANSACTION_ATTR = "_moss_vl_realtime_kv_transaction"
 _ALLOCATED_SLOTS_ATTR = "_moss_vl_realtime_allocated_slots"
 _ALLOCATION_RELEASED_ATTR = "_moss_vl_realtime_allocation_released"
+_ALLOCATION_COMMITTED_ATTR = "_moss_vl_realtime_allocation_committed"
 
 
 class MossVLRealtimeScheduleBatch(ScheduleBatch):
@@ -90,8 +92,11 @@ def prepare_moss_vl_realtime_encoder_info_extend(
                 batch.req_to_token_pool.req_to_token,
                 new_encoder_slots=plan.new_encoder_slots,
                 new_decoder_slots=plan.new_decoder_slots,
-                added_frames=1 if plan.new_encoder_slots.numel() else 0,
+                added_frames=_added_frames(plan),
                 next_mrope_position=_next_mrope_position(plan),
+                # Slot release on rollback is handled by the batch-level
+                # _release_allocated_slots; per-transaction release_slots is
+                # reserved for callers that allocate outside the batch path.
                 release_slots=None,
             )
             setattr(plan.req, KV_TRANSACTION_ATTR, transaction)
@@ -110,17 +115,32 @@ def commit_moss_vl_realtime_batch(batch: Any) -> None:
             continue
         transaction.commit()
         delattr(req, KV_TRANSACTION_ATTR)
+    setattr(batch, _ALLOCATION_COMMITTED_ATTR, True)
     _clear_allocation_rollback_metadata(batch)
 
 
 def rollback_moss_vl_realtime_batch(batch: Any) -> None:
+    has_active_transaction = False
     for req in reversed(batch.reqs):
         transaction = getattr(req, KV_TRANSACTION_ATTR, None)
         if transaction is None:
             continue
+        has_active_transaction = True
         transaction.rollback()
         delattr(req, KV_TRANSACTION_ATTR)
     _restore_request_kv_bookkeeping(batch)
+    if has_active_transaction:
+        _release_allocated_slots(batch)
+        return
+    if getattr(batch, _ALLOCATION_RELEASED_ATTR, False):
+        return
+    if getattr(batch, _ALLOCATION_COMMITTED_ATTR, False):
+        # The extend committed already: these slots are committed KV owned by
+        # the request now. Freeing them here would double-free them when the
+        # request later releases its cache. Nothing left to roll back.
+        return
+    # No transaction ever staged: a decode-step failure. Restore bookkeeping
+    # (done above) and free this step's freshly allocated slots.
     _release_allocated_slots(batch)
 
 
@@ -179,6 +199,9 @@ def _build_plans(
         total_encoder_length = int(
             getattr(mm_inputs, "num_image_tokens", state.encoder_length) or 0
         )
+        # Initial text-only prefill is the one path with no realtime segment:
+        # bootstrap the decoder length/mrope baseline from the committed prefix
+        # so the first frame extend can splice on top of it.
         if (
             state.encoder_length == 0
             and state.decoder_length == 0
@@ -297,6 +320,19 @@ def _install_batch_metadata(batch: Any, plans: list[_RealtimeExtendPlan]) -> Non
         dtype=torch.int64,
         pin_memory=pin_memory,
     )
+
+
+def _added_frames(plan: _RealtimeExtendPlan) -> int:
+    if not plan.new_encoder_slots.numel():
+        return 0
+    mm_inputs = plan.req.multimodal_inputs
+    items = getattr(mm_inputs, "mm_items", None) or ()
+    if not items:
+        raise RuntimeError("realtime extend with encoder slots has no media item")
+    added = items[0].model_specific_data.get(REALTIME_ADDED_FRAMES_KEY)
+    if not isinstance(added, int) or added <= 0:
+        raise RuntimeError("realtime media item is missing the added-frame count")
+    return added
 
 
 def _next_mrope_position(plan: _RealtimeExtendPlan) -> int:

@@ -48,24 +48,40 @@ class MossVLRealtimeModelRunner(ModelRunner):
                     state.next_mrope_position = decoder_length
                     state.phase = MossVLRealtimePhase.DECODING
                 state.pending_token_id = None
-                staged_event = getattr(
+                staged_events = getattr(
                     req,
-                    "_moss_vl_realtime_staged_event",
+                    "_moss_vl_realtime_staged_events",
                     None,
                 )
-                if staged_event is not None:
-                    processed_event = dict(staged_event)
-                    turn_transition = getattr(
+                if staged_events is not None:
+                    transition = getattr(
                         req,
                         "_moss_vl_realtime_staged_turn_transition",
                         None,
                     )
-                    if turn_transition is not None:
-                        processed_event.update(turn_transition)
-                        state.turn_id = int(turn_transition["turn_id"])
+                    # Assign one turn boundary per prompt, in prompt order.
+                    turn_transitions: dict[int, dict[str, int]] = {}
+                    if transition is not None:
+                        turn_cursor = int(transition["interrupted_turn_id"])
+                        for seq_no in transition["prompt_seq_nos"]:
+                            turn_transitions[int(seq_no)] = {
+                                "interrupted_turn_id": turn_cursor,
+                                "turn_id": turn_cursor + 1,
+                            }
+                            turn_cursor += 1
+                        state.turn_id = int(transition["turn_id"])
                         del req._moss_vl_realtime_staged_turn_transition
-                    req._moss_vl_realtime_processed_event = processed_event
-                    del req._moss_vl_realtime_staged_event
+                    processed_events: list[dict[str, Any]] = []
+                    for staged_event in staged_events:
+                        processed_event = dict(staged_event)
+                        turn_transition = turn_transitions.get(
+                            int(processed_event["seq_no"])
+                        )
+                        if turn_transition is not None:
+                            processed_event.update(turn_transition)
+                        processed_events.append(processed_event)
+                    req._moss_vl_realtime_processed_events = processed_events
+                    del req._moss_vl_realtime_staged_events
                 for attr_name, state_name in (
                     ("_moss_vl_realtime_staged_mrope_positions", "mrope_positions"),
                     (

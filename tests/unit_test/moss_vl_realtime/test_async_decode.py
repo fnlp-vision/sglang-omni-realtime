@@ -210,8 +210,8 @@ def test_resolve_and_process_drops_parked_overrun_row() -> None:
 
     scheduler._run_batch_resolve = _run_batch_resolve
     freed: list[tuple[object, list[int]]] = []
-    scheduler._free_overrun_step_slots = lambda locs, indices: freed.append(
-        (locs, indices)
+    scheduler._free_parked_overrun_step_slots = lambda batch_arg, indices: (
+        freed.append((batch_arg, indices))
     )
     processed: list[tuple[object, object]] = []
     scheduler.process_batch_result = lambda b, r: processed.append((b, r))
@@ -219,7 +219,7 @@ def test_resolve_and_process_drops_parked_overrun_row() -> None:
     scheduler._resolve_and_process(batch, object(), object())
 
     assert captured["skip_rids"] == {"req-parked"}
-    assert freed == [(batch.out_cache_loc, [1])]
+    assert freed == [(batch, [1])]
     assert batch.reqs == [live]
     result = processed[0][1]
     assert result.next_token_ids.tolist() == [100]

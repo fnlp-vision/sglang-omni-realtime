@@ -130,17 +130,27 @@ def build_realtime_frame_text(timestamp: float) -> str:
 
 
 def build_realtime_append_text(
-    *, prompt: str | None = None, frame_timestamps: Iterable[float] = ()
+    *,
+    prompts: Iterable[str] = (),
+    frame_timestamps: Iterable[float] = (),
 ) -> str:
-    """Build one append segment using the released realtime model ordering."""
+    """Build one drain-cycle append segment matching the Transformers reference.
+
+    Mirrors the reference ``_realtime_update_context`` drain semantics: prompts
+    come first in arrival order (each closes the current assistant turn and
+    opens the next user/assistant turn); whenever the same cycle also appends
+    frames, every prompt is followed by ``<|silence|>`` so the assistant turn
+    keeps its trained opener token. Frame wrappers come last, in the
+    caller-provided (timestamp-sorted) order.
+    """
     timestamps = tuple(frame_timestamps)
     text = ""
-    if prompt is not None:
+    for prompt in prompts:
         if not isinstance(prompt, str):
             raise TypeError("prompt must be a string")
         if not prompt:
             raise ValueError("prompt must not be empty")
-        text = (
+        text += (
             "<|im_end|>\n<|im_start|>user\n"
             f"{prompt}"
             "<|im_end|>\n<|im_start|>assistant\n"

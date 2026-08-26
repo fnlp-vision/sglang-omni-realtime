@@ -39,11 +39,38 @@ def test_realtime_append_text_matches_released_model_ordering() -> None:
         "<|time_end|><|image|><|vision_end|>"
     )
     assert build_realtime_append_text(
-        prompt="What changed?", frame_timestamps=[5.0]
+        prompts=["What changed?"], frame_timestamps=[5.0]
     ) == (
         "<|im_end|>\n<|im_start|>user\nWhat changed?"
         "<|im_end|>\n<|im_start|>assistant\n<|silence|>"
         "<|vision_start|><|time_start|>5.0 seconds"
+        "<|time_end|><|image|><|vision_end|>"
+    )
+
+
+def test_realtime_append_text_matches_reference_drain_batch_semantics() -> None:
+    # Mirrors the Transformers drain: prompts first in arrival order, one
+    # <|silence|> after each prompt when the cycle also carries frames, then
+    # the frame wrappers in (caller-sorted) timestamp order.
+    assert build_realtime_append_text(
+        prompts=["first question", "second question"],
+        frame_timestamps=[1.0, 2.0],
+    ) == (
+        "<|im_end|>\n<|im_start|>user\nfirst question"
+        "<|im_end|>\n<|im_start|>assistant\n<|silence|>"
+        "<|im_end|>\n<|im_start|>user\nsecond question"
+        "<|im_end|>\n<|im_start|>assistant\n<|silence|>"
+        "<|vision_start|><|time_start|>1.0 seconds"
+        "<|time_end|><|image|><|vision_end|>"
+        "<|vision_start|><|time_start|>2.0 seconds"
+        "<|time_end|><|image|><|vision_end|>"
+    )
+    # Prompts drained without frames get no injected silence token.
+    assert build_realtime_append_text(prompts=["hello"]) == (
+        "<|im_end|>\n<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n"
+    )
+    assert build_realtime_append_text(frame_timestamps=[1.0]) == (
+        "<|vision_start|><|time_start|>1.0 seconds"
         "<|time_end|><|image|><|vision_end|>"
     )
 

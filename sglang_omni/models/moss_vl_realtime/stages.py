@@ -23,6 +23,7 @@ def create_sglang_moss_vl_realtime_executor(
     disable_cuda_graph: bool = False,
     page_size: int = 1,
     enable_async_decode: bool = False,
+    frame_resolver: Any = None,
 ):
     from sglang_omni.models.moss_vl_realtime.engine_builder import (
         MossVLRealtimeEngineBuilder,
@@ -37,6 +38,7 @@ def create_sglang_moss_vl_realtime_executor(
         disable_cuda_graph=disable_cuda_graph,
         page_size=page_size,
         enable_async_decode=enable_async_decode,
+        frame_resolver=frame_resolver,
     ).build(
         model_path,
         device=device,

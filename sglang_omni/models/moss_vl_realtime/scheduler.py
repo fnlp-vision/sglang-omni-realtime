@@ -14,6 +14,7 @@ from PIL import Image
 from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch
 from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats
 from sglang.srt.observability.metrics_collector import QueueCount
+from sglang.srt.utils import broadcast_pyobj
 
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     RUNTIME_STATE_ATTR,
@@ -54,6 +55,18 @@ class MossVLRealtimeScheduler(OmniScheduler):
         server_args = kwargs.get("server_args")
         if server_args is not None and int(server_args.page_size) != 1:
             raise ValueError("MOSS-VL realtime requires page_size == 1")
+        if (
+            server_args is not None
+            and int(getattr(server_args, "tp_size", 1)) > 1
+            and frame_resolver is None
+        ):
+            raise ValueError(
+                "MOSS-VL realtime TP>1 requires an explicit frame_resolver: the "
+                "default resolver consumes shared-memory frames once, so ranks "
+                "would race (one unlinks while the others fail). Inject a "
+                "resolver every rank can use (e.g. file-based frames on a "
+                "shared filesystem)."
+            )
         self.segment_builder = segment_builder
         self.frame_resolver = frame_resolver or resolve_local_frame
         self.realtime_sessions = MossVLRealtimeSessionController()
@@ -128,9 +141,28 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if len(reqs) != 1:
             raise AssertionError("MOSS-VL realtime admitted multiple live requests")
         state = getattr(reqs[0], RUNTIME_STATE_ATTR, None)
-        return (
+        limited = (
             isinstance(state, MossVLRealtimeRuntimeState)
             and time.monotonic() < state.next_decode_not_before
+        )
+        return self._tp_consistent_decision(limited)
+
+    def _tp_consistent_decision(self, decision: Any) -> Any:
+        """Keep batch-production decisions identical across TP ranks.
+
+        Rate limits and parked-expiry deadlines read each rank's local clock;
+        without this, ranks could disagree at boundary instants and diverge
+        the forward lockstep (NCCL hang). Rank 0 decides and the value is
+        broadcast, mirroring the OmniScheduler idiom that disables
+        clock-based prefill coalescing for TP>1.
+        """
+        if getattr(self, "tp_size", 1) == 1:
+            return decision
+        return broadcast_pyobj(
+            decision,
+            self.tp_group.rank,
+            self.tp_cpu_group,
+            src=self.tp_group.ranks[0],
         )
 
     def _stamp_batch_launch(self, batch: Any) -> None:
@@ -172,11 +204,17 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if not candidate_reqs:
             return None
 
-        selected: list[tuple[Any, FramePromptEvent, MossVLRealtimeSegment]] = []
+        selected: list[tuple[Any, list[FramePromptEvent], MossVLRealtimeSegment]] = []
+        seen_request_ids: set[str] = set()
         for req in candidate_reqs:
             state = getattr(req, RUNTIME_STATE_ATTR, None)
             if not isinstance(state, MossVLRealtimeRuntimeState):
                 continue
+            if req.rid in seen_request_ids:
+                # A request can appear in both running_batch and parked_reqs
+                # transiently; never materialize it twice in one round.
+                continue
+            seen_request_ids.add(req.rid)
             session = self.realtime_sessions.get(req.rid)
             if (
                 session is None
@@ -189,9 +227,15 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 or req.finished()
             ):
                 continue
-            event = session.drain(max_events=1)[0]
+            # Drain every queued event in one round so the appended segment
+            # matches the Transformers reference drain: prompts first in
+            # arrival order, then frames sorted by timestamp.
+            events = session.drain()
             try:
-                segment = self._build_segment(req, state, event)
+                segment = self._build_segment(req, state, events)
+                _guard_realtime_context_capacity(
+                    req, state, segment, self.req_to_token_pool
+                )
                 bind_realtime_page_row(
                     req,
                     self.req_to_token_pool.req_to_token,
@@ -202,7 +246,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 self._emit_request_error(req.rid, exc)
                 self.abort(req.rid, defer_running_cleanup=False)
                 continue
-            selected.append((req, event, segment))
+            selected.append((req, events, segment))
 
         if not selected:
             return None
@@ -284,13 +328,52 @@ class MossVLRealtimeScheduler(OmniScheduler):
             for i, req in enumerate(batch.reqs)
             if pre_drop[i] and not req.finished() and not req.is_retracted
         ]
-        self._free_overrun_step_slots(batch.out_cache_loc, parked_drop_indices)
+        self._free_parked_overrun_step_slots(batch, parked_drop_indices)
         if result.next_token_ids is not None and keep:
             idx = torch.tensor(keep, device=result.next_token_ids.device)
             result.next_token_ids = result.next_token_ids[idx]
         batch.reqs = [batch.reqs[i] for i in keep]
         if batch.reqs:
             self.process_batch_result(batch, result)
+
+    def _free_parked_overrun_step_slots(self, batch: Any, drop_indices: list[int]) -> None:
+        """Free parked rows' overrun decode slots and reconcile their accounting.
+
+        Unlike finished/retracted rows (whose slots are released with the
+        request), a parked request stays live: its overrun slot was counted in
+        ``kv_allocated_len`` and written into the page row, so freeing it here
+        *without* adjusting the request bookkeeping would double-free it when
+        the parked request is later aborted/expired and releases its KV cache.
+        """
+        if not drop_indices:
+            return
+        if self.page_size != 1 or self.server_args.disable_radix_cache:
+            return
+        out_cache_loc = batch.out_cache_loc
+        if out_cache_loc is None:
+            logger.warning(
+                "parked overrun step-slot free skipped: out_cache_loc is None"
+            )
+            return
+        assert max(drop_indices) < out_cache_loc.numel(), (
+            f"overrun drop index {max(drop_indices)} out of range "
+            f"({out_cache_loc.numel()} step slots)"
+        )
+        idx = torch.tensor(drop_indices, dtype=torch.long, device=out_cache_loc.device)
+        self.token_to_kv_pool_allocator.free(out_cache_loc[idx])
+        req_to_token = self.req_to_token_pool.req_to_token
+        for index in drop_indices:
+            req = batch.reqs[index]
+            state = getattr(req, RUNTIME_STATE_ATTR, None)
+            if state is None or state.req_pool_index is None:
+                continue
+            committed_total = state.encoder_length + state.decoder_length
+            kv = getattr(req, "kv", None)
+            if kv is not None and int(kv.kv_allocated_len) > committed_total:
+                kv.kv_allocated_len = committed_total
+            if int(getattr(req, "kv_committed_len", committed_total)) > committed_total:
+                req.kv_committed_len = committed_total
+            req_to_token[state.req_pool_index, committed_total] = 0
 
     def process_batch_result(self, batch: Any, result: Any) -> None:
         for req in batch.reqs:
@@ -308,6 +391,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
     def _park_silent_requests(self, batch: Any) -> None:
         keep_indices: list[int] = []
+        newly_parked_rids: list[str] = []
         for index, req in enumerate(tuple(batch.reqs)):
             state = getattr(req, RUNTIME_STATE_ATTR, None)
             session = self.realtime_sessions.get(req.rid)
@@ -340,10 +424,32 @@ class MossVLRealtimeScheduler(OmniScheduler):
             state.mark_waiting()
             self.parked_reqs[req.rid] = req
             self.parked_since[req.rid] = time.monotonic()
+            newly_parked_rids.append(req.rid)
             logger.info("Realtime request %s parked after silence", req.rid)
         if len(keep_indices) != len(batch.reqs):
             batch.filter_batch(keep_indices=keep_indices)
             batch.batch_is_full = False
+        if newly_parked_rids:
+            self._drop_parked_from_live_running_batch(batch, newly_parked_rids)
+
+    def _drop_parked_from_live_running_batch(
+        self, processed_batch: Any, parked_rids: list[str]
+    ) -> None:
+        """Remove newly parked requests from the live running batch.
+
+        On the async (one-step lookahead) resolve path ``processed_batch`` is
+        a snapshot copy; without this the parked request would keep ghost
+        decoding from the live batch every step.
+        """
+        running_batch = getattr(self, "running_batch", None)
+        if running_batch is None or running_batch is processed_batch:
+            return
+        running_reqs = tuple(getattr(running_batch, "reqs", ()))
+        parked = set(parked_rids)
+        keep = [i for i, req in enumerate(running_reqs) if req.rid not in parked]
+        if len(keep) != len(running_reqs):
+            running_batch.filter_batch(keep_indices=keep)
+            running_batch.batch_is_full = False
 
     def _expire_parked_requests(self) -> None:
         now = time.monotonic()
@@ -352,6 +458,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
             for request_id, parked_at in self.parked_since.items()
             if now - parked_at >= self.parked_request_timeout_s
         ]
+        expired = self._tp_consistent_decision(expired)
         for request_id in expired:
             self._emit_request_error(
                 request_id,
@@ -370,7 +477,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
         self,
         req: Any,
         state: MossVLRealtimeRuntimeState,
-        event: FramePromptEvent,
+        events: list[FramePromptEvent],
     ) -> MossVLRealtimeSegment:
         committed_total = state.encoder_length + state.decoder_length
         req._refresh_fill_ids()
@@ -388,10 +495,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
             "committed_decoder_length": state.decoder_length,
             "pending_text_tokens": 1,
         }
-        if not event.has_frame:
-            return self.segment_builder.build_prompt(event, **common)
-        image = self.frame_resolver(event)
-        return self.segment_builder.build(event, image, **common)
+        frame_events = [event for event in events if event.has_frame]
+        images = [self.frame_resolver(event) for event in frame_events]
+        return self.segment_builder.build(events, images, **common)
 
     def abort(self, request_id: str, *, defer_running_cleanup: bool = True) -> None:
         pending = getattr(self, "_async_pending", None)
@@ -460,13 +566,19 @@ def _append_segment_to_request(
         segment.multimodal_inputs.visible_frame_counts.clone()
     )
     req._moss_vl_realtime_staged_full_grid_thw = segment.full_grid_thw.clone()
-    req._moss_vl_realtime_staged_event = segment.event.to_dict()
-    if segment.event.prompt is not None:
+    req._moss_vl_realtime_staged_events = [
+        event.to_dict() for event in segment.events
+    ]
+    prompt_seq_nos = [
+        event.seq_no for event in segment.events if event.prompt is not None
+    ]
+    if prompt_seq_nos:
         req._moss_vl_realtime_staged_turn_transition = {
             "interrupted_turn_id": state.turn_id,
-            "turn_id": state.turn_id + 1,
+            "turn_id": state.turn_id + len(prompt_seq_nos),
+            "prompt_seq_nos": prompt_seq_nos,
         }
-    if segment.event.final:
+    if any(event.final for event in segment.events):
         req._moss_vl_realtime_final_extend = True
     req.output_ids.extend(segment.raw_append_ids)
     req.sampling_params.max_new_tokens += len(segment.raw_append_ids)
@@ -494,7 +606,7 @@ def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     del req._moss_vl_realtime_staged_mrope_positions
     del req._moss_vl_realtime_staged_visible_frame_counts
     del req._moss_vl_realtime_staged_full_grid_thw
-    del req._moss_vl_realtime_staged_event
+    del req._moss_vl_realtime_staged_events
     if hasattr(req, "_moss_vl_realtime_staged_turn_transition"):
         del req._moss_vl_realtime_staged_turn_transition
     if hasattr(req, "_moss_vl_realtime_final_extend"):
@@ -502,6 +614,31 @@ def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     req._refresh_fill_ids()
     state = getattr(req, RUNTIME_STATE_ATTR)
     state.pending_token_id = None
+
+
+def _guard_realtime_context_capacity(
+    req: Any,
+    state: MossVLRealtimeRuntimeState,
+    segment: MossVLRealtimeSegment,
+    req_to_token_pool: Any,
+) -> None:
+    """Reject appends that would write past the page-table row width.
+
+    Realtime requests bypass admission's capacity check because every extend
+    also grows ``max_new_tokens``; without this guard, an over-length session
+    would reach the upstream triton kernel's unbounded req_to_token write.
+    Checked before any request mutation, so the request stays coherent and is
+    finished through the normal error path.
+    """
+    context_length = int(req_to_token_pool.req_to_token.shape[1])
+    committed_total = state.encoder_length + state.decoder_length
+    projected_total = committed_total + len(segment.raw_append_ids)
+    if projected_total + 1 > context_length:
+        raise RuntimeError(
+            "realtime request exhausted the context length: "
+            f"projected {projected_total + 1} > {context_length} tokens; "
+            "the session cannot accept more input and must end"
+        )
 
 
 def bind_realtime_page_row(req: Any, req_to_token: torch.Tensor) -> None:

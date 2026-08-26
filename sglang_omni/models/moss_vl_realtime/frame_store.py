@@ -67,12 +67,14 @@ class SharedMemoryFrameStore:
             self.cleanup(request_id)
 
 
-def resolve_shared_memory_frame(frame_ref: str) -> Image.Image:
+def resolve_shared_memory_frame(
+    frame_ref: str, *, max_frame_bytes: int = MAX_FRAME_BYTES
+) -> Image.Image:
     """Read, decode, and unlink one shared-memory image reference."""
     name = _shared_memory_name(frame_ref)
     shm = shared_memory.SharedMemory(name=name, create=False)
     try:
-        if shm.size <= 0 or shm.size > MAX_FRAME_BYTES:
+        if shm.size <= 0 or shm.size > max_frame_bytes:
             raise ValueError("shared-memory frame has invalid size")
         payload = bytes(shm.buf[: shm.size])
         with Image.open(BytesIO(payload)) as image:

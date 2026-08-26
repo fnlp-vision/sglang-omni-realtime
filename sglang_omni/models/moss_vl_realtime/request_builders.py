@@ -18,11 +18,12 @@ from sglang_omni.scheduling.messages import OutgoingMessage
 from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
 
 DEFAULT_SYSTEM_PROMPT = (
+    # Kept byte-identical to the Transformers reference default
+    # (mossvl_streaming_tf_5.12.1 modeling_moss_vl.py), including the em dash.
     "You are a helpful AI assistant specializing in real-time video analysis. "
-    "The video streams to you frame by frame. At every frame, you decide "
-    "independently whether to respond or stay silent - output `<|silence|>` "
-    "when nothing relevant has happened, and respond when the visual content "
-    "warrants it."
+    "The video streams to you frame by frame. At every frame, you decide independently "
+    "whether to respond or stay silent — output `<|silence|>` when nothing relevant "
+    "has happened, and respond when the visual content warrants it."
 )
 
 
@@ -44,12 +45,20 @@ def make_moss_vl_realtime_scheduler_adapters(
     *,
     tokenizer: Any,
     max_new_tokens: int,
+    vocab_size: int | None = None,
 ) -> tuple[
     Callable[[StagePayload], MossVLRealtimeRequestData],
     Callable[[MossVLRealtimeRequestData], StagePayload],
 ]:
     eos_token_id = int(tokenizer.eos_token_id)
-    vocab_size = max(int(getattr(tokenizer, "vocab_size", 0)), len(tokenizer))
+    # The NaN/boundary check compares sampled ids against this limit; use the
+    # model vocab when available (the LM head may be wider than the tokenizer
+    # vocab, e.g. due to padding) rather than rejecting legal tokens.
+    vocab_size = max(
+        int(vocab_size or 0),
+        int(getattr(tokenizer, "vocab_size", 0)),
+        len(tokenizer),
+    )
 
     def request_builder(payload: StagePayload) -> MossVLRealtimeRequestData:
         params = payload.request.params or {}
@@ -155,59 +164,62 @@ def make_moss_vl_realtime_stream_output_builder(
         req_output: Any,
     ) -> list[OutgoingMessage]:
         messages: list[OutgoingMessage] = []
-        processed_event = getattr(
+        processed_events = getattr(
             data.req,
-            "_moss_vl_realtime_processed_event",
+            "_moss_vl_realtime_processed_events",
             None,
         )
-        if processed_event is not None:
-            data.current_input_seq_no = int(processed_event["seq_no"])
-            data.current_input_timestamp = float(processed_event["timestamp"])
-            if processed_event.get("prompt") is not None:
-                data.turn_generated_token_ids.clear()
-                data.turn_emitted_text = ""
+        if processed_events is not None:
+            for processed_event in processed_events:
+                data.current_input_seq_no = int(processed_event["seq_no"])
+                data.current_input_timestamp = float(processed_event["timestamp"])
+                if processed_event.get("prompt") is not None:
+                    data.turn_generated_token_ids.clear()
+                    data.turn_emitted_text = ""
+                    messages.append(
+                        OutgoingMessage(
+                            request_id=request_id,
+                            type="stream",
+                            data={
+                                "event": "response.turn.interrupted",
+                                "turn_id": processed_event["interrupted_turn_id"],
+                                "next_turn_id": processed_event["turn_id"],
+                                "seq_no": processed_event["seq_no"],
+                                "modality": "control",
+                            },
+                            metadata={"modality": "control"},
+                        )
+                    )
+                processed_type = (
+                    "input.frame.processed"
+                    if processed_event.get("frame_ref") is not None
+                    else "input.prompt.processed"
+                )
+                processed_data = {
+                    "event": processed_type,
+                    "seq_no": processed_event["seq_no"],
+                    "timestamp": processed_event["timestamp"],
+                    "final": processed_event["final"],
+                    "modality": "control",
+                }
+                if processed_event.get("prompt") is not None:
+                    processed_data.update(
+                        {
+                            "interrupted_turn_id": processed_event[
+                                "interrupted_turn_id"
+                            ],
+                            "turn_id": processed_event["turn_id"],
+                        }
+                    )
                 messages.append(
                     OutgoingMessage(
                         request_id=request_id,
                         type="stream",
-                        data={
-                            "event": "response.turn.interrupted",
-                            "turn_id": processed_event["interrupted_turn_id"],
-                            "next_turn_id": processed_event["turn_id"],
-                            "seq_no": processed_event["seq_no"],
-                            "modality": "control",
-                        },
+                        data=processed_data,
                         metadata={"modality": "control"},
                     )
                 )
-            processed_type = (
-                "input.frame.processed"
-                if processed_event.get("frame_ref") is not None
-                else "input.prompt.processed"
-            )
-            processed_data = {
-                "event": processed_type,
-                "seq_no": processed_event["seq_no"],
-                "timestamp": processed_event["timestamp"],
-                "final": processed_event["final"],
-                "modality": "control",
-            }
-            if processed_event.get("prompt") is not None:
-                processed_data.update(
-                    {
-                        "interrupted_turn_id": processed_event["interrupted_turn_id"],
-                        "turn_id": processed_event["turn_id"],
-                    }
-                )
-            messages.append(
-                OutgoingMessage(
-                    request_id=request_id,
-                    type="stream",
-                    data=processed_data,
-                    metadata={"modality": "control"},
-                )
-            )
-            del data.req._moss_vl_realtime_processed_event
+            del data.req._moss_vl_realtime_processed_events
         token_data = req_output.data
         if token_data is None:
             return messages

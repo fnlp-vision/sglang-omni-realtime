@@ -49,6 +49,11 @@ def _batch():
             mrope_positions=torch.tensor(
                 [[0, 1, 7, 8, 9], [0, 1, 7, 8, 9], [0, 1, 7, 8, 9]]
             ),
+            mm_items=[
+                SimpleNamespace(
+                    model_specific_data={"realtime_added_frames": 1},
+                ),
+            ],
         ),
         kv_committed_len=4,
         kv=SimpleNamespace(kv_allocated_len=4),
@@ -210,3 +215,38 @@ def test_initial_text_prefill_adopts_radix_cache_hit() -> None:
     commit_moss_vl_realtime_batch(batch)
     assert state.decoder_length == 3
     assert state.next_mrope_position == 3
+
+
+def test_rollback_noop_after_successful_commit() -> None:
+    """A failure after commit must not free slots the request now owns."""
+    batch, req, state = _batch()
+    prepare_moss_vl_realtime_encoder_info_extend(
+        batch,
+        [[999, -101, -101, 101, 102]],
+        [9],
+    )
+    commit_moss_vl_realtime_batch(batch)
+    assert not hasattr(req, KV_TRANSACTION_ATTR)
+
+    rollback_moss_vl_realtime_batch(batch)
+
+    allocator = batch.token_to_kv_pool_allocator
+    assert allocator.released == []
+    # Bookkeeping restore converges on the committed lengths; not a truncation.
+    assert req.kv_committed_len == 9
+    assert req.kv.kv_allocated_len == 9
+
+
+def test_rollback_frees_current_step_slots_without_any_transaction() -> None:
+    """Decode-step failure: no extend transaction exists, so the batch's fresh
+    step slots are still owned by this attempt and must be freed here."""
+    batch, req, state = _batch()
+    assert not hasattr(req, KV_TRANSACTION_ATTR)
+
+    rollback_moss_vl_realtime_batch(batch)
+
+    allocator = batch.token_to_kv_pool_allocator
+    assert len(allocator.released) == 1
+    assert allocator.released[0].tolist() == [23, 13, 14, 24, 25]
+    assert req.kv_committed_len == 4
+    assert req.kv.kv_allocated_len == 4
