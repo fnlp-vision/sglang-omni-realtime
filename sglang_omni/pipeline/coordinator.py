@@ -502,7 +502,15 @@ class Coordinator:
         *,
         stage_name: str | None = None,
     ) -> None:
-        """Append an event to the stage that owns an active request's state."""
+        """Append an event to an active request, by default to the entry stage.
+
+        NOTE(routing): ``current_stage`` is only assigned at submit time and
+        never advanced, so without an explicit ``stage_name`` the update goes
+        to the entry stage — not "the stage currently holding the request",
+        which multi-stage pipelines do not track here. Callers targeting a
+        downstream stage must also tolerate the control-plane vs data-plane
+        ordering gap (an update sent this way can arrive before the submit).
+        """
         info = self._requests.get(request_id)
         if info is None:
             raise KeyError(f"Request {request_id} does not exist")

@@ -77,6 +77,8 @@ _ABORTED_REQUEST_ID_RETAINED = 5000
 _COMPLETED_REQUEST_ID_LIMIT = 10000
 _PENDING_STREAM_REQUEST_LIMIT = 10000
 _PENDING_STREAM_REQUEST_RETAINED = 5000
+_PENDING_REQUEST_UPDATE_LIMIT = 10000
+_PENDING_REQUEST_UPDATE_RETAINED = 5000
 
 
 class _PendingStreamIngress:
@@ -1688,6 +1690,7 @@ class OmniScheduler:
         if req_data is not None:
             self._apply_request_update(req_data, data)
             return
+        self._reserve_pending_request_update(request_id)
         self._pending_request_updates.setdefault(request_id, deque()).append(data)
 
     def _apply_request_update(self, req_data: Any, data: Any) -> None:
@@ -2660,6 +2663,20 @@ class OmniScheduler:
             "the %d-request limit",
             evict_count,
             _PENDING_STREAM_REQUEST_LIMIT,
+        )
+
+    def _reserve_pending_request_update(self, request_id: str) -> None:
+        pending = self._pending_request_updates
+        if request_id in pending or len(pending) < _PENDING_REQUEST_UPDATE_LIMIT:
+            return
+        evict_count = len(pending) - _PENDING_REQUEST_UPDATE_RETAINED + 1
+        for stale_request_id in list(islice(pending, evict_count)):
+            del pending[stale_request_id]
+        logger.warning(
+            "OmniScheduler evicted %d pending request-update entries after "
+            "reaching the %d-request limit",
+            evict_count,
+            _PENDING_REQUEST_UPDATE_LIMIT,
         )
 
     def _close_completed_request(self, req: Any) -> bool:

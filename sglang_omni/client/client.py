@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from contextlib import aclosing
 from dataclasses import replace
@@ -32,6 +33,9 @@ from sglang_omni.client.types import (
 )
 from sglang_omni.pipeline.coordinator import Coordinator
 from sglang_omni.proto import OmniRequest, RequestState, StreamMessage
+
+logger = logging.getLogger(__name__)
+
 
 
 class Client:
@@ -515,7 +519,10 @@ class Client:
                 chunk.text = text
             turn_id = result.get("turn_id")
             if turn_id is not None:
-                chunk.turn_id = int(turn_id)
+                try:
+                    chunk.turn_id = int(turn_id)
+                except (TypeError, ValueError):
+                    logger.warning("ignoring non-integral turn_id %r", turn_id)
             token_ids = result.get("token_ids")
             if token_ids is not None:
                 if not isinstance(token_ids, (list, tuple)):
@@ -580,7 +587,10 @@ class Client:
                 chunk.text = text
             turn_id = data.get("turn_id")
             if turn_id is not None:
-                chunk.turn_id = int(turn_id)
+                try:
+                    chunk.turn_id = int(turn_id)
+                except (TypeError, ValueError):
+                    logger.warning("ignoring non-integral turn_id %r", turn_id)
             token_ids = data.get("token_ids")
             if token_ids is not None:
                 if not isinstance(token_ids, (list, tuple)):
