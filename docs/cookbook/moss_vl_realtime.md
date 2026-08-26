@@ -60,6 +60,12 @@ process per rank and exposes only that rank's GPU as local `cuda:0`. This
 topology uses NCCL collectives; SGLang custom all-reduce is disabled because
 its rendezvous requires distinct visible device ordinals in every rank.
 
+Under TP>1, frame references (for example `shm://`) are resolved by rank 0
+only, and the pixels are broadcast to every rank over the TP CPU group; the
+single-consumer shared-memory frame lifecycle stays intact. A custom
+`frame_resolver` (the scheduler's Python parameter) is likewise executed only
+on rank 0 under TP.
+
 The default server configuration is the validated single-stream setup:
 
 | Setting | Default | Notes |

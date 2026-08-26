@@ -512,3 +512,89 @@ def test_context_capacity_guard_rejects_overlength_extend() -> None:
 
     small = SimpleNamespace(raw_append_ids=tuple(range(10)))
     _guard_realtime_context_capacity(SimpleNamespace(), state, small, pool)
+
+
+def test_tp_frame_resolution_broadcasts_rank0_pixels(monkeypatch) -> None:
+    import sglang_omni.models.moss_vl_realtime.scheduler as moss_scheduler
+    from PIL import Image
+
+    called: list[str] = []
+    source = Image.new("RGB", (3, 2), color=(10, 20, 30))
+
+    def _resolver(event):
+        called.append(event.frame_ref)
+        return source
+
+    def _scheduler(tp_rank: int) -> MossVLRealtimeScheduler:
+        scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+        scheduler.frame_resolver = _resolver
+        scheduler.tp_size = 2
+        scheduler.tp_rank = tp_rank
+        scheduler.tp_group = SimpleNamespace(rank=tp_rank, ranks=[0, 1])
+        scheduler.tp_cpu_group = object()
+        return scheduler
+
+    box: dict[str, Any] = {}
+
+    def _root_broadcast(payload, rank, group, src):
+        box["marker"] = payload
+        return payload
+
+    def _follower_broadcast(payload, rank, group, src):
+        # The collective contract: non-root contributes None and receives
+        # rank 0's payload.
+        assert payload is None
+        return box["marker"]
+
+    event = FramePromptEvent(
+        request_id="req-tp",
+        session_id="session-tp",
+        seq_no=0,
+        timestamp=0.0,
+        frame_ref="shm://frame-0",
+    )
+
+    root = _scheduler(tp_rank=0)
+    monkeypatch.setattr(moss_scheduler, "broadcast_pyobj", _root_broadcast)
+    images = root._resolve_frame_events_tp([event])
+    assert called == ["shm://frame-0"]
+    assert images[0].tobytes() == source.tobytes()
+
+    monkeypatch.setattr(moss_scheduler, "broadcast_pyobj", _follower_broadcast)
+    non_root = _scheduler(tp_rank=1)
+    images = non_root._resolve_frame_events_tp([event])
+    assert called == ["shm://frame-0"]  # non-root never opens the reference
+    assert len(images) == 1
+    assert images[0].size == (3, 2)
+    assert images[0].mode == "RGB"
+    assert images[0].tobytes() == source.tobytes()
+
+    def _boom(event):
+        raise FileNotFoundError("gone")
+
+    root.frame_resolver = _boom
+    monkeypatch.setattr(moss_scheduler, "broadcast_pyobj", _root_broadcast)
+    with pytest.raises(RuntimeError, match="rank-0 frame resolution failed"):
+        root._resolve_frame_events_tp([event])
+
+
+def test_single_rank_resolution_uses_resolver_directly() -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.tp_size = 1
+    called: list[str] = []
+
+    def _resolver(event):
+        called.append(event.frame_ref)
+        return object()
+
+    scheduler.frame_resolver = _resolver
+    event = FramePromptEvent(
+        request_id="req-tp",
+        session_id="session-tp",
+        seq_no=0,
+        timestamp=0.0,
+        frame_ref="shm://frame-0",
+    )
+    images = scheduler._resolve_frame_events_tp([event])
+    assert called == ["shm://frame-0"]
+    assert len(images) == 1

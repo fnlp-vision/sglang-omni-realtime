@@ -55,18 +55,6 @@ class MossVLRealtimeScheduler(OmniScheduler):
         server_args = kwargs.get("server_args")
         if server_args is not None and int(server_args.page_size) != 1:
             raise ValueError("MOSS-VL realtime requires page_size == 1")
-        if (
-            server_args is not None
-            and int(getattr(server_args, "tp_size", 1)) > 1
-            and frame_resolver is None
-        ):
-            raise ValueError(
-                "MOSS-VL realtime TP>1 requires an explicit frame_resolver: the "
-                "default resolver consumes shared-memory frames once, so ranks "
-                "would race (one unlinks while the others fail). Inject a "
-                "resolver every rank can use (e.g. file-based frames on a "
-                "shared filesystem)."
-            )
         self.segment_builder = segment_builder
         self.frame_resolver = frame_resolver or resolve_local_frame
         self.realtime_sessions = MossVLRealtimeSessionController()
@@ -158,12 +146,15 @@ class MossVLRealtimeScheduler(OmniScheduler):
         """
         if getattr(self, "tp_size", 1) == 1:
             return decision
-        return broadcast_pyobj(
-            decision,
+        # broadcast_pyobj serializes on the source rank (len() required), so
+        # scalar decisions travel in a one-element list.
+        (result,) = broadcast_pyobj(
+            [decision],
             self.tp_group.rank,
             self.tp_cpu_group,
             src=self.tp_group.ranks[0],
         )
+        return result
 
     def _stamp_batch_launch(self, batch: Any) -> None:
         """Start the token-rate interval at forward launch, matching HF."""
@@ -496,8 +487,45 @@ class MossVLRealtimeScheduler(OmniScheduler):
             "pending_text_tokens": 1,
         }
         frame_events = [event for event in events if event.has_frame]
-        images = [self.frame_resolver(event) for event in frame_events]
+        images = self._resolve_frame_events_tp(frame_events)
         return self.segment_builder.build(events, images, **common)
+
+    def _resolve_frame_events_tp(
+        self, frame_events: list[FramePromptEvent]
+    ) -> list[Any]:
+        """Resolve frame pixels; under TP>1 only rank 0 touches the reference.
+
+        Shared-memory frames are single-consumer (read-and-unlink): letting
+        every rank resolve locally races (one rank unlinks before another
+        opens). Rank 0 resolves and broadcasts (size, mode, raw bytes); other
+        ranks decode from the broadcast, so every rank encodes identical
+        pixels. A rank-0 failure is broadcast too, so all ranks raise the same
+        error and abort in lockstep.
+        """
+        if getattr(self, "tp_size", 1) == 1:
+            return [self.frame_resolver(event) for event in frame_events]
+        marker: Any = None
+        if self.tp_rank == 0:
+            try:
+                images = [self.frame_resolver(event) for event in frame_events]
+                marker = (
+                    True,
+                    [(_as_raw_pixel_payload(img)) for img in images],
+                )
+            except Exception as exc:
+                marker = (False, f"{type(exc).__name__}: {exc}")
+        ok, result = broadcast_pyobj(
+            marker,
+            self.tp_group.rank,
+            self.tp_cpu_group,
+            src=self.tp_group.ranks[0],
+        )
+        if not ok:
+            raise RuntimeError(f"rank-0 frame resolution failed: {result}")
+        return [
+            Image.frombytes(mode, size, raw).convert("RGB")
+            for size, mode, raw in result
+        ]
 
     def abort(self, request_id: str, *, defer_running_cleanup: bool = True) -> None:
         pending = getattr(self, "_async_pending", None)
@@ -645,6 +673,15 @@ def bind_realtime_page_row(req: Any, req_to_token: torch.Tensor) -> None:
     """Bind the live page-table row used when converting decode to extend."""
     req_pool_index = int(req.req_pool_idx)
     req._moss_vl_realtime_page_row = req_to_token[req_pool_index]
+
+
+def _as_raw_pixel_payload(image: Any) -> tuple[tuple[int, int], str, bytes]:
+    """Pack a resolved frame for the TP pixel broadcast as (size, mode, raw)."""
+    size = getattr(image, "size", None)
+    mode = getattr(image, "mode", None)
+    if size is None or mode is None or not hasattr(image, "tobytes"):
+        raise TypeError("frame resolvers must return a PIL image")
+    return tuple(size), str(mode), image.tobytes()
 
 
 def resolve_local_frame(event: FramePromptEvent) -> Image.Image:
