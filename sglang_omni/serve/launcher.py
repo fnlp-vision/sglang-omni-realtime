@@ -444,6 +444,9 @@ async def _run_server(
             enable_realtime=enable_realtime,
             enable_video_realtime=type(pipeline_config).supports_video_realtime,
             video_realtime_benchmark_mode=video_realtime_benchmark_mode,
+            video_realtime_parked_request_timeout_s=(
+                _video_realtime_parked_timeout_s(pipeline_config)
+            ),
             supports_realtime_audio_output=(
                 type(pipeline_config).code2wav_stage() is not None
             ),
@@ -457,12 +460,24 @@ async def _run_server(
         profiler_ctl = ProfilerControlClient(mp_runner.stage_control_endpoints)
         _mount_profiler_routes(app, profiler_ctl, profiler_dir)
 
+        uvicorn_kwargs: dict[str, Any] = {}
+        if type(pipeline_config).supports_video_realtime:
+            # Frames travel as binary WebSocket messages; the transport cap must
+            # cover MAX_FRAME_BYTES or large frames die silently at close-code
+            # 1009 before the frame store's own limit ever applies.
+            from sglang_omni.models.moss_vl_realtime.frame_store import (
+                MAX_FRAME_BYTES,
+            )
+
+            uvicorn_kwargs["ws_max_size"] = MAX_FRAME_BYTES + 256 * 1024
+
         config = uvicorn.Config(
             app,
             host=host,
             port=port,
             log_level=log_level,
             timeout_keep_alive=120,
+            **uvicorn_kwargs,
         )
         server = _PipelineUvicornServer(config)
         await _serve_with_failure_watch(server, [mp_runner.wait_failed()])
@@ -508,6 +523,23 @@ async def _serve_with_failure_watch(
         for task in watcher_tasks:
             if not task.done():
                 task.cancel()
+
+
+def _video_realtime_parked_timeout_s(pipeline_config: PipelineConfig) -> float:
+    """Read the realtime stage's parked idle timeout for protocol advertising.
+
+    The scheduler enforces this value; the serving layer only reports it, so a
+    stage that does not set one reports the scheduler's own default.
+    """
+    default = 300.0
+    if not type(pipeline_config).supports_video_realtime:
+        return default
+    for stage in pipeline_config.stages:
+        factory_args = getattr(stage, "factory_args", None) or {}
+        value = factory_args.get("parked_request_timeout_s")
+        if value is not None:
+            return float(value)
+    return default
 
 
 def launch_server(

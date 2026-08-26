@@ -185,6 +185,7 @@ def create_app(
     enable_realtime: bool = False,
     enable_video_realtime: bool = False,
     video_realtime_benchmark_mode: bool = False,
+    video_realtime_parked_request_timeout_s: float = 300.0,
     supports_realtime_audio_output: bool = False,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
@@ -215,6 +216,8 @@ def create_app(
             endpoint ``/v1/video/realtime``.
         video_realtime_benchmark_mode: Whether the MOSS-VL realtime endpoint
             accepts benchmark-only session options.
+        video_realtime_parked_request_timeout_s: Idle timeout advertised to
+            video realtime clients in ``session.configured``.
         supports_realtime_audio_output: Whether the mounted realtime endpoint
             can request streamed audio from the configured pipeline.
         allowed_local_media_path: Directory allowed for ``file://`` TTS
@@ -292,6 +295,7 @@ def create_app(
         register_video_realtime(
             app,
             allow_benchmark_mode=video_realtime_benchmark_mode,
+            parked_request_timeout_s=video_realtime_parked_request_timeout_s,
         )
 
     return app

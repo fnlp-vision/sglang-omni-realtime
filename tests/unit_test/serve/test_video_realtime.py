@@ -777,3 +777,54 @@ def test_video_realtime_rejects_benchmark_option_in_production_mode() -> None:
     assert error["type"] == "error"
     assert "requires server benchmark mode" in error["message"]
     assert client.updates == []
+
+
+def test_video_realtime_rejects_out_of_order_seq_without_killing_session() -> None:
+    client = _Client()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        websocket.receive_json()  # session.created
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+
+        websocket.send_json({"type": "input.prompt", "seq_no": 5, "prompt": "skip?"})
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "invalid_request"
+        assert "seq_no" in error["message"]
+
+        # The session survives: a well-ordered event is still accepted.
+        websocket.send_json(
+            {"type": "input.prompt", "seq_no": 0, "prompt": "How many?"}
+        )
+        accepted = websocket.receive_json()
+        assert accepted["type"] == "input.prompt.accepted"
+        assert accepted["seq_no"] == 0
+
+
+def test_video_realtime_client_abort_emits_terminal_session_done() -> None:
+    client = _Client()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        created = websocket.receive_json()
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+
+        websocket.send_json({"type": "session.abort"})
+        done = websocket.receive_json()
+        assert done["type"] == "session.done"
+        assert done["aborted"] is True
+
+    assert created["request_id"] in client.aborted

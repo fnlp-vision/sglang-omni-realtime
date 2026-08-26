@@ -114,6 +114,11 @@ same structure used by offline singleton video segments:
 
 ## WebSocket protocol
 
+`session.configure` accepts `prompt` (the initial user prompt), whose default
+is an empty string, matching the Transformers realtime reference. Production
+deployments are expected to pass the SFT prompt explicitly; the system prompt
+default is byte-identical to the reference implementation.
+
 `session.configure` accepts `max_tokens_per_turn`, matching the Transformers
 realtime API. Despite its historical name, this is a generation-rate cap in
 tokens per second, not a per-turn token-count limit. Its default `86400` is
@@ -141,9 +146,20 @@ A normal frame follows this sequence:
 9. Text arrives through `response.text.delta`; terminal requests end with
    `response.done` and `session.done`.
 
+`session.configured` also advertises two operational limits:
+`max_frame_bytes` (the largest binary frame the server accepts; the transport
+is configured to allow it end to end) and `parked_request_timeout_s` (the idle
+timeout after which a silence-parked request is aborted and the session ends).
+
 Frame metadata contains `seq_no`, video `timestamp`, optional `prompt`, `final`,
 and `mime_type`. Prompt-only updates use `input.prompt` and the same ordered
 sequence number space.
+
+Event ordering is validated at the WebSocket edge: `seq_no` must be dense,
+starting at 0 for the session, and frame timestamps must be
+non-decreasing. A violating event is rejected with a per-event
+`invalid_request` error and the session stays alive; only engine-internal
+failures abort the request.
 
 ### Text barge-in and turns
 
@@ -160,6 +176,14 @@ The scheduler applies the update at the next safe token boundary, retains the
 existing text and vision KV, and commits the prompt extend before confirming
 the transition. It does not abort the request or recreate the WebSocket.
 Already-running CUDA work is cooperative rather than forcibly cancelled.
+
+All events queued at one scheduler step are drained into a single segment,
+matching the Transformers reference drain: prompts are spliced first in
+arrival order and every prompt is followed by `<|silence|>` when the same
+drain cycle also appends frames (the trained assistant-turn opener); frames
+follow, sorted by timestamp. Multiple prompts in one cycle therefore transition
+through consecutive turn ids, and a frame that races with a prompt is appended
+after the prompt text.
 
 The observable event order is:
 
