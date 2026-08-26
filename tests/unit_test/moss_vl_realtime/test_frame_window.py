@@ -169,16 +169,41 @@ def test_plan_raw_window_boundary_is_strictly_greater() -> None:
     records = [_record(0.0), _record(35.0)]
     # Span exactly equals the window: the oldest frame is kept.
     assert plan_frame_window(records, _config()) is None
-    records = [_record(0.0), _record(35.0 + 1e-6)]
+    records = [_record(0.0), _record(1.0), _record(36.0 + 1e-6)]
     plan = plan_frame_window(records, _config())
     assert plan is not None
-    assert plan.pooled_raw_count == 1
+    assert plan.pooled_raw_count == 2
     assert plan.dropped_raw_count == 0
-    # A lone aged frame pools into a 1:1 virtual copy ahead of the raw region.
-    assert [r.timestamp for r in plan.new_records] == [0.0, 35.0 + 1e-6]
+    # One full ratio group folds into a virtual copy ahead of the raw region.
+    assert [r.timestamp for r in plan.new_records] == [1.0, 36.0 + 1e-6]
     assert plan.new_records[0].pooled is True
-    assert plan.new_records[0].pooled_sources == 1
+    assert plan.new_records[0].pooled_sources == 2
     assert plan.new_records[1].pooled is False
+
+
+def test_plan_holds_aged_remainder_until_ratio_group_fills() -> None:
+    """1fps aging produces one aged frame per evaluation; pooling partial
+    tail chunks would compress 1:1 forever. The remainder stays raw (a soft
+    overshoot of at most ratio-1 frames) until a full group is available."""
+    config = _config(raw_window_s=10.0, pool_ratio=4)
+    # 33 frames 1s apart; newest=32: frames with 32-ts>10 (ts<22) are aged.
+    records = [_record(float(i)) for i in range(33)]
+    plan = plan_frame_window(records, config)
+    assert plan is not None
+    # 22 aged, floor to 4 full groups; ts 20 and 21 stay raw beyond window.
+    assert plan.raw_chunks == ((0, 4, True), (4, 4, True), (8, 4, True), (12, 4, True), (16, 4, True))
+    assert plan.pooled_raw_count == 20
+    assert plan.produced_virtual_count == 5
+    kept_raw = [r.timestamp for r in plan.new_records if not r.pooled]
+    assert kept_raw == [float(i) for i in range(20, 33)]
+    assert len(plan.new_records) == 5 + 13
+    produced = [r for r in plan.new_records if r.pooled]
+    assert [r.pooled_sources for r in produced] == [4] * 5
+    assert [r.timestamp for r in produced] == [3.0, 7.0, 11.0, 15.0, 19.0]
+
+    # With only 3 aged frames (< ratio), nothing pools yet.
+    records = [_record(float(i)) for i in range(14)]
+    assert plan_frame_window(records, config) is None
 
 
 def test_plan_pools_aged_frames_into_virtual_prefix() -> None:
@@ -313,22 +338,22 @@ def test_covered_spans_mixed_layout() -> None:
         _record(0.0, pooled=True, sources=2),
         _record(10.0, pooled=True, sources=2),
         _record(20.0),
-        _record(30.0),
+        _record(23.0),
+        _record(27.0),
         _record(40.0),
     ]
     plan = plan_frame_window(
         records, _config(raw_window_s=15.0, pool_window_s=10.0)
     )
     assert plan is not None
-    # Raw window 15: aged raw = 20 only (40-20=20>15). Chunk (1 member) pooled
-    # -> produced virtual ts=20. Virtuals: 0,10,20 with pool window 10:
-    # 20-0=20>10 evict 0; 20-10=10 not >10 keep -> evicted_virtual_count == 1.
-    assert plan.evicted_virtual_count == 1
+    # Raw window 15: aged raw = 20 and 23 (40-23=17>15; 40-27=13 stays).
+    # One full chunk (2 members) pooled -> produced virtual ts=23. Virtuals
+    # 0,10,23 with pool window 10: 23-0=23>10 evict 0, 23-10=13>10 evict 1.
+    assert plan.evicted_virtual_count == 2
     spans = covered_spans(records, plan)
-    # new_records: kept virtual 10 (1:1 -> old row 1), produced virtual
-    # covering old raw row 2, kept raws 3 and 4.
-    assert spans == ((1, 2), (2, 3), (3, 4), (4, 5))
-    assert [r.timestamp for r in plan.new_records] == [10.0, 20.0, 30.0, 40.0]
+    # new_records: produced virtual covering old raw rows 2-3, kept raws 4,5.
+    assert spans == ((2, 4), (4, 5), (5, 6))
+    assert [r.timestamp for r in plan.new_records] == [23.0, 27.0, 40.0]
 
 
 # --- apply: page-table compaction + pooling ---------------------------------
@@ -475,8 +500,8 @@ def test_apply_updates_running_batch_encoder_lens() -> None:
 
 
 def test_apply_rejects_mismatched_record_spans() -> None:
-    records = [_record(0.0, slots=3), _record(50.0)]
-    state, req, req_to_token, allocator, pool = _harness([_record(t) for t in (0.0, 10.0, 50.0)])
+    records = [_record(0.0, slots=3), _record(1.0, slots=3), _record(50.0)]
+    state, req, req_to_token, allocator, pool = _harness([_record(t) for t in (0.0, 1.0, 50.0)])
     plan = plan_frame_window(records, _config())
     assert plan is not None
     with pytest.raises(RuntimeError, match="disagree with the encoder"):

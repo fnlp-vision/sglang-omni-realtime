@@ -5,11 +5,14 @@ newest raw frame by more than ``raw_window_s`` leave the raw region of the
 request's page-table row.
 
 Layer two (compressed window, ``pool_window_s`` + ``pool_ratio``): aged-out raw
-frames are not dropped outright — chunks of up to ``pool_ratio`` consecutive
-frames with identical spatial grids fold into one *virtual frame* whose K/V is
-the per-position mean of the members across every KV layer (T axis 4→1, H×W
-unchanged). The virtual frame's slots are freshly allocated and inserted at the
-end of the compressed region (the page-row prefix ahead of the raw frames).
+frames are not dropped outright — full chunks of exactly ``pool_ratio``
+consecutive frames with identical spatial grids fold into one *virtual frame*
+whose K/V is the per-position mean of the members across every KV layer (T
+axis ratio→1, H×W unchanged). Aged remainders below one full chunk stay raw
+until the group fills (streaming at 1fps would otherwise emit 1:1 virtual
+frames and never realize the compression). The virtual frame's slots are
+freshly allocated and inserted at the end of the compressed region (the
+page-row prefix ahead of the raw frames).
 Virtual frames trailing the newest virtual frame by more than ``pool_window_s``
 are freed for good — the frame pixels long ago entered the embedding store, so
 dropping the KV is "rolling the frame into memory".
@@ -227,14 +230,20 @@ def plan_frame_window(
         ) > config.raw_window_s:
             aged_raw += 1
 
-    # Layer two, step one: fold the aged raw prefix into chunks of pool_ratio
-    # (the trailing chunk may be partial). A chunk with mixed spatial grids
-    # cannot be position-wise mean-pooled, so it is dropped instead.
+    # Layer two, step one: fold the aged raw prefix into full chunks of
+    # pool_ratio. Frames age out of the raw window one at a time while the
+    # scheduler evaluates every decode gap; pooling partial chunks would fold
+    # each aged frame 1:1 into an uncompressed virtual frame and never realize
+    # the R:1 compression. Aged remainders (< ratio frames) therefore stay
+    # raw — a soft overshoot of at most ratio-1 frames until the group fills.
+    # A full chunk with mixed spatial grids cannot be position-wise
+    # mean-pooled, so it is dropped instead.
+    poolable_count = aged_raw // config.pool_ratio * config.pool_ratio
     raw_chunks: list[tuple[int, int, bool]] = []
     produced: list[RealtimeFrameRecord] = []
     cursor = 0
-    while cursor < aged_raw:
-        end = min(cursor + config.pool_ratio, aged_raw)
+    while cursor < poolable_count:
+        end = cursor + config.pool_ratio
         members = raws[cursor:end]
         poolable = all(
             (member.grid_h, member.grid_w, member.slots)
@@ -269,7 +278,7 @@ def plan_frame_window(
 
     if evicted_virtual == 0 and not raw_chunks:
         return None
-    new_records = virtuals_all[evicted_virtual:] + raws[aged_raw:]
+    new_records = virtuals_all[evicted_virtual:] + raws[poolable_count:]
     return FrameWindowPlan(
         evicted_virtual_count=evicted_virtual,
         raw_chunks=tuple(raw_chunks),
