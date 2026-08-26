@@ -34,6 +34,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         disable_cuda_graph: bool = False,
         page_size: int = 1,
         enable_async_decode: bool = False,
+        frame_window_config: Any | None = None,
     ) -> None:
         self.max_running_requests = int(max_running_requests)
         if self.max_running_requests != 1:
@@ -51,6 +52,11 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             raise ValueError("MOSS-VL realtime requires page_size == 1")
         self.page_size = page_size
         self.enable_async_decode = bool(enable_async_decode)
+        if frame_window_config is not None and not getattr(
+            frame_window_config, "enabled", False
+        ):
+            frame_window_config = None
+        self.frame_window_config = frame_window_config
         self.model_vocab_size: int | None = None
         self.processor: Any = None
         self.segment_builder: MossVLRealtimeSegmentBuilder | None = None
@@ -200,6 +206,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             "frame_resolver": self.frame_resolver,
             "silence_token_ids": self.silence_token_ids,
             "parked_request_timeout_s": self.parked_request_timeout_s,
+            "frame_window_config": self.frame_window_config,
         }
         scheduler_kwargs.update(extra)
         return MossVLRealtimeScheduler(**scheduler_kwargs)

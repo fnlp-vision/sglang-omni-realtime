@@ -21,6 +21,13 @@ from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     MossVLRealtimeScheduleBatch,
 )
 from sglang_omni.models.moss_vl_realtime.frame_store import resolve_shared_memory_frame
+from sglang_omni.models.moss_vl_realtime.frame_window import (
+    FRAME_RECORDS_STAGED_ATTR,
+    RealtimeFrameWindowConfig,
+    apply_frame_window_plan,
+    plan_frame_window,
+    stage_segment_frame_records,
+)
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimePhase,
@@ -48,6 +55,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
         frame_resolver: Callable[[FramePromptEvent], Any] | None = None,
         silence_token_ids: tuple[int, ...],
         parked_request_timeout_s: float = 300.0,
+        frame_window_config: RealtimeFrameWindowConfig | None = None,
         **kwargs: Any,
     ) -> None:
         if kwargs.get("enable_overlap", False):
@@ -59,6 +67,19 @@ class MossVLRealtimeScheduler(OmniScheduler):
         self.frame_resolver = frame_resolver or resolve_local_frame
         self.realtime_sessions = MossVLRealtimeSessionController()
         self._realtime_extend_batch: ScheduleBatch | None = None
+        self.frame_window_config = (
+            frame_window_config
+            if frame_window_config is not None and frame_window_config.enabled
+            else None
+        )
+        if self.frame_window_config is not None:
+            logger.info(
+                "Realtime frame window enabled: raw_window=%ss pool_window=%ss "
+                "pool_ratio=%d",
+                self.frame_window_config.raw_window_s,
+                self.frame_window_config.pool_window_s,
+                self.frame_window_config.pool_ratio,
+            )
         self.silence_token_ids = tuple(int(token_id) for token_id in silence_token_ids)
         if not self.silence_token_ids:
             raise ValueError("silence_token_ids must not be empty")
@@ -105,6 +126,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
     def get_next_batch_to_run(self) -> Any | None:
         self._expire_parked_requests()
+        self._evaluate_frame_window()
         if self._realtime_extend_batch is None:
             if self._async_pending is not None and self._has_pending_realtime_events():
                 # Update barrier: resolve the in-flight lookahead step before
@@ -115,6 +137,84 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if self._realtime_extend_batch is None and self._decode_rate_limited():
             return None
         return super().get_next_batch_to_run()
+
+    def _evaluate_frame_window(self) -> None:
+        """Evict/pool aged vision frames during a decode gap.
+
+        Runs between scheduling rounds (never mid-transaction). The plan is
+        derived purely from committed frame timestamps, so every TP rank
+        reaches the identical decision without a broadcast. An in-flight
+        async lookahead step is resolved first: rewriting the page row while
+        its forward reads the encoder region would serve stale indices.
+        """
+        config = getattr(self, "frame_window_config", None)
+        if config is None:
+            return
+        candidates: list[tuple[Any, MossVLRealtimeRuntimeState]] = []
+        seen: set[str] = set()
+        running_reqs = tuple(getattr(self.running_batch, "reqs", ()) or ())
+        for req in running_reqs + tuple(self.parked_reqs.values()):
+            if req.rid in seen or req.finished():
+                continue
+            seen.add(req.rid)
+            state = getattr(req, RUNTIME_STATE_ATTR, None)
+            if not isinstance(state, MossVLRealtimeRuntimeState):
+                continue
+            if state._append_inflight or state.phase not in (
+                MossVLRealtimePhase.DECODING,
+                MossVLRealtimePhase.WAITING_FOR_EVENT,
+            ):
+                continue
+            if not state.frame_records or state.req_pool_index is None:
+                continue
+            candidates.append((req, state))
+        if not candidates or self._realtime_extend_batch is not None:
+            return
+        if self._async_pending is not None:
+            self._resolve_pending_async()
+        for req, state in candidates:
+            try:
+                plan = plan_frame_window(tuple(state.frame_records), config)
+                if plan is None:
+                    continue
+                event = apply_frame_window_plan(
+                    req,
+                    state,
+                    plan,
+                    records=tuple(state.frame_records),
+                    req_to_token=self.req_to_token_pool.req_to_token,
+                    allocator=self.token_to_kv_pool_allocator,
+                    kv_pool_provider=self._token_to_kv_pool,
+                    running_batch=self.running_batch,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to apply realtime frame window for %s", req.rid
+                )
+                self._emit_request_error(req.rid, exc)
+                self.abort(req.rid, defer_running_cleanup=False)
+                continue
+            logger.info(
+                "Realtime frame window %s: evicted_virtual=%d pooled_raw=%d "
+                "produced_virtual=%d dropped_raw=%d encoder_length=%d->%d "
+                "surviving_frames=%d pool_free_slots=%s",
+                event.request_id,
+                event.evicted_virtual_frames,
+                event.pooled_raw_frames,
+                event.produced_virtual_frames,
+                event.dropped_raw_frames,
+                event.encoder_length_before,
+                event.encoder_length_after,
+                event.surviving_frame_count,
+                event.pool_free_slots,
+            )
+
+    def _token_to_kv_pool(self) -> Any | None:
+        worker = getattr(self, "tp_worker", None) or getattr(
+            self, "model_worker", None
+        )
+        runner = getattr(worker, "model_runner", None)
+        return getattr(runner, "token_to_kv_pool", None)
 
     def _decode_rate_limited(self) -> bool:
         """Defer ordinary decode without delaying frame or prompt ingestion.
@@ -232,6 +332,13 @@ class MossVLRealtimeScheduler(OmniScheduler):
                     self.req_to_token_pool.req_to_token,
                 )
                 _append_segment_to_request(req, state, segment)
+                if self.frame_window_config is not None:
+                    frame_records = stage_segment_frame_records(
+                        segment,
+                        merge_size=self.segment_builder.merge_size,
+                    )
+                    if frame_records is not None:
+                        setattr(req, FRAME_RECORDS_STAGED_ATTR, frame_records)
             except Exception as exc:
                 logger.exception("Failed to materialize realtime event for %s", req.rid)
                 self._emit_request_error(req.rid, exc)
@@ -635,6 +742,8 @@ def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     del req._moss_vl_realtime_staged_visible_frame_counts
     del req._moss_vl_realtime_staged_full_grid_thw
     del req._moss_vl_realtime_staged_events
+    if hasattr(req, FRAME_RECORDS_STAGED_ATTR):
+        delattr(req, FRAME_RECORDS_STAGED_ATTR)
     if hasattr(req, "_moss_vl_realtime_staged_turn_transition"):
         del req._moss_vl_realtime_staged_turn_transition
     if hasattr(req, "_moss_vl_realtime_final_extend"):

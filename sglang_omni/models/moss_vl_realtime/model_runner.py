@@ -11,6 +11,7 @@ from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     is_moss_vl_realtime_batch,
     rollback_moss_vl_realtime_batch,
 )
+from sglang_omni.models.moss_vl_realtime.frame_window import FRAME_RECORDS_STAGED_ATTR
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimePhase,
     MossVLRealtimeRuntimeState,
@@ -93,6 +94,14 @@ class MossVLRealtimeModelRunner(ModelRunner):
                     if hasattr(req, attr_name):
                         setattr(state, state_name, getattr(req, attr_name))
                         delattr(req, attr_name)
+                # Frame-window bookkeeping: only ever staged when the window
+                # is enabled, so this is a no-op on the default path.
+                staged_records = getattr(req, FRAME_RECORDS_STAGED_ATTR, None)
+                if staged_records is not None:
+                    if state.frame_records is None:
+                        state.frame_records = []
+                    state.frame_records.extend(staged_records)
+                    delattr(req, FRAME_RECORDS_STAGED_ATTR)
                 for name in (
                     "_moss_vl_realtime_previous_mm_inputs",
                     "_moss_vl_realtime_previous_extend_range",

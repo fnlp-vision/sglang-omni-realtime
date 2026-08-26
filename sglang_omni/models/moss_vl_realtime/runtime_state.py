@@ -45,6 +45,11 @@ class MossVLRealtimeRuntimeState:
     mrope_positions: torch.Tensor | None = field(default=None, repr=False)
     visible_frame_counts: torch.Tensor | None = field(default=None, repr=False)
     full_grid_thw: torch.Tensor | None = field(default=None, repr=False)
+    # Frame-window bookkeeping (sglang_omni .../frame_window.py). Both stay at
+    # their defaults while the window is disabled, so the off path is
+    # byte-identical to the un-windowed server.
+    frame_records: list | None = field(default=None, repr=False)
+    evicted_frame_count: int = 0
     phase: MossVLRealtimePhase = MossVLRealtimePhase.WAITING_FOR_EVENT
     _append_inflight: bool = field(default=False, init=False, repr=False)
 
@@ -57,6 +62,7 @@ class MossVLRealtimeRuntimeState:
             "visible_frame_count",
             "next_mrope_position",
             "turn_id",
+            "evicted_frame_count",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:

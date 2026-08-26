@@ -24,11 +24,24 @@ def create_sglang_moss_vl_realtime_executor(
     page_size: int = 1,
     enable_async_decode: bool = False,
     frame_resolver: Any = None,
+    realtime_frame_window_enabled: bool | None = None,
+    realtime_frame_window_raw_s: float | None = None,
+    realtime_frame_pool_window_s: float | None = None,
+    realtime_frame_pool_ratio: int | None = None,
 ):
     from sglang_omni.models.moss_vl_realtime.engine_builder import (
         MossVLRealtimeEngineBuilder,
     )
+    from sglang_omni.models.moss_vl_realtime.frame_window import (
+        RealtimeFrameWindowConfig,
+    )
 
+    frame_window_config = RealtimeFrameWindowConfig.resolve(
+        enabled=realtime_frame_window_enabled,
+        raw_window_s=realtime_frame_window_raw_s,
+        pool_window_s=realtime_frame_pool_window_s,
+        pool_ratio=realtime_frame_pool_ratio,
+    )
     return MossVLRealtimeEngineBuilder(
         max_running_requests=max_running_requests,
         max_new_tokens=max_new_tokens,
@@ -39,6 +52,7 @@ def create_sglang_moss_vl_realtime_executor(
         page_size=page_size,
         enable_async_decode=enable_async_decode,
         frame_resolver=frame_resolver,
+        frame_window_config=frame_window_config,
     ).build(
         model_path,
         device=device,

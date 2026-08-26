@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import Field
 
@@ -40,6 +40,35 @@ class MossVLRealtimePipelineConfig(PipelineConfig):
     model_path: str
     entry_stage: str = "moss_vl_realtime"
     stages: list[StageConfig] = Field(default_factory=_stages)
+
+    # Vision-KV two-level sliding window (all off by default; the windowed
+    # server path is unchanged when disabled). Environment variables override
+    # these fields at the serving process: REALTIME_FRAME_WINDOW_ENABLED,
+    # REALTIME_FRAME_WINDOW_RAW_S, REALTIME_FRAME_POOL_WINDOW_S,
+    # REALTIME_FRAME_POOL_RATIO.
+    realtime_frame_window_enabled: bool = False
+    realtime_frame_window_raw_s: float | None = None
+    realtime_frame_pool_window_s: float | None = None
+    realtime_frame_pool_ratio: int | None = None
+
+    def model_post_init(self, __context: Any = None) -> None:
+        super().model_post_init(__context)
+        window_args: dict[str, Any] = {}
+        if self.realtime_frame_window_enabled:
+            window_args["realtime_frame_window_enabled"] = True
+        if self.realtime_frame_window_raw_s is not None:
+            window_args["realtime_frame_window_raw_s"] = self.realtime_frame_window_raw_s
+        if self.realtime_frame_pool_window_s is not None:
+            window_args["realtime_frame_pool_window_s"] = (
+                self.realtime_frame_pool_window_s
+            )
+        if self.realtime_frame_pool_ratio is not None:
+            window_args["realtime_frame_pool_ratio"] = self.realtime_frame_pool_ratio
+        if window_args:
+            for stage in self.stages:
+                if stage.name != "moss_vl_realtime":
+                    continue
+                stage.factory_args = {**stage.factory_args, **window_args}
 
 
 EntryClass = MossVLRealtimePipelineConfig
