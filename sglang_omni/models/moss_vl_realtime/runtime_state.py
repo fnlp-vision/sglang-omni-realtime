@@ -36,7 +36,10 @@ class MossVLRealtimeRuntimeState:
     req_pool_index: int | None = None
     encoder_length: int = 0
     decoder_length: int = 0
-    visible_frame_count: int = 0
+    # Frames currently represented in the encoder region. Before any frame
+    # window eviction this equals the cumulative committed frame count;
+    # apply_frame_window_plan resets it to the surviving window rows.
+    surviving_frame_count: int = 0
     next_mrope_position: int = 0
     turn_id: int = 0
     max_tokens_per_turn: float = 86400.0
@@ -67,7 +70,7 @@ class MossVLRealtimeRuntimeState:
         for name in (
             "encoder_length",
             "decoder_length",
-            "visible_frame_count",
+            "surviving_frame_count",
             "next_mrope_position",
             "turn_id",
             "evicted_frame_count",
@@ -261,7 +264,7 @@ class MossVLRealtimeKVAppendTransaction:
         self._require_active()
         self.state.encoder_length = self.after.encoder_length
         self.state.decoder_length = self.after.decoder_length
-        self.state.visible_frame_count += self.added_frames
+        self.state.surviving_frame_count += self.added_frames
         appended_baseline = (
             self.before.encoder_length
             if self.state.appended_encoder_length is None

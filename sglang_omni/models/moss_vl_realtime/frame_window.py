@@ -29,6 +29,22 @@ Correctness anchors:
   (``sglang_model.use_realtime_full_grid_thw``) needs no changes.
 - Vision K was rotated with absolute MRoPE positions at write time, so evicting
   a prefix needs no position rewrite on the survivors.
+- Compaction deliberately does **not** go through the KV-append transaction:
+  ``apply_frame_window_plan`` validates everything that can fail (record/span
+  coverage, visible-count remap) and builds every derived tensor *before* the
+  page-row rewrite, so nothing past the ``allocator.free`` call can raise. A
+  pre-rewrite failure frees only the freshly allocated pooled slots and leaves
+  the committed layout untouched.
+- Pooled-virtual visibility is deliberately relaxed: a text token that saw at
+  least one member frame of a chunk is remapped to see the whole pooled frame,
+  including members that had not arrived when the token was generated. Combined
+  with the mean-pooled K representation (not a legal RoPE K at any single
+  position), this is a training-side-unseen distribution — which is why the
+  feature stays opt-in.
+- The window reclaims KV memory only. Token space keeps one pad placeholder per
+  historical encoder slot in ``full_untruncated_fill_ids``, so the context
+  budget (``_guard_realtime_context_capacity`` bills ``max(token, KV)``) still
+  bounds session lifetime; the window does not extend it.
 """
 
 from __future__ import annotations
@@ -45,7 +61,10 @@ from sglang_omni.models.moss_vl_realtime.kv_layout import (
     read_req_to_token_layout,
     write_req_to_token_layout,
 )
-from sglang_omni.models.moss_vl_realtime.segment import REALTIME_FULL_GRID_THW_KEY
+from sglang_omni.models.moss_vl_realtime.segment import (
+    REALTIME_FULL_GRID_THW_KEY,
+    _encoder_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +341,12 @@ def stage_segment_frame_records(
                 timestamp=float(event.timestamp),
                 grid_h=grid_h,
                 grid_w=grid_w,
-                slots=grid_h * grid_w // merge_square + 1,
+                # Slot accounting is single-sourced from the segment builder;
+                # with T == 1 enforced above this is grid_h*grid_w/merge**2 + 1.
+                slots=_encoder_length(
+                    torch.tensor([[temporal, grid_h, grid_w]], dtype=torch.long),
+                    int(merge_size),
+                ),
             )
         )
     return records
@@ -404,7 +428,8 @@ def apply_frame_window_plan(
     if not plan.removes_frames:
         raise ValueError("refusing to apply an empty frame window plan")
     records = tuple(records)
-    assert state.req_pool_index is not None
+    if state.req_pool_index is None:
+        raise RuntimeError("frame window requires a bound page-table row")
     layout = read_req_to_token_layout(
         req_to_token,
         req_pool_index=state.req_pool_index,
@@ -443,8 +468,13 @@ def apply_frame_window_plan(
 
     produced_runs: list[tuple[int, ...]] = []
     try:
+        # Validate the metadata side first: nothing past the row rewrite may
+        # raise, so coverage/remap checks and every derived tensor are built
+        # here, while the committed layout is still untouched.
+        prepared = _prepare_metadata_update(req, state, records=records, plan=plan)
         if poolable_chunks:
-            assert dst_slot_ids is not None and kv_pool is not None
+            if dst_slot_ids is None or kv_pool is None:
+                raise RuntimeError("pooling slots were not allocated")
             dst_slot_ids = dst_slot_ids.to(dtype=torch.long)
             width = dst_slot_ids.numel() // len(poolable_chunks)
             for chunk_index, (start, count, _) in enumerate(poolable_chunks):
@@ -491,10 +521,10 @@ def apply_frame_window_plan(
             torch.tensor(freed, dtype=torch.long, device=req_to_token.device)
         )
 
-    _apply_metadata_update(
+    _commit_metadata_update(
         req,
         state,
-        records=records,
+        prepared=prepared,
         plan=plan,
         new_encoder_slots=new_encoder_slots,
     )
@@ -582,37 +612,77 @@ def _pool_group_into_slots(
         v_buf.index_copy_(0, dst_slot_ids, pooled_v.view(width, *v_buf.shape[1:]))
 
 
-def _apply_metadata_update(
+@dataclass(frozen=True, slots=True)
+class _PreparedMetadataUpdate:
+    """Pre-validated metadata side of one apply; see ``_prepare_metadata_update``."""
+
+    dropped_units: int
+    full_grid_thw: torch.Tensor | None
+    # (owner tensor, replacement) pairs in ``_visible_counts_owners`` order.
+    visible_counts: tuple[tuple[Any, torch.Tensor], ...]
+
+
+def _prepare_metadata_update(
     req: Any,
     state: Any,
     *,
     records: tuple[RealtimeFrameRecord, ...],
     plan: FrameWindowPlan,
-    new_encoder_slots: tuple[int, ...],
-) -> None:
-    """Resync grid/mask/bookkeeping metadata with the compacted layout."""
+) -> _PreparedMetadataUpdate:
+    """Compute every fallible part of the metadata update up front.
+
+    Runs strictly before the page-row rewrite: span coverage and the
+    visible-count remap are validated and every derived tensor is built while
+    the committed layout is still untouched, so the post-rewrite commit step
+    degrades to assignments that cannot raise.
+    """
     spans = covered_spans(records, plan)
     remap = visible_count_remap(len(records), spans)
-    state.frame_records = list(plan.new_records)
+    full_grid_thw = None
+    if state.full_grid_thw is not None:
+        rows = [record.grid_row for record in plan.new_records]
+        full_grid_thw = torch.tensor(rows, dtype=torch.long)
+    visible_counts = []
+    for owner in _visible_counts_owners(req, state):
+        if owner.numel():
+            mapped = [remap[min(int(v), len(records))] for v in owner.tolist()]
+            new_counts = torch.tensor(mapped, dtype=owner.dtype, device=owner.device)
+        else:
+            new_counts = owner
+        visible_counts.append((owner, new_counts))
     dropped_units = plan.dropped_raw_count + sum(
         record.pooled_sources
         for record in records[: plan.evicted_virtual_count]
     )
-    state.evicted_frame_count += dropped_units
-    state.visible_frame_count = len(plan.new_records)
+    return _PreparedMetadataUpdate(
+        dropped_units=dropped_units,
+        full_grid_thw=full_grid_thw,
+        visible_counts=tuple(visible_counts),
+    )
+
+
+def _commit_metadata_update(
+    req: Any,
+    state: Any,
+    *,
+    prepared: _PreparedMetadataUpdate,
+    plan: FrameWindowPlan,
+    new_encoder_slots: tuple[int, ...],
+) -> None:
+    """Assign the prepared metadata; runs after the old slots were freed.
+
+    Nothing below may raise: a failure past the free would leave
+    ``kv_committed_len`` spanning cleared row space (slot id 0), which the
+    release path would then free into the shared allocator.
+    """
+    state.frame_records = list(plan.new_records)
+    state.evicted_frame_count += prepared.dropped_units
+    state.surviving_frame_count = len(plan.new_records)
 
     if state.full_grid_thw is not None:
-        rows = [record.grid_row for record in plan.new_records]
-        state.full_grid_thw = torch.tensor(rows, dtype=torch.long)
+        state.full_grid_thw = prepared.full_grid_thw
 
-    for owner in _visible_counts_owners(req, state):
-        if owner.numel():
-            mapped = [remap[min(int(v), len(records))] for v in owner.tolist()]
-            new_counts = torch.tensor(
-                mapped, dtype=owner.dtype, device=owner.device
-            )
-        else:
-            new_counts = owner
+    for owner, new_counts in prepared.visible_counts:
         _assign_visible_counts(req, state, owner, new_counts)
 
     mm_inputs = getattr(req, "multimodal_inputs", None)

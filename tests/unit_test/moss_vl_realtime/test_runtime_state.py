@@ -16,7 +16,7 @@ def _state() -> MossVLRealtimeRuntimeState:
         req_pool_index=1,
         encoder_length=2,
         decoder_length=2,
-        visible_frame_count=1,
+        surviving_frame_count=1,
         next_mrope_position=9,
     )
 
@@ -49,7 +49,7 @@ def test_kv_append_commits_layout_lengths_and_positions_atomically() -> None:
     assert state.phase is MossVLRealtimePhase.DECODING
     assert state.encoder_length == 4
     assert state.decoder_length == 5
-    assert state.visible_frame_count == 2
+    assert state.surviving_frame_count == 2
     assert state.next_mrope_position == 17
 
 
@@ -77,7 +77,7 @@ def test_kv_append_rolls_back_page_table_and_releases_only_new_slots() -> None:
     assert state.phase is MossVLRealtimePhase.WAITING_FOR_EVENT
     assert state.encoder_length == 2
     assert state.decoder_length == 2
-    assert state.visible_frame_count == 1
+    assert state.surviving_frame_count == 1
     assert state.next_mrope_position == 9
 
 

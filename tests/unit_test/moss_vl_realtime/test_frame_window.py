@@ -79,7 +79,7 @@ def _enabled_state(records, *, grid_rows=None):
         req_pool_index=0,
         encoder_length=sum(r.slots for r in records),
         decoder_length=3,
-        visible_frame_count=len(records),
+        surviving_frame_count=len(records),
     )
     state.frame_records = list(records)
     rows = grid_rows if grid_rows is not None else [r.grid_row for r in records]
@@ -401,7 +401,7 @@ def test_apply_pools_two_frames_and_compacts_row() -> None:
     assert torch.allclose(pool.v_buffer[1][901], torch.full((2, 4), 3.0))
     # Metadata resync.
     assert state.encoder_length == 10
-    assert state.visible_frame_count == 5
+    assert state.surviving_frame_count == 5
     assert state.evicted_frame_count == 0
     assert state.full_grid_thw.tolist() == [[1, 2, 2]] * 5
     # Kept-count remap: K = [0,1,1,2,3,4,5]; [0,3,5] -> [0,2,4].
@@ -516,6 +516,120 @@ def test_apply_rejects_mismatched_record_spans() -> None:
         )
 
 
+def test_apply_validates_plan_coverage_before_rewriting_row() -> None:
+    """A plan/record coverage mismatch must abort before any page-row mutation.
+
+    The applied records (two 3-slot frames) and the planned records (three
+    2-slot frames) agree on the slot sum, so only the span-coverage check can
+    catch the mismatch. Past the fix, that check runs before the rewrite: the
+    committed row and the bookkeeping must be left exactly as they were, with
+    only the freshly allocated pooled slots returned to the allocator.
+    """
+    records_apply = [_record(0.0, slots=3), _record(1.0, slots=3)]
+    state, req, req_to_token, allocator, pool = _harness(records_apply)
+    plan = plan_frame_window([_record(0.0), _record(10.0), _record(50.0)], _config())
+    assert plan is not None
+    row_before = req_to_token.clone()
+
+    with pytest.raises(RuntimeError, match="does not cover"):
+        apply_frame_window_plan(
+            req,
+            state,
+            plan,
+            records=records_apply,
+            req_to_token=req_to_token,
+            allocator=allocator,
+            kv_pool_provider=lambda: pool,
+        )
+
+    assert torch.equal(req_to_token, row_before)
+    # Only the freshly allocated dst slots (3-wide pooled frame) come back.
+    assert sorted(allocator.freed) == [900, 901, 902]
+    assert state.encoder_length == 6
+    assert [r.timestamp for r in state.frame_records] == [0.0, 1.0]
+    assert state.surviving_frame_count == 2
+    assert req.kv_committed_len == 9
+
+
+def test_apply_supports_consecutive_eviction_rounds() -> None:
+    """A second plan/apply round must round-trip on the compacted row."""
+    from sglang_omni.models.moss_vl_realtime.kv_layout import insert_encoder_slots
+
+    records = [_record(t) for t in (0.0, 10.0, 20.0, 30.0, 40.0, 50.0)]
+    state, req, req_to_token, allocator, pool = _harness(records)
+    cfg = _config(raw_window_s=25.0)
+
+    # Round 1: (0,10) pool into V1; frame 20 ages but waits for its ratio peer.
+    plan1 = plan_frame_window(records, cfg)
+    assert plan1 is not None
+    event1 = apply_frame_window_plan(
+        req,
+        state,
+        plan1,
+        records=records,
+        req_to_token=req_to_token,
+        allocator=allocator,
+        kv_pool_provider=lambda: pool,
+    )
+    assert (event1.pooled_raw_frames, event1.produced_virtual_frames) == (2, 1)
+    assert state.encoder_length == 10  # [V1][20][30][40][50]
+
+    # Emulate the next segment commit: one new 2-slot frame lands in the
+    # encoder region (inserted ahead of the decoder tail).
+    insert_encoder_slots(
+        req_to_token,
+        req_pool_index=0,
+        encoder_length=state.encoder_length,
+        decoder_length=state.decoder_length,
+        new_slots=[950, 951],
+    )
+    state.encoder_length += 2
+    state.frame_records.append(_record(60.0))
+    req.kv_committed_len += 2
+    req.kv.kv_allocated_len += 2
+
+    # Round 2 on the compacted row: (20,30) pool into V2.
+    plan2 = plan_frame_window(tuple(state.frame_records), cfg)
+    assert plan2 is not None
+    event2 = apply_frame_window_plan(
+        req,
+        state,
+        plan2,
+        records=tuple(state.frame_records),
+        req_to_token=req_to_token,
+        allocator=allocator,
+        kv_pool_provider=lambda: pool,
+    )
+
+    assert (event2.pooled_raw_frames, event2.produced_virtual_frames) == (2, 1)
+    assert event2.evicted_virtual_frames == 0
+    assert req_to_token[0, :13].tolist() == [
+        900,
+        901,
+        902,
+        903,
+        108,
+        109,
+        110,
+        111,
+        950,
+        951,
+        50,
+        60,
+        70,
+    ]
+    assert req_to_token[0, 13:].count_nonzero().item() == 0
+    assert sorted(allocator.freed) == list(range(100, 108))
+    assert state.encoder_length == 10
+    assert state.surviving_frame_count == 5
+    assert state.evicted_frame_count == 0
+    assert [r.pooled for r in state.frame_records] == [True, True, False, False, False]
+    assert state.full_grid_thw.tolist() == [[1, 2, 2]] * 5
+    assert req.kv_committed_len == 13
+    assert req.kv.kv_allocated_len == 13
+    assert req.multimodal_inputs.num_image_tokens == 10
+
+
 # --- scheduler hook ---------------------------------------------------------
 
 
@@ -562,6 +676,44 @@ def test_scheduler_hook_skips_mid_transaction() -> None:
     scheduler._evaluate_frame_window()
     assert allocator.freed == []
     assert state.encoder_length == 6
+
+
+def test_undo_appended_segment_clears_staged_frame_records() -> None:
+    """Rollback of a staged segment must not leak staged frame records."""
+    from sglang_omni.models.moss_vl_realtime.scheduler import _undo_appended_segment
+
+    state = MossVLRealtimeRuntimeState(request_id="req-fw", session_id="session-fw")
+    req = SimpleNamespace(
+        output_ids=[11, 12, 13],
+        sampling_params=SimpleNamespace(max_new_tokens=8),
+        multimodal_inputs="staged-mm",
+        extend_range=(2, 3),
+        prefix_indices=[7],
+        skip_radix_cache_insert=True,
+        _refresh_fill_ids=lambda: None,
+        _moss_vl_realtime_previous_mm_inputs="prev-mm",
+        _moss_vl_realtime_previous_extend_range=(0, 2),
+        _moss_vl_realtime_previous_prefix_indices=[5],
+        _moss_vl_realtime_previous_skip_radix_cache_insert=False,
+        _moss_vl_realtime_staged_mrope_positions=torch.zeros(3, 3),
+        _moss_vl_realtime_staged_visible_frame_counts=torch.zeros(3),
+        _moss_vl_realtime_staged_full_grid_thw=torch.zeros(1, 3),
+        _moss_vl_realtime_staged_events=[],
+    )
+    req._moss_vl_realtime_state = state
+    setattr(req, FRAME_RECORDS_STAGED_ATTR, [_record(0.0)])
+    segment = SimpleNamespace(raw_append_ids=[13])
+
+    _undo_appended_segment(req, segment)
+
+    assert not hasattr(req, FRAME_RECORDS_STAGED_ATTR)
+    assert req.output_ids == [11, 12]
+    assert req.sampling_params.max_new_tokens == 7
+    assert req.multimodal_inputs == "prev-mm"
+    assert req.extend_range == (0, 2)
+    assert req.prefix_indices == [5]
+    assert req.skip_radix_cache_insert is False
+    assert state.pending_token_id is None
 
 
 # --- model-runner record consumption --------------------------------------

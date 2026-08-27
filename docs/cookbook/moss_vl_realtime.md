@@ -230,6 +230,31 @@ python examples/run_moss_vl_realtime_server.py \
 
 Do not enable benchmark mode for production traffic.
 
+## Vision KV sliding window (opt-in)
+
+Long-running sessions can bound vision KV memory with a two-level window:
+recent frames stay raw, aged frames fold into mean-pooled virtual frames
+(`pool_ratio` frames to one), and virtual frames older than `pool_window_s`
+are evicted. It is disabled by default; enable it via the pipeline config or
+`REALTIME_FRAME_WINDOW_ENABLED=1` (thresholds: `REALTIME_FRAME_WINDOW_RAW_S`,
+`REALTIME_FRAME_POOL_WINDOW_S`, `REALTIME_FRAME_POOL_RATIO`). With the feature
+off, serving behavior is byte-identical to the un-windowed server.
+
+Caveats to understand before enabling:
+
+- **This is an engineering degradation, not a training-equivalent path.** The
+  training distribution always sees the full vision KV. With the window on,
+  aged frames become a mean of RoPE-rotated K (not a legal RoPE position) and
+  evicted frames disappear entirely; a token that saw one member of a pooled
+  chunk attends to the chunk mean, including frames that had not arrived yet.
+  Expect output drift once the session's frame span exceeds `raw_window_s`.
+- **The window reclaims KV memory, not session length.** Token space keeps one
+  pad placeholder per historical encoder slot, so the max-context guard still
+  terminates long sessions at the same point as without the window.
+- **Under allocator pressure a round degrades to plain eviction** (no pooled
+  copy) so the raw-window bound still holds; watched in the logs as
+  "degraded to eviction".
+
 ## Validation
 
 Run the model-specific and serving tests:

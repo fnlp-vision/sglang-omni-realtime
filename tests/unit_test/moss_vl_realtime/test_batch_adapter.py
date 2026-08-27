@@ -34,7 +34,7 @@ def _batch():
         req_pool_index=1,
         encoder_length=2,
         decoder_length=2,
-        visible_frame_count=1,
+        surviving_frame_count=1,
         next_mrope_position=7,
         pending_token_id=999,
     )
@@ -104,7 +104,7 @@ def test_realtime_batch_adapter_splits_delta_encoder_and_relayouts_row() -> None
     commit_moss_vl_realtime_batch(batch)
     assert state.encoder_length == 4
     assert state.decoder_length == 5
-    assert state.visible_frame_count == 2
+    assert state.surviving_frame_count == 2
     assert state.next_mrope_position == 10
     assert state.phase is MossVLRealtimePhase.DECODING
     assert not hasattr(req, KV_TRANSACTION_ATTR)
