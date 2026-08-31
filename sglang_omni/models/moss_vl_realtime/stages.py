@@ -16,7 +16,7 @@ def create_sglang_moss_vl_realtime_executor(
     dtype: str = "bfloat16",
     max_running_requests: int = 1,
     max_new_tokens: int = 4096,
-    context_length: int = 131072,
+    context_length: int = 262144,
     mem_fraction_static: float | None = 0.40,
     server_args_overrides: dict[str, Any] | None = None,
     parked_request_timeout_s: float = 300.0,

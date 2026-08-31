@@ -374,7 +374,7 @@ def test_pipeline_config_targets_realtime_stage() -> None:
         "moss_vl_realtime.stages.create_sglang_moss_vl_realtime_executor"
     )
     factory_args = config.stages[0].factory_args
-    assert factory_args["context_length"] == 131072
+    assert factory_args["context_length"] == 262144
     assert factory_args["mem_fraction_static"] == 0.40
     assert factory_args["disable_cuda_graph"] is False
     assert factory_args["page_size"] == 1

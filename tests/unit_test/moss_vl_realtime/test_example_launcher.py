@@ -43,7 +43,7 @@ def test_launcher_async_decode_flag_defaults_off(monkeypatch) -> None:
 
     assert args.enable_async_decode is False
     assert args.decode_cuda_graph is True
-    assert args.context_length == 131072
+    assert args.context_length == 262144
     assert args.mem_fraction_static == 0.40
     assert args.enable_benchmark_mode is False
     assert args.disable_startup_warmup is False

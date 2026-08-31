@@ -921,3 +921,38 @@ def test_enforce_extend_memory_budget_can_victim_parked_session() -> None:
 
     assert aborted == ["req-parked"]
     assert [entry[0].rid for entry in remaining] == ["req-light"]
+
+
+def _pool_args(*, size: int, context_length: int, max_running: int = 1):
+    allocator = SimpleNamespace(size=size)
+    server_args = SimpleNamespace(
+        context_length=context_length, max_running_requests=max_running
+    )
+    return allocator, server_args
+
+
+def test_validate_kv_pool_capacity_rejects_pool_smaller_than_context() -> None:
+    allocator, server_args = _pool_args(size=100_000, context_length=262_144)
+    with pytest.raises(ValueError, match="mem-fraction-static"):
+        MossVLRealtimeScheduler._validate_kv_pool_capacity(allocator, server_args)
+
+
+def test_validate_kv_pool_capacity_warns_on_overcommit(caplog) -> None:
+    # Pool holds 300k tokens, two sessions of 262k each -> legal overcommit,
+    # but must warn so the operator knows degradation is heaviest-first.
+    allocator, server_args = _pool_args(
+        size=300_000, context_length=262_144, max_running=2
+    )
+    with caplog.at_level("WARNING"):
+        MossVLRealtimeScheduler._validate_kv_pool_capacity(allocator, server_args)
+    assert any("cannot hold" in record.message for record in caplog.records)
+
+
+def test_validate_kv_pool_capacity_passes_when_pool_is_sufficient() -> None:
+    allocator, server_args = _pool_args(size=600_000, context_length=262_144)
+    MossVLRealtimeScheduler._validate_kv_pool_capacity(allocator, server_args)
+
+
+def test_validate_kv_pool_capacity_skips_when_values_unknown() -> None:
+    allocator, server_args = _pool_args(size=0, context_length=0)
+    MossVLRealtimeScheduler._validate_kv_pool_capacity(allocator, server_args)

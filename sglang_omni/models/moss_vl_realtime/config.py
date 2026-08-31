@@ -21,7 +21,7 @@ def _stages() -> list[StageConfig]:
                 "device": "cuda:0",
                 "max_running_requests": 1,
                 "max_new_tokens": 4096,
-                "context_length": 131072,
+                "context_length": 262144,
                 "mem_fraction_static": 0.40,
                 "disable_cuda_graph": False,
                 "page_size": 1,

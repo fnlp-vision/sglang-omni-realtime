@@ -63,6 +63,10 @@ class MossVLRealtimeScheduler(OmniScheduler):
         server_args = kwargs.get("server_args")
         if server_args is not None and int(server_args.page_size) != 1:
             raise ValueError("MOSS-VL realtime requires page_size == 1")
+        if server_args is not None:
+            self._validate_kv_pool_capacity(
+                kwargs.get("token_to_kv_pool_allocator"), server_args
+            )
         self.segment_builder = segment_builder
         self.frame_resolver = frame_resolver or resolve_local_frame
         self.realtime_sessions = MossVLRealtimeSessionController()
@@ -91,6 +95,35 @@ class MossVLRealtimeScheduler(OmniScheduler):
         self.parked_since: dict[str, float] = {}
         kwargs["request_update_handler"] = self._ingest_request_update
         super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def _validate_kv_pool_capacity(allocator: Any, server_args: Any) -> None:
+        """Fail fast when the KV pool can never serve the configured shape.
+
+        A pool smaller than one session's context guarantees a mid-stream OOM
+        abort for every long session; refuse to boot with an actionable
+        message instead. Overcommit (pool < N × context) stays legal — the
+        memory-pressure guards degrade heaviest-first — but earns a warning.
+        """
+        pool_tokens = int(getattr(allocator, "size", 0) or 0)
+        context_length = int(getattr(server_args, "context_length", 0) or 0)
+        max_running = int(getattr(server_args, "max_running_requests", 1) or 1)
+        if not pool_tokens or not context_length:
+            return
+        if pool_tokens < context_length:
+            raise ValueError(
+                f"KV pool holds {pool_tokens} tokens, less than one realtime "
+                f"session context ({context_length}); raise "
+                "--mem-fraction-static or lower --context-length"
+            )
+        if pool_tokens < max_running * context_length:
+            logger.warning(
+                "KV pool (%d tokens) cannot hold %d full %d-token sessions; "
+                "under memory pressure the heaviest session is aborted first",
+                pool_tokens,
+                max_running,
+                context_length,
+            )
 
     def _enqueue_built_request(
         self,

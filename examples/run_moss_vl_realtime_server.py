@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated GPU ids for TP deployment, one GPU per rank.",
     )
     parser.add_argument("--mem-fraction-static", type=float, default=0.40)
-    parser.add_argument("--context-length", type=int, default=131072)
+    parser.add_argument("--context-length", type=int, default=262144)
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--parked-request-timeout", type=float, default=300.0)
     parser.add_argument(
