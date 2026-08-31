@@ -292,6 +292,30 @@ def test_decode_rate_gate_uses_monotonic_deadline(monkeypatch) -> None:
     assert scheduler._decode_rate_limited() is False
 
 
+def test_decode_rate_gate_with_multiple_live_requests(monkeypatch) -> None:
+    """Any due request releases the shared decode step; all-not-due defers."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+
+    def _req(rid: str, deadline: float) -> SimpleNamespace:
+        state = MossVLRealtimeRuntimeState(
+            request_id=rid,
+            session_id=f"session-{rid}",
+            max_tokens_per_turn=4,
+            next_decode_not_before=deadline,
+        )
+        return SimpleNamespace(_moss_vl_realtime_state=state)
+
+    scheduler.running_batch = SimpleNamespace(
+        reqs=[_req("req-a", 10.5), _req("req-b", 11.5)]
+    )
+    monkeypatch.setattr("time.monotonic", lambda: 10.0)
+    assert scheduler._decode_rate_limited() is True
+
+    # req-a is due: the batch decodes even though req-b is still waiting.
+    monkeypatch.setattr("time.monotonic", lambda: 10.5)
+    assert scheduler._decode_rate_limited() is False
+
+
 def test_batch_launch_sets_next_decode_deadline(monkeypatch) -> None:
     scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
     state = MossVLRealtimeRuntimeState(
@@ -490,6 +514,102 @@ def test_park_also_filters_live_running_batch() -> None:
     assert live.reqs == []
     assert scheduler.parked_reqs == {"req-park": req}
     assert state.phase is MossVLRealtimePhase.WAITING_FOR_EVENT
+
+
+def test_materialize_extensions_batches_two_sessions(monkeypatch) -> None:
+    """A running session and a parked session materialize into one extend batch."""
+    import sglang_omni.models.moss_vl_realtime.scheduler as moss_scheduler
+
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.realtime_sessions = MossVLRealtimeSessionController()
+    scheduler.frame_window_config = None
+    scheduler.enable_priority_scheduling = False
+    scheduler.enable_overlap = False
+    scheduler.spec_algorithm = None
+    scheduler.tree_cache = None
+    scheduler.model_config = None
+    scheduler.token_to_kv_pool_allocator = None
+    scheduler.req_to_token_pool = SimpleNamespace(req_to_token=None)
+
+    for rid in ("req-a", "req-b"):
+        scheduler.realtime_sessions.open(rid, f"session-{rid}")
+        scheduler.realtime_sessions.ingest(
+            rid,
+            FramePromptEvent(
+                request_id=rid,
+                session_id=f"session-{rid}",
+                seq_no=0,
+                timestamp=0.0,
+                frame_ref=f"relay://{rid}-0",
+            ),
+        )
+
+    def _req(rid: str, phase: MossVLRealtimePhase) -> SimpleNamespace:
+        state = MossVLRealtimeRuntimeState(
+            request_id=rid, session_id=f"session-{rid}", phase=phase
+        )
+        return SimpleNamespace(
+            rid=rid, _moss_vl_realtime_state=state, finished=lambda: False
+        )
+
+    req_a = _req("req-a", MossVLRealtimePhase.DECODING)
+    req_b = _req("req-b", MossVLRealtimePhase.WAITING_FOR_EVENT)
+
+    filtered: dict[str, list[int]] = {}
+    running_batch = SimpleNamespace(
+        reqs=[req_a],
+        batch_is_full=True,
+        filter_batch=lambda *, keep_indices: filtered.update(
+            keep_indices=list(keep_indices)
+        ),
+    )
+    scheduler.running_batch = running_batch
+    scheduler.parked_reqs = {"req-b": req_b}
+    scheduler.parked_since = {"req-b": 1.0}
+
+    scheduler._build_segment = lambda req, state, events: f"segment-{req.rid}"
+    monkeypatch.setattr(
+        moss_scheduler, "_guard_realtime_context_capacity", lambda *a: None
+    )
+    monkeypatch.setattr(moss_scheduler, "bind_realtime_page_row", lambda *a: None)
+    monkeypatch.setattr(moss_scheduler, "_append_segment_to_request", lambda *a: None)
+    monkeypatch.setattr(moss_scheduler, "PrefillStats", lambda **kw: ("stats", kw))
+    monkeypatch.setattr(
+        moss_scheduler.QueueCount, "from_reqs", staticmethod(lambda *a: None)
+    )
+
+    captured: dict[str, list] = {}
+    fake_batch = SimpleNamespace(
+        prepare_for_extend=lambda: None, extend_lens=[1, 1], prefix_lens=[0, 0]
+    )
+
+    def _init_new(*, reqs, **kwargs):
+        captured["reqs"] = list(reqs)
+        return fake_batch
+
+    monkeypatch.setattr(
+        moss_scheduler.MossVLRealtimeScheduleBatch, "init_new", _init_new
+    )
+    scheduler._emit_request_error = lambda rid, exc: (_ for _ in ()).throw(
+        AssertionError(f"unexpected error for {rid}: {exc}")
+    )
+    scheduler.abort = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("unexpected abort")
+    )
+
+    batch = scheduler._materialize_realtime_extensions()
+
+    assert batch is fake_batch
+    # Both sessions extend in one batch; each contributed exactly its own event.
+    assert [req.rid for req in captured["reqs"]] == ["req-a", "req-b"]
+    # The parked session woke and left the parked tables.
+    assert scheduler.parked_reqs == {}
+    assert scheduler.parked_since == {}
+    # The running session moved into the extend batch (dropped from running).
+    assert filtered["keep_indices"] == []
+    # Both queues drained.
+    assert not scheduler.realtime_sessions.get("req-a").pending_events
+    assert not scheduler.realtime_sessions.get("req-b").pending_events
 
 
 def test_context_capacity_guard_rejects_overlength_extend() -> None:

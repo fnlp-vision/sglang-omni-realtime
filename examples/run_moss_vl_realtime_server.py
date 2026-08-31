@@ -37,6 +37,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--parked-request-timeout", type=float, default=300.0)
     parser.add_argument(
+        "--max-running-requests",
+        type=int,
+        default=1,
+        help="Maximum concurrent realtime sessions (one live request each). "
+        "Default 1; values above 1 enable multi-session serving.",
+    )
+    parser.add_argument(
         "--enable-decode-cuda-graph",
         dest="decode_cuda_graph",
         action="store_true",
@@ -80,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.tp_size < 1:
         parser.error("--tp-size must be at least 1")
+    if args.max_running_requests < 1:
+        parser.error("--max-running-requests must be at least 1")
     if args.tp_size > 1:
         if args.gpus is None:
             parser.error("--tp-size > 1 requires --gpus")
@@ -125,6 +134,7 @@ def main() -> None:
             "context_length": args.context_length,
             "max_new_tokens": args.max_new_tokens,
             "parked_request_timeout_s": args.parked_request_timeout,
+            "max_running_requests": args.max_running_requests,
             "disable_cuda_graph": not args.decode_cuda_graph,
             "page_size": 1,
             "enable_async_decode": args.enable_async_decode,

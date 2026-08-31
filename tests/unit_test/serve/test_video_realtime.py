@@ -417,6 +417,42 @@ def test_video_realtime_allows_only_one_websocket() -> None:
             assert error["code"] == "session_capacity_exceeded"
 
 
+def test_video_realtime_admits_up_to_configured_session_capacity() -> None:
+    client = _Client()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+        video_realtime_max_sessions=2,
+    )
+    with TestClient(app) as test_client:
+        with test_client.websocket_connect("/v1/video/realtime") as first:
+            first_created = first.receive_json()
+            assert first_created["type"] == "session.created"
+            with test_client.websocket_connect("/v1/video/realtime") as second:
+                second_created = second.receive_json()
+                assert second_created["type"] == "session.created"
+                assert second_created["session_id"] != first_created["session_id"]
+                with test_client.websocket_connect("/v1/video/realtime") as third:
+                    error = third.receive_json()
+                    assert error["type"] == "error"
+                    assert error["code"] == "session_capacity_exceeded"
+
+
+def test_video_realtime_frees_session_slot_on_disconnect() -> None:
+    client = _Client()
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+    with TestClient(app) as test_client:
+        with test_client.websocket_connect("/v1/video/realtime") as first:
+            assert first.receive_json()["type"] == "session.created"
+        with test_client.websocket_connect("/v1/video/realtime") as second:
+            assert second.receive_json()["type"] == "session.created"
+
+
 def test_video_realtime_prompt_only_event_reaches_request_update() -> None:
     client = _Client()
     app = create_app(

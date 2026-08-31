@@ -220,20 +220,28 @@ class MossVLRealtimeScheduler(OmniScheduler):
     def _decode_rate_limited(self) -> bool:
         """Defer ordinary decode without delaying frame or prompt ingestion.
 
-        Realtime deployment currently admits one live request. Keeping the
-        request in ``running_batch`` lets the scheduler continue draining
-        control messages while preserving its KV ownership.
+        Keeping requests in ``running_batch`` lets the scheduler continue
+        draining control messages while preserving their KV ownership. With
+        multiple live sessions the decode step is shared, so decode is
+        deferred only while *every* request is still inside its token-rate
+        interval; a request whose interval has elapsed releases the batch
+        (requests not yet due ride along, which makes their pacing a soft
+        target rather than an exact throttle).
         """
         reqs = tuple(getattr(self.running_batch, "reqs", ()))
-        if not reqs:
+        limited = False
+        found = False
+        for req in reqs:
+            state = getattr(req, RUNTIME_STATE_ATTR, None)
+            if not isinstance(state, MossVLRealtimeRuntimeState):
+                continue
+            found = True
+            if time.monotonic() >= state.next_decode_not_before:
+                limited = False
+                break
+            limited = True
+        if not found:
             return False
-        if len(reqs) != 1:
-            raise AssertionError("MOSS-VL realtime admitted multiple live requests")
-        state = getattr(reqs[0], RUNTIME_STATE_ATTR, None)
-        limited = (
-            isinstance(state, MossVLRealtimeRuntimeState)
-            and time.monotonic() < state.next_decode_not_before
-        )
         return self._tp_consistent_decision(limited)
 
     def _tp_consistent_decision(self, decision: Any) -> Any:

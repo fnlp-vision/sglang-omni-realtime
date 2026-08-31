@@ -447,6 +447,7 @@ async def _run_server(
             video_realtime_parked_request_timeout_s=(
                 _video_realtime_parked_timeout_s(pipeline_config)
             ),
+            video_realtime_max_sessions=_video_realtime_max_sessions(pipeline_config),
             supports_realtime_audio_output=(
                 type(pipeline_config).code2wav_stage() is not None
             ),
@@ -539,6 +540,24 @@ def _video_realtime_parked_timeout_s(pipeline_config: PipelineConfig) -> float:
         value = factory_args.get("parked_request_timeout_s")
         if value is not None:
             return float(value)
+    return default
+
+
+def _video_realtime_max_sessions(pipeline_config: PipelineConfig) -> int:
+    """Read the realtime stage's concurrent session cap for the WS edge.
+
+    Sessions are capped at the scheduler's ``max_running_requests``: each
+    session owns one live request, and a parked session still holds its slot,
+    so the two limits must coincide to keep wake-ups from over-admitting.
+    """
+    default = 1
+    if not type(pipeline_config).supports_video_realtime:
+        return default
+    for stage in pipeline_config.stages:
+        factory_args = getattr(stage, "factory_args", None) or {}
+        value = factory_args.get("max_running_requests")
+        if value is not None:
+            return int(value)
     return default
 
 

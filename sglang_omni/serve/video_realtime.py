@@ -723,17 +723,24 @@ class VideoRealtimeSessionManager:
         model_name: str,
         allow_benchmark_mode: bool = False,
         parked_request_timeout_s: float = 300.0,
+        max_sessions: int = 1,
     ) -> None:
         self.client = client
         self.model_name = model_name
         self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.parked_request_timeout_s = float(parked_request_timeout_s)
+        self.max_sessions = int(max_sessions)
+        if self.max_sessions < 1:
+            raise ValueError("max_sessions must be at least 1")
         self.frame_store = SharedMemoryFrameStore()
         self.sessions: dict[str, VideoRealtimeSession] = {}
 
     def open(self, websocket: WebSocket) -> VideoRealtimeSession:
-        if self.sessions:
-            raise RuntimeError("video realtime service already has an active session")
+        if len(self.sessions) >= self.max_sessions:
+            raise RuntimeError(
+                "video realtime service has no free session slot "
+                f"(capacity {self.max_sessions})"
+            )
         session = VideoRealtimeSession(
             websocket,
             client=self.client,
@@ -756,12 +763,14 @@ def register_video_realtime(
     *,
     allow_benchmark_mode: bool = False,
     parked_request_timeout_s: float = 300.0,
+    max_sessions: int = 1,
 ) -> None:
     manager = VideoRealtimeSessionManager(
         client=app.state.client,
         model_name=app.state.model_name,
         allow_benchmark_mode=allow_benchmark_mode,
         parked_request_timeout_s=parked_request_timeout_s,
+        max_sessions=max_sessions,
     )
     app.state.video_realtime_manager = manager
 

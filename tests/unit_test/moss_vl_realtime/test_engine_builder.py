@@ -74,9 +74,15 @@ def test_async_decode_defaults_off() -> None:
     assert builder.enable_async_decode is False
 
 
-def test_realtime_builder_rejects_multiple_live_requests() -> None:
-    with pytest.raises(ValueError, match="exactly one live request"):
-        _make_builder(max_running_requests=2)
+def test_realtime_builder_accepts_multiple_live_requests() -> None:
+    builder = _make_builder(max_running_requests=2)
+    assert builder.max_running_requests == 2
+    assert builder.generation_defaults(dtype="bfloat16")["max_running_requests"] == 2
+
+
+def test_realtime_builder_rejects_zero_live_requests() -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        _make_builder(max_running_requests=0)
 
 
 def test_stage_factory_forwards_tensor_parallel_runtime(monkeypatch) -> None:

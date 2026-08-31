@@ -37,10 +37,8 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         frame_window_config: Any | None = None,
     ) -> None:
         self.max_running_requests = int(max_running_requests)
-        if self.max_running_requests != 1:
-            raise ValueError(
-                "MOSS-VL realtime currently supports exactly one live request"
-            )
+        if self.max_running_requests < 1:
+            raise ValueError("max_running_requests must be at least 1")
         self.max_new_tokens = int(max_new_tokens)
         self.context_length = int(context_length)
         self.mem_fraction_static = mem_fraction_static
