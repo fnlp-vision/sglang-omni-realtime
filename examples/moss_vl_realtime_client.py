@@ -231,11 +231,18 @@ async def run(args: argparse.Namespace) -> None:
                 started_at=started_at,
             )
 
-        next_event_deadline = asyncio.get_running_loop().time()
+        schedule_start = asyncio.get_running_loop().time()
+        next_event_deadline = schedule_start
         for event_index, event in enumerate(events):
             event_type = event.get("type")
             seq_no = int(event["seq_no"])
             final = bool(event.get("final", event_index == len(events) - 1))
+            # Honor the manifest's per-event timestamp when present so prompts
+            # spaced after the last frame keep their intended gaps; otherwise
+            # fall back to the fixed per-frame cadence.
+            event_timestamp = event.get("timestamp")
+            if event_timestamp is not None:
+                next_event_deadline = schedule_start + float(event_timestamp)
             delay = next_event_deadline - asyncio.get_running_loop().time()
             if delay > 0:
                 await observe_during_delay(
