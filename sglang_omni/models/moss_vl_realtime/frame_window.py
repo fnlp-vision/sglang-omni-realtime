@@ -16,6 +16,11 @@ page-row prefix ahead of the raw frames).
 Virtual frames trailing the newest virtual frame by more than ``pool_window_s``
 are freed for good — the frame pixels long ago entered the embedding store, so
 dropping the KV is "rolling the frame into memory".
+Layer two is **off by default** (``pooling_enabled=False``): the mean-pooled
+virtual K/V is never seen in training, and the A/B experiment on the 420s
+jumping-jack case showed no quality gain over the raw-only window while
+doubling steady-state vision KV. Enable it explicitly via config field
+``realtime_frame_pooling_enabled`` or env ``REALTIME_FRAME_POOLING_ENABLED=1``.
 
 Everything here is inert unless ``RealtimeFrameWindowConfig.enabled`` is set
 (config field ``realtime_frame_window_enabled`` or env
@@ -72,6 +77,7 @@ REALTIME_FRAME_WINDOW_ENABLED_ENV = "REALTIME_FRAME_WINDOW_ENABLED"
 REALTIME_FRAME_WINDOW_RAW_S_ENV = "REALTIME_FRAME_WINDOW_RAW_S"
 REALTIME_FRAME_POOL_WINDOW_S_ENV = "REALTIME_FRAME_POOL_WINDOW_S"
 REALTIME_FRAME_POOL_RATIO_ENV = "REALTIME_FRAME_POOL_RATIO"
+REALTIME_FRAME_POOLING_ENABLED_ENV = "REALTIME_FRAME_POOLING_ENABLED"
 
 # Request attribute holding per-frame records between segment staging and the
 # KV append commit (mirrors the other ``_moss_vl_realtime_staged_*`` attrs).
@@ -99,10 +105,16 @@ class RealtimeFrameWindowConfig:
     raw_window_s: float = DEFAULT_RAW_WINDOW_S
     pool_window_s: float = DEFAULT_POOL_WINDOW_S
     pool_ratio: int = DEFAULT_POOL_RATIO
+    # When False, aged raw frames are dropped outright and the pooled virtual
+    # tier never exists (plain raw sliding window). Defaults to False: the
+    # mean-pooled virtual K/V is never seen in training, and the A/B experiment
+    # on the 420s case showed no quality gain over the raw-only window.
+    pooling_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.enabled, bool):
-            raise TypeError("enabled must be a boolean")
+        for name in ("enabled", "pooling_enabled"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
         for name in ("raw_window_s", "pool_window_s"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -124,6 +136,7 @@ class RealtimeFrameWindowConfig:
         raw_window_s: float | None = None,
         pool_window_s: float | None = None,
         pool_ratio: int | None = None,
+        pooling_enabled: bool | None = None,
         env: Mapping[str, str] | None = None,
     ) -> RealtimeFrameWindowConfig:
         """Resolve explicit settings against environment overrides.
@@ -138,6 +151,7 @@ class RealtimeFrameWindowConfig:
         raw = cls().raw_window_s if raw_window_s is None else float(raw_window_s)
         pool = cls().pool_window_s if pool_window_s is None else float(pool_window_s)
         ratio = cls().pool_ratio if pool_ratio is None else int(pool_ratio)
+        pooling = cls().pooling_enabled if pooling_enabled is None else bool(pooling_enabled)
         if REALTIME_FRAME_WINDOW_ENABLED_ENV in env:
             resolved_enabled = _env_flag(env[REALTIME_FRAME_WINDOW_ENABLED_ENV])
         if REALTIME_FRAME_WINDOW_RAW_S_ENV in env:
@@ -146,11 +160,14 @@ class RealtimeFrameWindowConfig:
             pool = float(env[REALTIME_FRAME_POOL_WINDOW_S_ENV])
         if REALTIME_FRAME_POOL_RATIO_ENV in env:
             ratio = int(env[REALTIME_FRAME_POOL_RATIO_ENV])
+        if REALTIME_FRAME_POOLING_ENABLED_ENV in env:
+            pooling = _env_flag(env[REALTIME_FRAME_POOLING_ENABLED_ENV])
         return cls(
             enabled=resolved_enabled,
             raw_window_s=raw,
             pool_window_s=pool,
             pool_ratio=ratio,
+            pooling_enabled=pooling,
         )
 
 
@@ -257,31 +274,38 @@ def plan_frame_window(
     # raw — a soft overshoot of at most ratio-1 frames until the group fills.
     # A full chunk with mixed spatial grids cannot be position-wise
     # mean-pooled, so it is dropped instead.
-    poolable_count = aged_raw // config.pool_ratio * config.pool_ratio
     raw_chunks: list[tuple[int, int, bool]] = []
     produced: list[RealtimeFrameRecord] = []
-    cursor = 0
-    while cursor < poolable_count:
-        end = cursor + config.pool_ratio
-        members = raws[cursor:end]
-        poolable = all(
-            (member.grid_h, member.grid_w, member.slots)
-            == (members[0].grid_h, members[0].grid_w, members[0].slots)
-            for member in members
-        )
-        raw_chunks.append((cursor, len(members), poolable))
-        if poolable:
-            produced.append(
-                RealtimeFrameRecord(
-                    timestamp=members[-1].timestamp,
-                    grid_h=members[0].grid_h,
-                    grid_w=members[0].grid_w,
-                    slots=members[0].slots,
-                    pooled=True,
-                    pooled_sources=len(members),
-                )
+    if config.pooling_enabled:
+        poolable_count = aged_raw // config.pool_ratio * config.pool_ratio
+        cursor = 0
+        while cursor < poolable_count:
+            end = cursor + config.pool_ratio
+            members = raws[cursor:end]
+            poolable = all(
+                (member.grid_h, member.grid_w, member.slots)
+                == (members[0].grid_h, members[0].grid_w, members[0].slots)
+                for member in members
             )
-        cursor += len(members)
+            raw_chunks.append((cursor, len(members), poolable))
+            if poolable:
+                produced.append(
+                    RealtimeFrameRecord(
+                        timestamp=members[-1].timestamp,
+                        grid_h=members[0].grid_h,
+                        grid_w=members[0].grid_w,
+                        slots=members[0].slots,
+                        pooled=True,
+                        pooled_sources=len(members),
+                    )
+                )
+            cursor += len(members)
+    else:
+        # Raw-only comparison window (experiments): the whole aged prefix is
+        # dropped outright and the pooled virtual tier never exists.
+        poolable_count = aged_raw
+        if aged_raw:
+            raw_chunks.append((0, aged_raw, False))
 
     # Layer two, step two: evict leading virtual frames (existing plus newly
     # produced) whose span trails the newest virtual frame beyond the pool

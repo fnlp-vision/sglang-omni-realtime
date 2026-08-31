@@ -28,6 +28,7 @@ def create_sglang_moss_vl_realtime_executor(
     realtime_frame_window_raw_s: float | None = None,
     realtime_frame_pool_window_s: float | None = None,
     realtime_frame_pool_ratio: int | None = None,
+    realtime_frame_pooling_enabled: bool | None = None,
 ):
     from sglang_omni.models.moss_vl_realtime.engine_builder import (
         MossVLRealtimeEngineBuilder,
@@ -41,6 +42,7 @@ def create_sglang_moss_vl_realtime_executor(
         raw_window_s=realtime_frame_window_raw_s,
         pool_window_s=realtime_frame_pool_window_s,
         pool_ratio=realtime_frame_pool_ratio,
+        pooling_enabled=realtime_frame_pooling_enabled,
     )
     return MossVLRealtimeEngineBuilder(
         max_running_requests=max_running_requests,

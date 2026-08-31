@@ -74,9 +74,10 @@ class MossVLRealtimeScheduler(OmniScheduler):
         )
         if self.frame_window_config is not None:
             logger.info(
-                "Realtime frame window enabled: raw_window=%ss pool_window=%ss "
-                "pool_ratio=%d",
+                "Realtime frame window enabled: raw_window=%ss pooling=%s "
+                "pool_window=%ss pool_ratio=%d",
                 self.frame_window_config.raw_window_s,
+                self.frame_window_config.pooling_enabled,
                 self.frame_window_config.pool_window_s,
                 self.frame_window_config.pool_ratio,
             )

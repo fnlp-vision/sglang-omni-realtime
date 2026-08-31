@@ -41,6 +41,9 @@ def _config(**overrides) -> RealtimeFrameWindowConfig:
         "raw_window_s": 35.0,
         "pool_window_s": 120.0,
         "pool_ratio": 2,
+        # Tests exercise the pooling path explicitly; the production default
+        # is pooling off.
+        "pooling_enabled": True,
     }
     base.update(overrides)
     return RealtimeFrameWindowConfig(**base)
@@ -237,6 +240,34 @@ def test_plan_dropped_chunks_for_mixed_grids() -> None:
     assert plan.dropped_raw_count == 2
     assert plan.produced_virtual_count == 0
     assert [r.timestamp for r in plan.new_records] == [20.0, 50.0]
+
+
+def test_plan_pooling_disabled_drops_aged_raws() -> None:
+    """Raw-only comparison mode: aged frames are dropped, no virtual tier."""
+    records = [_record(t) for t in (0.0, 10.0, 20.0, 30.0, 80.0)]
+    plan = plan_frame_window(records, _config(pooling_enabled=False))
+    assert plan is not None
+    # 80-0/10/20/30 all exceed the 35s raw window: one whole dropped chunk.
+    assert plan.raw_chunks == ((0, 4, False),)
+    assert plan.pooled_raw_count == 0
+    assert plan.dropped_raw_count == 4
+    assert plan.produced_virtual_count == 0
+    assert [r.timestamp for r in plan.new_records] == [80.0]
+    assert all(not r.pooled for r in plan.new_records)
+
+
+def test_pooling_enabled_flag_resolution_and_validation() -> None:
+    # Pooling defaults to off (train-infer consistency); opt in explicitly.
+    default = RealtimeFrameWindowConfig(enabled=True)
+    assert default.pooling_enabled is False
+    pooled = RealtimeFrameWindowConfig(enabled=True, pooling_enabled=True)
+    assert pooled.pooling_enabled is True
+    raw_only = RealtimeFrameWindowConfig.resolve(
+        enabled=True, pooling_enabled=True, env={"REALTIME_FRAME_POOLING_ENABLED": "0"}
+    )
+    assert raw_only.pooling_enabled is False
+    with pytest.raises(TypeError, match="pooling_enabled"):
+        RealtimeFrameWindowConfig(enabled=True, pooling_enabled="yes")
 
 
 def test_plan_virtual_window_boundary() -> None:

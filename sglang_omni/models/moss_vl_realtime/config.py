@@ -50,6 +50,7 @@ class MossVLRealtimePipelineConfig(PipelineConfig):
     realtime_frame_window_raw_s: float | None = None
     realtime_frame_pool_window_s: float | None = None
     realtime_frame_pool_ratio: int | None = None
+    realtime_frame_pooling_enabled: bool | None = None
 
     def model_post_init(self, __context: Any = None) -> None:
         super().model_post_init(__context)
@@ -64,6 +65,10 @@ class MossVLRealtimePipelineConfig(PipelineConfig):
             )
         if self.realtime_frame_pool_ratio is not None:
             window_args["realtime_frame_pool_ratio"] = self.realtime_frame_pool_ratio
+        if self.realtime_frame_pooling_enabled is not None:
+            window_args["realtime_frame_pooling_enabled"] = (
+                self.realtime_frame_pooling_enabled
+            )
         if window_args:
             for stage in self.stages:
                 if stage.name != "moss_vl_realtime":
