@@ -128,6 +128,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
     def get_next_batch_to_run(self) -> Any | None:
         self._expire_parked_requests()
         self._evaluate_frame_window()
+        self._abort_retracted_realtime_requests()
         if self._realtime_extend_batch is None:
             if self._async_pending is not None and self._has_pending_realtime_events():
                 # Update barrier: resolve the in-flight lookahead step before
@@ -137,6 +138,8 @@ class MossVLRealtimeScheduler(OmniScheduler):
             self._realtime_extend_batch = self._materialize_realtime_extensions()
         if self._realtime_extend_batch is None and self._decode_rate_limited():
             return None
+        if self._realtime_extend_batch is None:
+            self._preempt_decode_memory_pressure()
         return super().get_next_batch_to_run()
 
     def _evaluate_frame_window(self) -> None:
@@ -265,6 +268,82 @@ class MossVLRealtimeScheduler(OmniScheduler):
         )
         return result
 
+    def _abort_retracted_realtime_requests(self) -> None:
+        """Fail fast if a realtime request got retracted anyway.
+
+        A retracted realtime request cannot be re-prefilled: its
+        encoder-region KV was written incrementally by the vision encoder
+        and the pixel inputs of earlier frames no longer exist, so upstream's
+        re-prefill from token ids would corrupt the session. Remove it from
+        the waiting queue and abort the session cleanly instead. This covers
+        forced retraction (SGLANG_TEST_RETRACT) and any retract entry point
+        the preemption guard in ``_preempt_decode_memory_pressure`` misses.
+        """
+        waiting = getattr(self, "waiting_queue", None)
+        if not waiting:
+            return
+        victims = [
+            req.rid
+            for req in waiting
+            if getattr(req, "is_retracted", False)
+            and getattr(req, RUNTIME_STATE_ATTR, None) is not None
+        ]
+        for rid in self._tp_consistent_decision(victims):
+            logger.error(
+                "Realtime request %s was retracted; aborting the session "
+                "because incremental encoder state cannot be re-prefilled",
+                rid,
+            )
+            self._emit_request_error(
+                rid,
+                RuntimeError(
+                    "realtime session was retracted under memory pressure and "
+                    "cannot be re-prefilled; the session is aborted"
+                ),
+            )
+            self.abort(rid, defer_running_cleanup=False)
+
+    @staticmethod
+    def _realtime_kv_cost(req: Any) -> int:
+        state = getattr(req, RUNTIME_STATE_ATTR, None)
+        if isinstance(state, MossVLRealtimeRuntimeState):
+            return state.encoder_length + state.decoder_length
+        return len(getattr(req, "output_ids", ()))
+
+    def _preempt_decode_memory_pressure(self) -> None:
+        """Abort the heaviest session when the next decode round cannot fit.
+
+        Upstream ``retract_decode`` resets the least-preferred request for
+        re-prefill, which corrupts realtime sessions (see
+        ``_abort_retracted_realtime_requests``). When the KV pool cannot fit
+        the next decode round, abort the heaviest session through the
+        realtime-aware abort path instead: its rows are released immediately
+        and the client gets an explicit error. The last remaining request is
+        left to upstream's graceful OOM abort.
+        """
+        batch = getattr(self, "running_batch", None)
+        reqs = getattr(batch, "reqs", None)
+        if not reqs:
+            return
+        while len(reqs) > 1 and not batch.check_decode_mem():
+            victim = max(reqs, key=self._realtime_kv_cost)
+            victim_rid = self._tp_consistent_decision(victim.rid)
+            logger.warning(
+                "KV pool cannot fit the next decode round; aborting realtime "
+                "session %s (the heaviest request) instead of retracting it",
+                victim_rid,
+            )
+            self._emit_request_error(
+                victim_rid,
+                RuntimeError(
+                    "KV pool exhausted by concurrent sessions; this session "
+                    "was aborted so remaining sessions can continue"
+                ),
+            )
+            self.abort(victim_rid, defer_running_cleanup=False)
+            batch = self.running_batch
+            reqs = getattr(batch, "reqs", None) or []
+
     def _stamp_batch_launch(self, batch: Any) -> None:
         """Start the token-rate interval at forward launch, matching HF."""
         super()._stamp_batch_launch(batch)
@@ -358,6 +437,14 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if not selected:
             return None
 
+        selected = self._enforce_extend_memory_budget(selected)
+        if not selected:
+            return None
+        # Budget-enforcement aborts may have shrunk the live batch; refresh
+        # the views the tail of this function filters on.
+        running_batch = self.running_batch
+        running_reqs = tuple(getattr(running_batch, "reqs", ()))
+
         reqs = [req for req, _, _ in selected]
         extend_batch = MossVLRealtimeScheduleBatch.init_new(
             reqs=reqs,
@@ -402,6 +489,70 @@ class MossVLRealtimeScheduler(OmniScheduler):
             running_batch.filter_batch(keep_indices=keep_indices)
             running_batch.batch_is_full = False
         return extend_batch
+
+    def _enforce_extend_memory_budget(
+        self,
+        selected: list[tuple[Any, list[FramePromptEvent], MossVLRealtimeSegment]],
+    ) -> list[tuple[Any, list[FramePromptEvent], MossVLRealtimeSegment]]:
+        """Guarantee the extend batch fits the KV pool before allocation.
+
+        ``prepare_for_extend`` allocates after the request mutations are
+        staged; a mid-batch allocator failure strands partially allocated
+        slots and has been observed to corrupt later sessions ("encoder and
+        decoder slots must not overlap"). Measure first; when the pool cannot
+        fit the batch, abort the heaviest live session (including parked
+        ones, which still hold KV) through the realtime-aware path — explicit
+        client error, immediate KV release — until it fits. Victimized
+        extending requests are un-appended first so no staged mutation
+        survives.
+        """
+        allocator = self.token_to_kv_pool_allocator
+        if allocator is None or not hasattr(allocator, "available_size"):
+            return selected
+        staged_by_rid = {req.rid: (req, segment) for req, _, segment in selected}
+        remaining = list(selected)
+
+        def _needed() -> int:
+            # Segment tokens +1 for the re-extended pending token and +1
+            # decode-step headroom per extending request.
+            return sum(len(segment.raw_append_ids) + 2 for _, _, segment in remaining)
+
+        virtual_available = int(allocator.available_size())
+        victims: list[str] = []
+        while remaining and virtual_available < _needed():
+            live = {
+                req.rid: req for req in getattr(self.running_batch, "reqs", ())
+            }
+            for req in self.parked_reqs.values():
+                live.setdefault(req.rid, req)
+            for req, _, _ in remaining:
+                live.setdefault(req.rid, req)
+            if not live:
+                break
+            victim = max(live.values(), key=self._realtime_kv_cost)
+            victims.append(victim.rid)
+            # Aborts free the victim's committed KV synchronously; kv_cost
+            # slightly underestimates, which is the safe direction here.
+            virtual_available += self._realtime_kv_cost(victim)
+            remaining = [entry for entry in remaining if entry[0].rid != victim.rid]
+        for victim_rid in self._tp_consistent_decision(victims):
+            staged = staged_by_rid.get(victim_rid)
+            if staged is not None:
+                _undo_appended_segment(*staged)
+            logger.warning(
+                "KV pool cannot fit the pending frame extend; aborting "
+                "realtime session %s (the heaviest request)",
+                victim_rid,
+            )
+            self._emit_request_error(
+                victim_rid,
+                RuntimeError(
+                    "KV pool exhausted by concurrent sessions; this session "
+                    "was aborted so remaining sessions can continue"
+                ),
+            )
+            self.abort(victim_rid, defer_running_cleanup=False)
+        return remaining
 
     def _resolve_and_process(
         self, batch: Any, sched_output: Any, pending_step: Any

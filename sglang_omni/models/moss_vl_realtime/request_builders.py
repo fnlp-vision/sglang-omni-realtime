@@ -112,9 +112,17 @@ def make_moss_vl_realtime_scheduler_adapters(
             max_tokens_per_turn=max_tokens_per_turn,
         )
         setattr(req, RUNTIME_STATE_ATTR, state)
-        if params.get("realtime_warmup"):
-            # Warmup KV must never become a cross-session radix prefix.
-            req.skip_radix_cache_insert = True
+        # Realtime sessions must never share radix-cached KV: a matched prefix
+        # lands at the head of the *decoder* region of the realtime page row
+        # (encoder slots occupy the row head), while upstream's release path
+        # protects ``cache_protected_len`` slots at the *row* head. Release
+        # would then free tree-owned slots, double-free them on the tree's
+        # later eviction, and corrupt every subsequent session ("encoder and
+        # decoder slots must not overlap"). Skipping inserts from birth keeps
+        # the tree empty, so bootstrap matches always miss and every slot in
+        # the row is owned by the request itself. The cost is recomputing the
+        # ~100-token system prompt per session, which is negligible.
+        req.skip_radix_cache_insert = True
         if params.get("benchmark_ignore_eos"):
             # Benchmark mode: keep ignore_eos=True even after the final extend so
             # the request decodes exactly max_new_tokens without an EOS stop.

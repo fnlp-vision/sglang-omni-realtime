@@ -718,3 +718,206 @@ def test_single_rank_resolution_uses_resolver_directly() -> None:
     images = scheduler._resolve_frame_events_tp([event])
     assert called == ["shm://frame-0"]
     assert len(images) == 1
+
+
+def _pressure_req(
+    rid: str, *, encoder_length: int, is_retracted: bool = False
+) -> SimpleNamespace:
+    state = MossVLRealtimeRuntimeState(
+        request_id=rid,
+        session_id=f"session-{rid}",
+        encoder_length=encoder_length,
+        decoder_length=2,
+    )
+    return SimpleNamespace(
+        rid=rid,
+        _moss_vl_realtime_state=state,
+        is_retracted=is_retracted,
+        output_ids=array("q", [201]),
+        origin_input_ids=array("q", [101, 102]),
+    )
+
+
+def test_preempt_decode_memory_pressure_aborts_heaviest_session() -> None:
+    """When the KV pool cannot fit the next decode round, the heaviest
+    session is aborted through the realtime-aware path (not retracted)."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    heavy = _pressure_req("req-heavy", encoder_length=900)
+    light = _pressure_req("req-light", encoder_length=100)
+
+    class _Batch:
+        def __init__(self) -> None:
+            self.reqs = [light, heavy]
+
+        def is_empty(self) -> bool:
+            return not self.reqs
+
+        def check_decode_mem(self) -> bool:
+            # Fits only once the heavy session is gone.
+            return heavy not in self.reqs
+
+    scheduler.running_batch = _Batch()
+    aborted: list[str] = []
+    errors: list[str] = []
+
+    def _abort(rid: str, *, defer_running_cleanup: bool = True) -> None:
+        assert defer_running_cleanup is False
+        aborted.append(rid)
+        scheduler.running_batch.reqs = [
+            r for r in scheduler.running_batch.reqs if r.rid != rid
+        ]
+
+    scheduler.abort = _abort
+    scheduler._emit_request_error = lambda rid, exc: errors.append(rid)
+
+    scheduler._preempt_decode_memory_pressure()
+
+    assert aborted == ["req-heavy"]
+    assert errors == ["req-heavy"]
+    assert [r.rid for r in scheduler.running_batch.reqs] == ["req-light"]
+
+
+def test_preempt_decode_memory_pressure_keeps_last_request() -> None:
+    """A single remaining request is left to upstream's graceful OOM abort."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    only = _pressure_req("req-only", encoder_length=900)
+
+    class _Batch:
+        reqs = [only]
+
+        def is_empty(self) -> bool:
+            return False
+
+        def check_decode_mem(self) -> bool:
+            return False
+
+    scheduler.running_batch = _Batch()
+    scheduler.abort = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("must not abort the last remaining request")
+    )
+    scheduler._emit_request_error = lambda *a, **k: None
+
+    scheduler._preempt_decode_memory_pressure()
+    assert scheduler.running_batch.reqs == [only]
+
+
+def test_abort_retracted_realtime_requests() -> None:
+    """A realtime request that ended up retracted (e.g. SGLANG_TEST_RETRACT)
+    is aborted cleanly from the waiting queue instead of being re-prefilled;
+    non-realtime retracted requests are left for upstream."""
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    retracted = _pressure_req("req-retracted", encoder_length=50, is_retracted=True)
+    normal = _pressure_req("req-normal", encoder_length=50)
+    non_realtime = SimpleNamespace(
+        rid="req-other", is_retracted=True, output_ids=array("q", [201])
+    )
+    scheduler.waiting_queue = [retracted, normal, non_realtime]
+    aborted: list[str] = []
+    errors: list[str] = []
+    scheduler.abort = lambda rid, **kw: aborted.append(rid)
+    scheduler._emit_request_error = lambda rid, exc: errors.append(rid)
+
+    scheduler._abort_retracted_realtime_requests()
+
+    assert aborted == ["req-retracted"]
+    assert errors == ["req-retracted"]
+
+
+def test_abort_retracted_realtime_requests_noop_when_empty() -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.waiting_queue = []
+    scheduler.abort = lambda *a, **k: (_ for _ in ()).throw(AssertionError)
+    scheduler._abort_retracted_realtime_requests()
+
+
+def _staged_candidate(rid: str, *, kv_cost: int):
+    """A request with a segment already staged via _append_segment_to_request.
+
+    The append requires state lengths consistent with the tiny fixture, so the
+    "committed" encoder length used for victim ordering is applied afterwards.
+    """
+    req = _Req()
+    req.rid = rid
+    state = MossVLRealtimeRuntimeState(
+        request_id=rid,
+        session_id=f"session-{rid}",
+        req_pool_index=0,
+        decoder_length=2,
+        next_mrope_position=2,
+    )
+    req._moss_vl_realtime_state = state
+    page_table = torch.zeros((1, 12), dtype=torch.int32)
+    page_table[0, :2] = torch.tensor([11, 12])
+    bind_realtime_page_row(req, page_table)
+    segment = _segment()
+    _append_segment_to_request(req, state, segment)
+    state.encoder_length = kv_cost - state.decoder_length
+    return req, [segment.events[0]], segment
+
+
+class _FakeAllocator:
+    def __init__(self, available: int) -> None:
+        self._available = available
+
+    def available_size(self) -> int:
+        return self._available
+
+
+def test_enforce_extend_memory_budget_noop_when_fits() -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.token_to_kv_pool_allocator = _FakeAllocator(available=10_000)
+    scheduler.running_batch = SimpleNamespace(reqs=[])
+    scheduler.parked_reqs = {}
+    scheduler.abort = lambda *a, **k: (_ for _ in ()).throw(AssertionError)
+    scheduler._emit_request_error = lambda *a, **k: None
+    selected = [_staged_candidate("req-a", kv_cost=100)]
+    assert scheduler._enforce_extend_memory_budget(selected) == selected
+
+
+def test_enforce_extend_memory_budget_aborts_heaviest_and_undoes() -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    # Two candidates need (4+2)*2 = 12 tokens; only 8 available -> the
+    # heaviest session must be aborted and its staged append undone.
+    scheduler.token_to_kv_pool_allocator = _FakeAllocator(available=8)
+    heavy = _staged_candidate("req-heavy", kv_cost=900)
+    light = _staged_candidate("req-light", kv_cost=100)
+    scheduler.running_batch = SimpleNamespace(reqs=[heavy[0], light[0]])
+    scheduler.parked_reqs = {}
+    aborted: list[str] = []
+    errors: list[str] = []
+
+    def _abort(rid: str, *, defer_running_cleanup: bool = True) -> None:
+        assert defer_running_cleanup is False
+        aborted.append(rid)
+
+    scheduler.abort = _abort
+    scheduler._emit_request_error = lambda rid, exc: errors.append(rid)
+
+    remaining = scheduler._enforce_extend_memory_budget([heavy, light])
+
+    assert aborted == ["req-heavy"]
+    assert errors == ["req-heavy"]
+    assert [entry[0].rid for entry in remaining] == ["req-light"]
+    # The victim's staged append was rolled back (token-level undo).
+    assert heavy[0].output_ids.tolist() == [201]
+    assert heavy[0].sampling_params.max_new_tokens == 10
+    assert heavy[0]._moss_vl_realtime_state.pending_token_id is None
+    # The survivor keeps its staged segment untouched.
+    assert light[0].output_ids.tolist() == [201, -101, -101, 301, 302]
+
+
+def test_enforce_extend_memory_budget_can_victim_parked_session() -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.token_to_kv_pool_allocator = _FakeAllocator(available=4)
+    light = _staged_candidate("req-light", kv_cost=50)
+    parked = _pressure_req("req-parked", encoder_length=800)
+    scheduler.running_batch = SimpleNamespace(reqs=[])
+    scheduler.parked_reqs = {"req-parked": parked}
+    aborted: list[str] = []
+    scheduler.abort = lambda rid, **kw: aborted.append(rid)
+    scheduler._emit_request_error = lambda rid, exc: None
+
+    remaining = scheduler._enforce_extend_memory_budget([light])
+
+    assert aborted == ["req-parked"]
+    assert [entry[0].rid for entry in remaining] == ["req-light"]

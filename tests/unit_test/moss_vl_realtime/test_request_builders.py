@@ -398,7 +398,11 @@ def test_request_builder_marks_benchmark_ignore_eos() -> None:
     assert not hasattr(default_data.req, "_moss_vl_realtime_keep_ignore_eos")
 
 
-def test_request_builder_keeps_warmup_out_of_radix_cache() -> None:
+def test_request_builder_keeps_realtime_requests_out_of_radix_cache() -> None:
+    # A radix-matched prefix lands in the decoder region of the realtime page
+    # row while upstream release protects cache_protected_len slots at the row
+    # head; skipping inserts from birth keeps the tree empty so matches always
+    # miss and release only ever frees request-owned slots.
     tokenizer = _Tokenizer()
     request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
         tokenizer=tokenizer,
@@ -409,4 +413,4 @@ def test_request_builder_keeps_warmup_out_of_radix_cache() -> None:
     warmup_payload.request.params["realtime_warmup"] = True
 
     assert request_builder(warmup_payload).req.skip_radix_cache_insert is True
-    assert request_builder(_payload(stream=True)).req.skip_radix_cache_insert is False
+    assert request_builder(_payload(stream=True)).req.skip_radix_cache_insert is True
