@@ -110,6 +110,7 @@ def make_moss_vl_realtime_scheduler_adapters(
             request_id=payload.request_id,
             session_id=session_id,
             max_tokens_per_turn=max_tokens_per_turn,
+            decode_allowance=request_max_new_tokens,
         )
         setattr(req, RUNTIME_STATE_ATTR, state)
         # Realtime sessions must never share radix-cached KV: a matched prefix

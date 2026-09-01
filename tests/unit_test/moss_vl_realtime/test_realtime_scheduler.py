@@ -956,3 +956,43 @@ def test_validate_kv_pool_capacity_passes_when_pool_is_sufficient() -> None:
 def test_validate_kv_pool_capacity_skips_when_values_unknown() -> None:
     allocator, server_args = _pool_args(size=0, context_length=0)
     MossVLRealtimeScheduler._validate_kv_pool_capacity(allocator, server_args)
+
+
+def test_decode_allowance_not_drained_by_decode_tokens() -> None:
+    """Decode output (silence/text) must not shrink the session budget.
+
+    Regression: max_new_tokens previously grew only by the frame append,
+    so cumulative silence tokens closed the gap until the upstream length
+    check killed long sessions mid-stream (observed at frame ~352 with the
+    512-token client budget; the default 128 budget dies at ~128 frames).
+    """
+    from sglang_omni.models.moss_vl_realtime.scheduler import _decode_allowance
+
+    req = _Req()  # output_ids=[201], max_new_tokens=10
+    state = MossVLRealtimeRuntimeState(request_id="req-1", session_id="s-1")
+    req._moss_vl_realtime_state = state
+
+    # Lazily derived from the first use, then frozen: 10 - 1 = 9.
+    assert _decode_allowance(req) == 9
+    assert state.decode_allowance == 9
+
+    # Decode drain between frames leaves the allowance untouched.
+    req.output_ids.extend([151671] * 5)
+    assert _decode_allowance(req) == 9
+
+    # An explicit allowance from the request builder wins over derivation.
+    req2 = _Req()
+    state2 = MossVLRealtimeRuntimeState(
+        request_id="req-2", session_id="s-2", decode_allowance=512
+    )
+    req2._moss_vl_realtime_state = state2
+    assert _decode_allowance(req2) == 512
+
+    # A session with no headroom left is rejected instead of silently
+    # re-anchoring to a non-positive allowance.
+    req3 = _Req()
+    req3.sampling_params.max_new_tokens = 1
+    state3 = MossVLRealtimeRuntimeState(request_id="req-3", session_id="s-3")
+    req3._moss_vl_realtime_state = state3
+    with pytest.raises(ValueError, match="no decode allowance"):
+        _decode_allowance(req3)

@@ -918,8 +918,15 @@ def _append_segment_to_request(
         }
     if any(event.final for event in segment.events):
         req._moss_vl_realtime_final_extend = True
+    allowance = _decode_allowance(req)
     req.output_ids.extend(segment.raw_append_ids)
-    req.sampling_params.max_new_tokens += len(segment.raw_append_ids)
+    # Decode tokens (silence or text) grow output_ids without replenishing
+    # max_new_tokens, so a purely additive update lets the upstream length
+    # check kill any session whose cumulative decode count reaches the
+    # initial allowance (~128 silences with the default client budget).
+    # Re-anchor instead: the remaining allowance stays constant, i.e. the
+    # session may decode up to <allowance> fresh tokens after every extend.
+    req.sampling_params.max_new_tokens = len(req.output_ids) + allowance
     req.multimodal_inputs = segment.multimodal_inputs
     req._refresh_fill_ids()
     # Token-length prefix for the upstream extend invariants; its content is
@@ -932,11 +939,33 @@ def _append_segment_to_request(
     req.set_extend_range(token_total, len(req.full_untruncated_fill_ids))
 
 
+def _decode_allowance(req: Any) -> int:
+    """The constant output_ids-to-max_new_tokens gap for a realtime session.
+
+    Established at request build time (state.decode_allowance); lazily
+    derived once from the first extend for states that predate the field.
+    """
+    state = getattr(req, RUNTIME_STATE_ATTR)
+    allowance = state.decode_allowance
+    if allowance is None:
+        allowance = req.sampling_params.max_new_tokens - len(req.output_ids)
+        if allowance <= 0:
+            raise ValueError(
+                f"realtime request {state.request_id} has no decode allowance "
+                f"left (max_new_tokens={req.sampling_params.max_new_tokens}, "
+                f"output_ids={len(req.output_ids)})"
+            )
+        state.decode_allowance = allowance
+    return allowance
+
+
 def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     count = len(segment.raw_append_ids)
     if count:
+        # Mirror of the re-anchored allowance in _append_segment_to_request.
+        allowance = _decode_allowance(req)
         del req.output_ids[-count:]
-        req.sampling_params.max_new_tokens -= count
+        req.sampling_params.max_new_tokens = len(req.output_ids) + allowance
     req.multimodal_inputs = req._moss_vl_realtime_previous_mm_inputs
     req.extend_range = req._moss_vl_realtime_previous_extend_range
     req.prefix_indices = req._moss_vl_realtime_previous_prefix_indices
