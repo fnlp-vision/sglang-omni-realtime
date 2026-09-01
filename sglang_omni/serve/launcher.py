@@ -99,6 +99,11 @@ def _find_available_port(host: str, port: int) -> int:
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Match the real server's bind behavior (uvicorn sets
+            # SO_REUSEADDR): TIME_WAIT leftovers from a just-stopped server
+            # must not look busy, while a live listener still fails the
+            # probe because SO_REUSEADDR never allows two TCP listeners.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
             return port
     except OSError as exc:
