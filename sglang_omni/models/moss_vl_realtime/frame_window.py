@@ -193,6 +193,7 @@ class RealtimeFrameRecord:
 class FrameWindowPlan:
     """One eviction round: what leaves, what gets pooled, what stays."""
 
+    # Only existing virtual frames; immediately expired new groups are raw drops.
     evicted_virtual_count: int
     # (start index into the raw region, member count, poolable) chunks covering
     # the aged raw prefix, in chronological order; non-poolable chunks are
@@ -322,6 +323,18 @@ def plan_frame_window(
     if evicted_virtual == 0 and not raw_chunks:
         return None
     new_records = virtuals_all[evicted_virtual:] + raws[poolable_count:]
+    # Do not materialize virtuals that this same round would immediately evict.
+    # Express them as raw drops so spans and slot ownership refer to old rows.
+    expired_produced = max(0, evicted_virtual - len(virtuals))
+    if expired_produced:
+        surviving_chunks = []
+        for start, count, poolable in raw_chunks:
+            if poolable and expired_produced:
+                poolable = False
+                expired_produced -= 1
+            surviving_chunks.append((start, count, poolable))
+        raw_chunks = surviving_chunks
+        evicted_virtual = len(virtuals)
     return FrameWindowPlan(
         evicted_virtual_count=evicted_virtual,
         raw_chunks=tuple(raw_chunks),
@@ -471,9 +484,11 @@ def apply_frame_window_plan(
     dst_slot_ids: torch.Tensor | None = None
     kv_pool = None
     if poolable_chunks:
-        width = len(runs[old_virtual_count + poolable_chunks[0][0]])
-        dst_slot_ids = allocator.alloc(width * len(poolable_chunks))
-        kv_pool = kv_pool_provider() if dst_slot_ids is not None else None
+        widths = [len(runs[old_virtual_count + start]) for start, _, _ in poolable_chunks]
+        # A missing or failing provider must not leave newly allocated slots orphaned.
+        kv_pool = kv_pool_provider()
+        if kv_pool is not None:
+            dst_slot_ids = allocator.alloc(sum(widths))
         if dst_slot_ids is None or kv_pool is None:
             logger.warning(
                 "frame window pooling degraded to eviction for %s "
@@ -500,14 +515,15 @@ def apply_frame_window_plan(
             if dst_slot_ids is None or kv_pool is None:
                 raise RuntimeError("pooling slots were not allocated")
             dst_slot_ids = dst_slot_ids.to(dtype=torch.long)
-            width = dst_slot_ids.numel() // len(poolable_chunks)
-            for chunk_index, (start, count, _) in enumerate(poolable_chunks):
+            dst_offset = 0
+            for (start, count, _), width in zip(poolable_chunks, widths, strict=True):
                 member_runs = [
                     runs[old_virtual_count + start + offset] for offset in range(count)
                 ]
-                dst = dst_slot_ids[chunk_index * width : (chunk_index + 1) * width]
+                dst = dst_slot_ids[dst_offset : dst_offset + width]
                 _pool_group_into_slots(kv_pool, member_runs, dst)
                 produced_runs.append(tuple(int(v) for v in dst.tolist()))
+                dst_offset += width
 
         aged_raw_total = plan.pooled_raw_count + plan.dropped_raw_count
         kept_virtual_runs = list(runs[plan.evicted_virtual_count : old_virtual_count])

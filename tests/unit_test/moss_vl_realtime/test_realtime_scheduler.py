@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 
 from sglang_omni.models.moss_vl_realtime import (
     FramePromptEvent,
@@ -202,6 +203,7 @@ def test_silence_parks_request_without_releasing_kv() -> None:
     kept: list[list[int]] = []
     batch = SimpleNamespace(
         reqs=[req],
+        seq_lens=torch.tensor([1]),
         batch_is_full=True,
         filter_batch=lambda *, keep_indices: (
             kept.append(keep_indices),
@@ -505,6 +507,7 @@ def test_park_also_filters_live_running_batch() -> None:
         return batch
 
     snapshot = _batch()
+    snapshot.seq_lens = None
     live = _batch()
     scheduler.running_batch = live
 
@@ -514,6 +517,109 @@ def test_park_also_filters_live_running_batch() -> None:
     assert live.reqs == []
     assert scheduler.parked_reqs == {"req-park": req}
     assert state.phase is MossVLRealtimePhase.WAITING_FOR_EVENT
+
+
+@pytest.mark.parametrize("async_snapshot", [False, True])
+@pytest.mark.parametrize("silent_indices", [(), (0,), (1,), (0, 1)])
+def test_silence_filters_real_batch_and_result_snapshot(
+    async_snapshot, silent_indices
+) -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    scheduler.silence_token_ids = (77,)
+    scheduler.parked_reqs = {}
+    scheduler.parked_since = {}
+    scheduler.realtime_sessions = MossVLRealtimeSessionController()
+    reqs = []
+    for index in range(2):
+        rid = f"req-{index}"
+        scheduler.realtime_sessions.open(rid, rid)
+        state = MossVLRealtimeRuntimeState(
+            request_id=rid,
+            session_id=rid,
+            encoder_length=3 + index,
+            decoder_length=5 + index,
+            phase=MossVLRealtimePhase.DECODING,
+        )
+        reqs.append(SimpleNamespace(
+            rid=rid,
+            output_ids=array("q", [77 if index in silent_indices else 5]),
+            finished=lambda: False,
+            return_logprob=False,
+            grammar=None,
+            _moss_vl_realtime_state=state,
+        ))
+    sampling_filters = []
+    live = ScheduleBatch(
+        reqs=reqs[:],
+        model_config=SimpleNamespace(is_encoder_decoder=True),
+        encoder_lens=torch.tensor([3, 4]),
+        encoder_lens_cpu=[3, 4],
+        seq_lens=torch.tensor([5, 6]),
+        seq_lens_cpu=torch.tensor([5, 6]),
+        orig_seq_lens=torch.tensor([5, 6]),
+        req_pool_indices=torch.tensor([0, 1]),
+        req_pool_indices_cpu=torch.tensor([0, 1]),
+        input_ids=torch.tensor([77, 5]),
+        out_cache_loc=torch.tensor([101, 102]),
+        sampling_info=SimpleNamespace(
+            filter_batch=lambda indices, device_indices: sampling_filters.append(
+                (list(indices), device_indices.tolist())
+            )
+        ),
+    )
+    live.device = torch.device("cpu")
+    live.batch_is_full = True
+    scheduler.running_batch = live
+    processed = live.copy() if async_snapshot else live
+    if async_snapshot:
+        processed.device = torch.device("cpu")
+        processed.batch_is_full = True
+        assert processed.seq_lens is None
+        assert processed.encoder_lens is None
+        assert processed.reqs is not live.reqs
+    step_slots = processed.out_cache_loc
+    pool_indices = processed.req_pool_indices
+
+    scheduler._park_silent_requests(processed)
+
+    keep = [i for i in range(2) if i not in silent_indices]
+    expected_rids = [reqs[i].rid for i in keep]
+    assert [req.rid for req in processed.reqs] == expected_rids
+    assert [req.rid for req in live.reqs] == expected_rids
+    assert set(scheduler.parked_reqs) == {reqs[i].rid for i in silent_indices}
+    assert set(scheduler.parked_since) == set(scheduler.parked_reqs)
+    for index, req in enumerate(reqs):
+        state = req._moss_vl_realtime_state
+        assert state.phase is (
+            MossVLRealtimePhase.WAITING_FOR_EVENT
+            if index in silent_indices else MossVLRealtimePhase.DECODING
+        )
+        assert (state.encoder_length, state.decoder_length) == (3 + index, 5 + index)
+    if keep:
+        assert live.encoder_lens.tolist() == [3 + i for i in keep]
+        assert live.encoder_lens_cpu == [3 + i for i in keep]
+        assert live.seq_lens.tolist() == [5 + i for i in keep]
+        assert live.seq_lens_cpu.tolist() == [5 + i for i in keep]
+        assert live.orig_seq_lens.tolist() == [5 + i for i in keep]
+        assert live.req_pool_indices.tolist() == keep
+        assert live.req_pool_indices_cpu.tolist() == keep
+    assert sampling_filters == ([(keep, keep)] if len(keep) == 1 else [])
+    if silent_indices:
+        assert not processed.batch_is_full
+        assert not live.batch_is_full
+    if async_snapshot:
+        # Result snapshots are consumed, not prepared for another forward.
+        assert processed.seq_lens is None
+        assert processed.encoder_lens is None
+        assert processed.out_cache_loc is step_slots
+        assert processed.req_pool_indices is pool_indices
+        assert step_slots.tolist() == [101, 102]
+        assert pool_indices.tolist() == [0, 1]
+
+    parked_since = dict(scheduler.parked_since)
+    scheduler._park_silent_requests(processed)
+    assert scheduler.parked_since == parked_since
+    assert sampling_filters == ([(keep, keep)] if len(keep) == 1 else [])
 
 
 def test_materialize_extensions_batches_two_sessions(monkeypatch) -> None:
@@ -929,6 +1035,61 @@ def _pool_args(*, size: int, context_length: int, max_running: int = 1):
         context_length=context_length, max_running_requests=max_running
     )
     return allocator, server_args
+
+
+@pytest.mark.parametrize("heavy_is_staged", [False, True])
+@pytest.mark.parametrize("append_fits_after_eviction", [False, True])
+def test_extend_budget_selects_distinct_victims(
+    heavy_is_staged, append_fits_after_eviction
+) -> None:
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    allocator = _FakeAllocator(available=0)
+    scheduler.token_to_kv_pool_allocator = allocator
+    heavy = _staged_candidate("heavy", kv_cost=40)
+    light = _staged_candidate("light", kv_cost=10)
+    peer = _pressure_req("peer", encoder_length=28)
+    # The light request needs 60 (fits after two victims) or 100 (cannot fit).
+    extra = 54 if append_fits_after_eviction else 94
+    light[2].raw_append_ids += (301,) * extra
+    light[0].output_ids.extend((301,) * extra)
+    light[0].sampling_params.max_new_tokens += extra
+    light[0]._refresh_fill_ids()
+    selected = [heavy, light] if heavy_is_staged else [light]
+    scheduler.running_batch = SimpleNamespace(reqs=[entry[0] for entry in selected])
+    scheduler.parked_reqs = {"peer": peer}
+    if not heavy_is_staged:
+        scheduler.parked_reqs["heavy"] = heavy[0]
+    live = {req.rid: req for req in [heavy[0], peer, light[0]]}
+    aborted = []
+
+    def abort(rid, **kwargs):
+        assert rid not in aborted
+        aborted.append(rid)
+        allocator._available += scheduler._realtime_kv_cost(live.pop(rid))
+        scheduler.parked_reqs.pop(rid, None)
+        scheduler.running_batch.reqs = [
+            r for r in scheduler.running_batch.reqs if r.rid != rid
+        ]
+
+    scheduler.abort = abort
+    scheduler._emit_request_error = lambda *args: None
+    remaining = scheduler._enforce_extend_memory_budget(selected)
+    expected = (
+        ["heavy", "peer"]
+        if append_fits_after_eviction
+        else ["heavy", "peer", "light"]
+    )
+    assert aborted == expected
+    assert [entry[0].rid for entry in remaining] == (
+        ["light"] if append_fits_after_eviction else []
+    )
+    assert allocator.available_size() >= sum(
+        len(s.raw_append_ids) + 2 for _, _, s in remaining
+    )
+    if heavy_is_staged:
+        assert heavy[0].output_ids.tolist() == [201]
+    if not append_fits_after_eviction:
+        assert light[0].output_ids.tolist() == [201]
 
 
 def test_validate_kv_pool_capacity_rejects_pool_smaller_than_context() -> None:

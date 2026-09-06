@@ -842,6 +842,10 @@ class OmniScheduler:
                 self._on_stream_done(msg.request_id)
             elif msg.type == "request_update":
                 self._on_request_update(msg.request_id, msg.data)
+            elif msg.type == "abort":
+                self.abort(msg.request_id, defer_running_cleanup=bool(
+                    (msg.data or {}).get("defer_running_cleanup", True)
+                ))
 
         return new_reqs
 

@@ -161,6 +161,7 @@ def make_moss_vl_realtime_stream_output_builder(
     *,
     tokenizer: Any,
     silence_token_ids: tuple[int, ...],
+    context_length: int = 0,
 ) -> Callable[[str, MossVLRealtimeRequestData, Any], list[OutgoingMessage]]:
     eos_token_id = int(tokenizer.eos_token_id)
     silence_token_ids = tuple(int(token_id) for token_id in silence_token_ids)
@@ -173,6 +174,23 @@ def make_moss_vl_realtime_stream_output_builder(
         req_output: Any,
     ) -> list[OutgoingMessage]:
         messages: list[OutgoingMessage] = []
+        if (data.stage_payload.request.params or {}).get("include_usage"):
+            state = data.runtime_state
+            # Include the sampled pending token; it still needs its next forward.
+            decoder_tokens = int(state.decoder_length) + int(req_output.data is not None)
+            token_space_used = int(state.effective_appended_encoder_length) + decoder_tokens
+            messages.append(OutgoingMessage(
+                request_id=request_id, type="stream",
+                data={
+                    "event": "session.usage", "modality": "control",
+                    "decoder_tokens": decoder_tokens,
+                    "encoder_tokens": int(state.effective_appended_encoder_length),
+                    "encoder_kv_tokens": int(state.encoder_length),
+                    "token_space_used": token_space_used,
+                    "context_limit": int(context_length),
+                    "context_remaining": max(0, int(context_length) - token_space_used),
+                }, metadata={"modality": "control"},
+            ))
         processed_events = getattr(
             data.req,
             "_moss_vl_realtime_processed_events",
@@ -251,7 +269,18 @@ def make_moss_vl_realtime_stream_output_builder(
         if token_id != eos_token_id:
             data.generated_token_ids.append(token_id)
             data.turn_generated_token_ids.append(token_id)
-        if _ends_with_token_ids(data.turn_generated_token_ids, silence_token_ids):
+        is_silence = _ends_with_token_ids(
+            data.turn_generated_token_ids, silence_token_ids
+        )
+        messages.extend(
+            emit_text(
+                request_id,
+                data,
+                token_id=token_id,
+                final=token_id == eos_token_id or is_silence,
+            )
+        )
+        if is_silence:
             messages.append(
                 OutgoingMessage(
                     request_id=request_id,
@@ -272,15 +301,28 @@ def make_moss_vl_realtime_stream_output_builder(
                 )
             )
             data.silence_output_seq += 1
+        return messages
+
+    def emit_text(
+        request_id: str,
+        data: MossVLRealtimeRequestData,
+        *,
+        token_id: int | None = None,
+        final: bool = False,
+    ) -> list[OutgoingMessage]:
         full_text = _decode(tokenizer, data.generated_token_ids)
         data.emitted_text = full_text
         turn_text = _decode(tokenizer, data.turn_generated_token_ids)
+        # Byte-level tokens may end mid-codepoint. Keep the emitted cursor
+        # unchanged until the bytes complete, or flush at a terminal boundary.
+        if not final and turn_text.endswith("\ufffd"):
+            return []
         delta = _text_delta(data.turn_emitted_text, turn_text)
         data.turn_emitted_text = turn_text
         payload = data.stage_payload
         if not delta or not (payload.request.params or {}).get("stream", False):
-            return messages
-        messages.append(
+            return []
+        return [
             OutgoingMessage(
                 request_id=request_id,
                 type="stream",
@@ -295,9 +337,14 @@ def make_moss_vl_realtime_stream_output_builder(
                     "turn_id": data.runtime_state.turn_id,
                 },
             )
-        )
-        return messages
+        ]
 
+    def flush(
+        request_id: str, data: MossVLRealtimeRequestData
+    ) -> list[OutgoingMessage]:
+        return emit_text(request_id, data, final=True)
+
+    build.flush = flush
     return build
 
 

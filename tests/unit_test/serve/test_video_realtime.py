@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -842,6 +843,129 @@ def test_video_realtime_rejects_out_of_order_seq_without_killing_session() -> No
         accepted = websocket.receive_json()
         assert accepted["type"] == "input.prompt.accepted"
         assert accepted["seq_no"] == 0
+
+
+@pytest.mark.parametrize("submit_frame", [False, True])
+def test_video_realtime_abort_stream_error_leaves_terminal_to_teardown(
+    monkeypatch, submit_frame
+) -> None:
+    class AbortErrorClient(_HoldingClient):
+        def __init__(self):
+            super().__init__()
+            self.abort_event = asyncio.Event()
+            self.response_drained = asyncio.Event()
+
+        async def generate(self, request, request_id=None):
+            yield GenerateChunk(
+                request_id=request_id,
+                modality="control",
+                control_event="session.ready",
+                control_data={},
+            )
+            await self.abort_event.wait()
+            raise RuntimeError("aborted")
+
+        async def abort(self, request_id):
+            await super().abort(request_id)
+            self.abort_event.set()
+            # Force the response error handler to finish before teardown runs.
+            await asyncio.wait_for(self.response_drained.wait(), timeout=5)
+            return True
+
+    client = AbortErrorClient()
+    original = VideoRealtimeSession.stream_response
+
+    async def observed_response(self, request):
+        try:
+            await original(self, request)
+        finally:
+            client.response_drained.set()
+
+    monkeypatch.setattr(VideoRealtimeSession, "stream_response", observed_response)
+    app = create_app(
+        client,  # type: ignore[arg-type]
+        model_name="moss-vl-realtime",
+        enable_video_realtime=True,
+    )
+    manager = app.state.video_realtime_manager
+    with TestClient(app).websocket_connect("/v1/video/realtime") as websocket:
+        created = websocket.receive_json()
+        websocket.send_json({"type": "session.configure"})
+        assert websocket.receive_json()["type"] == "session.configured"
+        assert websocket.receive_json()["type"] == "session.ready"
+        if submit_frame:
+            websocket.send_json({
+                "type": "input.frame", "seq_no": 0,
+                "timestamp": 0.0, "mime_type": "image/png",
+            })
+            assert websocket.receive_json()["type"] == "input.frame.ready"
+            websocket.send_bytes(_png_bytes())
+            assert websocket.receive_json()["type"] == "input.frame.accepted"
+        websocket.send_json({"type": "session.abort"})
+        assert websocket.receive_json() == {
+            "type": "session.done",
+            "session_id": created["session_id"],
+            "aborted": True,
+        }
+        closed = websocket.receive()
+        assert closed["type"] == "websocket.close"
+        assert closed["code"] == 1000
+
+    assert client.response_drained.is_set()
+    assert client.aborted == [created["request_id"]]
+    assert manager.sessions == {}
+    assert dict(manager.frame_store._names_by_request) == {}
+
+
+@pytest.mark.parametrize("message", ["aborted", "engine failed"])
+def test_video_realtime_response_error_without_abort_is_reported(message) -> None:
+    async def run():
+        async def generate(*args, **kwargs):
+            raise RuntimeError(message)
+            yield  # pragma: no cover
+
+        session = VideoRealtimeSession(
+            _BrokenWebSocket(),  # type: ignore[arg-type]
+            client=SimpleNamespace(generate=generate),
+            model_name="moss-vl-realtime",
+            frame_store=SharedMemoryFrameStore(),
+        )
+        events = []
+
+        async def error(text, *, code):
+            events.append((code, text))
+
+        async def close():
+            events.append("close")
+
+        session.send_error_safely = error
+        session.close_websocket = close
+        await session.stream_response(None)
+        assert events == [("response_failed", message), "close"]
+        assert session.closed
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("abort_sent", [False, True])
+def test_video_realtime_response_task_cancellation_propagates(abort_sent) -> None:
+    async def run():
+        async def generate(*args, **kwargs):
+            raise asyncio.CancelledError()
+            yield  # pragma: no cover
+
+        session = VideoRealtimeSession(
+            _BrokenWebSocket(),  # type: ignore[arg-type]
+            client=SimpleNamespace(generate=generate),
+            model_name="moss-vl-realtime",
+            frame_store=SharedMemoryFrameStore(),
+        )
+        session.abort_sent = abort_sent
+        with pytest.raises(asyncio.CancelledError):
+            await session.stream_response(None)
+        assert not session.closed
+
+    asyncio.run(run())
 
 
 def test_video_realtime_client_abort_emits_terminal_session_done() -> None:

@@ -54,6 +54,83 @@ class _SilenceTokenizer(_Tokenizer):
         return "".join({10: "A", 11: "B"}.get(i, "") for i in token_ids)
 
 
+class _ByteFragmentTokenizer(_Tokenizer):
+    def decode(self, token_ids, **kwargs):
+        del kwargs
+        pieces = {10: b"\xe9\xbe", 11: b"\x98", 13: b"\xef\xbf\xbd", 14: b"new"}
+        return b"".join(pieces.get(i, b"") for i in token_ids).decode(
+            "utf-8", errors="replace"
+        )
+
+
+def _byte_stream():
+    tokenizer = _ByteFragmentTokenizer()
+    request_builder, _ = make_moss_vl_realtime_scheduler_adapters(
+        tokenizer=tokenizer, max_new_tokens=100
+    )
+    data = request_builder(_payload(stream=True))
+    builder = make_moss_vl_realtime_stream_output_builder(
+        tokenizer=tokenizer, silence_token_ids=(12,)
+    )
+    return data, builder
+
+
+def _stream_text(messages):
+    return "".join(message.data.get("text", "") for message in messages)
+
+
+def test_stream_builder_buffers_utf8_byte_fragments() -> None:
+    data, builder = _byte_stream()
+    first = builder("req-1", data, SimpleNamespace(data=10))
+    assert _stream_text(first) == ""
+    assert data.turn_emitted_text == ""
+    second = builder("req-1", data, SimpleNamespace(data=11))
+    assert _stream_text(second) == "\u9f98"
+    assert data.turn_emitted_text == "\u9f98"
+    assert builder.flush("req-1", data) == []
+
+
+@pytest.mark.parametrize("token_id", [10, 13])
+@pytest.mark.parametrize("boundary", ["flush", "eos", "silence"])
+def test_stream_builder_flushes_replacement_once(token_id, boundary) -> None:
+    data, builder = _byte_stream()
+    messages = builder("req-1", data, SimpleNamespace(data=token_id))
+    if boundary == "flush":
+        messages += builder.flush("req-1", data)
+    else:
+        messages += builder(
+            "req-1", data, SimpleNamespace(data=2 if boundary == "eos" else 12)
+        )
+    assert _stream_text(messages) == "\ufffd"
+    if boundary == "silence":
+        text_index = next(i for i, m in enumerate(messages) if "text" in m.data)
+        silence_index = next(
+            i for i, m in enumerate(messages)
+            if m.data.get("event") == "response.turn.silence"
+        )
+        assert text_index < silence_index
+    assert builder.flush("req-1", data) == []
+
+
+def test_stream_builder_drops_incomplete_bytes_at_turn_interrupt() -> None:
+    data, builder = _byte_stream()
+    first = builder("req-1", data, SimpleNamespace(data=10))
+    data.req._moss_vl_realtime_processed_events = [
+        {
+            "seq_no": 4,
+            "timestamp": 2.0,
+            "prompt": "Interrupt",
+            "final": False,
+            "interrupted_turn_id": 0,
+            "turn_id": 1,
+        }
+    ]
+    data.runtime_state.turn_id = 1
+    second = builder("req-1", data, SimpleNamespace(data=14))
+    assert _stream_text(first + second) == "new"
+    assert data.turn_emitted_text == "new"
+
+
 def _payload(*, stream: bool, max_tokens_per_turn: float | None = None) -> StagePayload:
     params = {"stream": stream, "max_new_tokens": 20}
     if max_tokens_per_turn is not None:

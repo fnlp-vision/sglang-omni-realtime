@@ -126,6 +126,7 @@ class VideoSessionConfigure(BaseModel):
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
     input_queue_capacity: int = Field(default=4, ge=1, le=256)
     benchmark_ignore_eos: bool = False
+    include_usage: bool = False
 
 
 class VideoFrameMetadata(BaseModel):
@@ -214,6 +215,7 @@ class VideoRealtimeSession:
                 "request_id": self.request_id,
                 "model": self.model_name,
                 "turn_id": self.current_turn_id,
+                "capabilities": ["session.usage"],
             }
         )
         try:
@@ -298,6 +300,8 @@ class VideoRealtimeSession:
         extra_params: dict[str, Any] = {
             "max_tokens_per_turn": config.max_tokens_per_turn,
         }
+        if config.include_usage:
+            extra_params["include_usage"] = True
         if config.benchmark_ignore_eos:
             extra_params["benchmark_ignore_eos"] = True
         request = GenerateRequest(
@@ -446,6 +450,9 @@ class VideoRealtimeSession:
             async for chunk in self.client.generate(
                 request, request_id=self.request_id
             ):
+                if chunk.control_event == "session.usage":
+                    await self.send({"type": "session.usage", **dict(chunk.control_data or {})})
+                    continue
                 if chunk.control_event == "session.ready":
                     self.ready = True
                     await self.send(
@@ -556,6 +563,9 @@ class VideoRealtimeSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if self.abort_sent:
+                # Teardown owns the terminal event for an explicit abort.
+                return
             logger.exception("Realtime response failed for request %s", self.request_id)
             await self.send_error_safely(
                 str(exc),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import torch
+from sglang_omni.scheduling.messages import IncomingMessage
 from PIL import Image
 from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch
 from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats
@@ -552,23 +554,24 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
         virtual_available = int(allocator.available_size())
         victims: list[str] = []
+        live = {req.rid: req for req in getattr(self.running_batch, "reqs", ())}
+        for req in self.parked_reqs.values():
+            live.setdefault(req.rid, req)
+        for req, _, _ in selected:
+            live.setdefault(req.rid, req)
         while remaining and virtual_available < _needed():
-            live = {
-                req.rid: req for req in getattr(self.running_batch, "reqs", ())
-            }
-            for req in self.parked_reqs.values():
-                live.setdefault(req.rid, req)
-            for req, _, _ in remaining:
-                live.setdefault(req.rid, req)
             if not live:
                 break
             victim = max(live.values(), key=self._realtime_kv_cost)
             victims.append(victim.rid)
+            # Aborts run after planning; count each request's slots only once.
+            del live[victim.rid]
             # Aborts free the victim's committed KV synchronously; kv_cost
             # slightly underestimates, which is the safe direction here.
             virtual_available += self._realtime_kv_cost(victim)
             remaining = [entry for entry in remaining if entry[0].rid != victim.rid]
-        for victim_rid in self._tp_consistent_decision(victims):
+        victims = self._tp_consistent_decision(victims)
+        for victim_rid in victims:
             staged = staged_by_rid.get(victim_rid)
             if staged is not None:
                 _undo_appended_segment(*staged)
@@ -585,7 +588,8 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 ),
             )
             self.abort(victim_rid, defer_running_cleanup=False)
-        return remaining
+        victim_ids = set(victims)
+        return [entry for entry in selected if entry[0].rid not in victim_ids]
 
     def _resolve_and_process(
         self, batch: Any, sched_output: Any, pending_step: Any
@@ -718,7 +722,11 @@ class MossVLRealtimeScheduler(OmniScheduler):
             newly_parked_rids.append(req.rid)
             logger.info("Realtime request %s parked after silence", req.rid)
         if len(keep_indices) != len(batch.reqs):
-            batch.filter_batch(keep_indices=keep_indices)
+            if batch.seq_lens is None:
+                # Async result snapshots omit the forward-only batch tensors.
+                batch.reqs = [batch.reqs[i] for i in keep_indices]
+            else:
+                batch.filter_batch(keep_indices=keep_indices)
             batch.batch_is_full = False
         if newly_parked_rids:
             self._drop_parked_from_live_running_batch(batch, newly_parked_rids)
@@ -832,6 +840,17 @@ class MossVLRealtimeScheduler(OmniScheduler):
         ]
 
     def abort(self, request_id: str, *, defer_running_cleanup: bool = True) -> None:
+        owner = getattr(self, "_scheduler_thread_id", None)
+        if getattr(self, "_running", False) and owner is not None and owner != threading.get_ident():
+            # The control-plane listener is a different thread. Page rewrites,
+            # in-flight forwards and KV release must stay on the scheduler owner.
+            # Only the entry rank enqueues; recv_requests broadcasts to TP peers.
+            if getattr(self, "is_entry_rank", getattr(self, "tp_rank", 0) == 0):
+                self.inbox.put(IncomingMessage(
+                    request_id=request_id, type="abort",
+                    data={"defer_running_cleanup": defer_running_cleanup},
+                ))
+            return
         pending = getattr(self, "_async_pending", None)
         if pending is not None and any(r.rid == request_id for r in pending[0].reqs):
             # Flush the in-flight lookahead step before touching this

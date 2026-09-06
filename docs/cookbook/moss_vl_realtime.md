@@ -6,9 +6,11 @@ frames and optional prompts while the same SGLang request remains alive. The
 model can emit text, return `<|silence|>` and park, then wake when new input
 arrives.
 
-This integration currently targets **one WebSocket, one video stream, one
-model, and one active session** on a single host. Multi-session scheduling and
-cross-host media relay are not supported.
+One instance can serve **multiple concurrent sessions**: the cap is
+`--max-running-requests` (default 1), kept equal to the WebSocket session limit,
+and parked sessions still occupy their slot. Once the cap is reached, a new
+connection receives `session_capacity_exceeded` and is closed with code 1013.
+Cross-host media relay is not supported.
 
 ## Prerequisites
 
@@ -70,8 +72,9 @@ The default server configuration is the validated single-stream setup:
 
 | Setting | Default | Notes |
 |---|---:|---|
-| Context length | 131072 (128K) | Shared by the launcher, pipeline config, stage factory, and engine builder |
-| Static memory fraction | 0.40 | Leaves enough H200 KV capacity for the 128K request row |
+| Context length | 262144 (256K) | Matches the checkpoint's `max_position_embeddings`; startup fails fast if the KV pool cannot hold one full session context (raise `--mem-fraction-static` or lower `--context-length`) |
+| Static memory fraction | 0.40 | Attention: at 0.40 the H100 KV pool (~185K tokens) cannot fit the default 256K context, so startup is rejected — raise it (e.g. 0.87) or lower `--context-length` |
+| Concurrent sessions | 1 | `--max-running-requests N`; also the WebSocket session cap; parked sessions still occupy a slot |
 | Decode CUDA Graph | On | FlashInfer decode; dynamic frame extend remains eager |
 | KV page size | 1 | Fixed; realtime does not patch SGLang's paged allocator |
 | Async decode | Off | Optional `--enable-async-decode` |
@@ -128,8 +131,10 @@ default is byte-identical to the reference implementation.
 `session.configure` accepts `max_tokens_per_turn`, matching the Transformers
 realtime API. Despite its historical name, this is a generation-rate cap in
 tokens per second, not a per-turn token-count limit. Its default `86400` is
-effectively unlimited. `max_new_tokens` remains the total generation budget for
-the persistent request.
+effectively unlimited. `max_new_tokens` is the decode allowance that is
+re-anchored after every input extend (it is not a lifetime session budget), so
+long quiet sessions that mostly emit silence are no longer length-terminated
+mid-stream.
 
 Rate limiting happens in the scheduler before model execution. The request
 keeps its KV allocation while ordinary decode waits, and the event loop
@@ -216,6 +221,31 @@ If a live camera permanently produces faster than the model consumes, the
 producer must slow down or provide its own bounded buffering/storage policy.
 Finite memory, constant capture FPS, and unlimited no-drop retention cannot all
 be guaranteed simultaneously.
+
+## Concurrent sessions and KV pressure
+
+With `--max-running-requests N` (N > 1) the instance serves N concurrent
+sessions, each an independent persistent request; parked sessions still occupy
+their slot, so the WebSocket session cap is kept equal to N. Sessions do not
+share prefix KV (radix insertion is skipped for realtime requests), so each
+session pays its own prefill.
+
+Capacity ordering is:
+
+- **Admission**: when all slots are busy, a new WebSocket receives
+  `error(session_capacity_exceeded)` and is closed with code 1013.
+- **Startup precheck**: boot fails fast when the KV pool cannot hold one full
+  session context; oversubscribing sessions (`N * context_len > pool`) logs a
+  warning, because the runtime then relies on the degradation below.
+- **Runtime degradation**: when the KV pool cannot fit the next extend/decode,
+  the scheduler aborts the currently heaviest session first (its client
+  receives `error(response_failed)` and a closed connection) until the batch
+  fits again. A session aborted this way must reconnect as a new session and
+  re-push its stream from scratch.
+
+Under concurrent load the decode-rate cap (`max_tokens_per_turn`) becomes a
+soft target: a step runs as soon as any session in the batch is due, letting
+not-yet-due sessions ride along.
 
 ## Benchmark mode
 

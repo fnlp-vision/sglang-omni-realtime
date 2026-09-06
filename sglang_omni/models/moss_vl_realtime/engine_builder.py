@@ -175,6 +175,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             "stream_output_builder": request_builders.make_moss_vl_realtime_stream_output_builder(
                 tokenizer=self.processor.tokenizer,
                 silence_token_ids=self.silence_token_ids,
+                context_length=self.context_length,
             ),
             "enable_overlap": False,
             "enable_async_decode": self.enable_async_decode,
