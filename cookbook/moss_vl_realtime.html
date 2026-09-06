@@ -1,0 +1,934 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>MOSS-VL Realtime Video Understanding &#8212; SGLang</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom_log.css?v=a64801f4" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom_log.css?v=a64801f4" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=1a9ffd16"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=ccdb6887"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'cookbook/moss_vl_realtime';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../_static/js/qwen3_omni_server_generator.js?v=66f6ff63"></script>
+    <script src="../_static/js/ming_omni_server_generator.js?v=694b1473"></script>
+    <link rel="icon" href="../_static/logo.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Whisper ASR" href="whisper_asr.html" />
+    <link rel="prev" title="MOSS-Transcribe-Diarize" href="moss_transcribe_diarize.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.1.1" />
+    <meta name="docbuild:last-update" content="Sep 06, 2026"/>
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="SGLang - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="SGLang - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">🚀 Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="higgs_tts.html">Higgs TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="voxtral_tts.html">Voxtral TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fishaudio_s2_pro.html">Fish Audio S2-Pro</a></li>
+<li class="toctree-l1"><a class="reference internal" href="qwen3_tts.html">Qwen3 TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ming_tts.html">Ming-Omni-TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moss_tts.html">MOSS-TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moss_tts_local.html">MOSS-TTS-Local</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dots_tts.html">dots.tts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="minimax_music3.html">MiniMax Music 3</a></li>
+<li class="toctree-l1"><a class="reference internal" href="zonos2.html">ZONOS2</a></li>
+<li class="toctree-l1"><a class="reference internal" href="qwen3_asr.html">Qwen3-ASR</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fun_asr.html">Fun-ASR-Nano</a></li>
+<li class="toctree-l1"><a class="reference internal" href="arkasr.html">ARK-ASR-3B</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moss_transcribe_diarize.html">MOSS-Transcribe-Diarize</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">MOSS-VL Realtime Video Understanding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="whisper_asr.html">Whisper ASR</a></li>
+<li class="toctree-l1"><a class="reference internal" href="qwen3_omni.html">Qwen3-Omni</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ming_omni.html">Ming-Omni</a></li>
+<li class="toctree-l1"><a class="reference internal" href="llada2_uni.html">LLaDA2.0-Uni</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">General Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/qwen3_omni.html">Omni Model Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/audio_translations.html">Audio Translations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/tts.html">TTS Model Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/tts_process_topology.html">TTS Process Topology</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/omni_router.html">Omni Router Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../basic_usage/mps_dp.html">Same-GPU Data Parallelism with CUDA MPS</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Benchmarks</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../benchmarks/relay.html">Benchmark Relay</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Developer Reference</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/main.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/apiserver_design.html">API Server Design</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/pipeline.html">Pipeline Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/config.html">Config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/communication.html">Communication</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/reference_encode_service.html">Reference Encode Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/profiler.html">Request-level profiler</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/rl_admin_control.html">RL Admin Control</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/sgl-project/sglang-omni" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/sgl-project/sglang-omni/blob/main/docs/cookbook/moss_vl_realtime.md?plain=1" target="_blank"
+   class="btn btn-sm btn-source-file-button dropdown-item"
+   title="Show source"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-code"></i>
+  </span>
+<span class="btn__text-container">Show source</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/sgl-project/sglang-omni/edit/main/docs/cookbook/moss_vl_realtime.md" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/sgl-project/sglang-omni/issues/new?title=Issue%20on%20page%20%2Fcookbook/moss_vl_realtime.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/cookbook/moss_vl_realtime.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>MOSS-VL Realtime Video Understanding</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#send-timestamped-frames">Send timestamped frames</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#websocket-protocol">WebSocket protocol</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#text-barge-in-and-turns">Text barge-in and turns</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backpressure">Backpressure</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#concurrent-sessions-and-kv-pressure">Concurrent sessions and KV pressure</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-mode">Benchmark mode</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#vision-kv-sliding-window-opt-in">Vision KV sliding window (opt-in)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#validation">Validation</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="moss-vl-realtime-video-understanding">
+<h1>MOSS-VL Realtime Video Understanding<a class="headerlink" href="#moss-vl-realtime-video-understanding" title="Link to this heading">#</a></h1>
+<p>MOSS-VL Realtime serves one persistent video-understanding session over the
+<code class="docutils literal notranslate"><span class="pre">/v1/video/realtime</span></code> WebSocket endpoint. A client appends timestamped image
+frames and optional prompts while the same SGLang request remains alive. The
+model can emit text, return <code class="docutils literal notranslate"><span class="pre">&lt;|silence|&gt;</span></code> and park, then wake when new input
+arrives.</p>
+<p>One instance can serve <strong>multiple concurrent sessions</strong>: the cap is
+<code class="docutils literal notranslate"><span class="pre">--max-running-requests</span></code> (default 1), kept equal to the WebSocket session limit,
+and parked sessions still occupy their slot. Once the cap is reached, a new
+connection receives <code class="docutils literal notranslate"><span class="pre">session_capacity_exceeded</span></code> and is closed with code 1013.
+Cross-host media relay is not supported.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
+<p>Install this repository and use a MOSS-VL streaming checkpoint whose processor
+and model code implement the realtime timestamp, incremental vision KV, and
+silence semantics:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+</pre></div>
+</div>
+<p>The validated environment uses SGLang 0.5.16 and Transformers 5.12.1. Keep the
+checkpoint outside the source tree and pass its path with <code class="docutils literal notranslate"><span class="pre">--model-path</span></code>.
+The project acceptance checkpoint is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>/inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1
+</pre></div>
+</div>
+<p>Do not substitute <code class="docutils literal notranslate"><span class="pre">MOSS-VL-0708-Instruct-sglang</span></code> for realtime semantic
+validation. That checkpoint can load through the same SGLang model class, but
+on the 1 FPS SB-Pro contract it produces ordinary video descriptions instead
+of the trained <code class="docutils literal notranslate"><span class="pre">&lt;|silence|&gt;</span></code> / event-trigger behavior. A successful model load
+therefore proves framework compatibility, not streaming-model correctness.</p>
+</section>
+<section id="start-the-server">
+<h2>Start the server<a class="headerlink" href="#start-the-server" title="Link to this heading">#</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model-path<span class="w"> </span>/inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpu<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--port<span class="w"> </span><span class="m">8000</span>
+</pre></div>
+</div>
+<p>For tensor parallel deployment, provide one distinct GPU per rank:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model-path<span class="w"> </span>/inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--tp-size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--gpus<span class="w"> </span><span class="m">0</span>,1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--port<span class="w"> </span><span class="m">8000</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--gpus</span></code> must contain exactly <code class="docutils literal notranslate"><span class="pre">--tp-size</span></code> unique GPU ids. Omni starts one
+process per rank and exposes only that rank’s GPU as local <code class="docutils literal notranslate"><span class="pre">cuda:0</span></code>. This
+topology uses NCCL collectives; SGLang custom all-reduce is disabled because
+its rendezvous requires distinct visible device ordinals in every rank.</p>
+<p>Under TP&gt;1, frame references (for example <code class="docutils literal notranslate"><span class="pre">shm://</span></code>) are resolved by rank 0
+only, and the pixels are broadcast to every rank over the TP CPU group; the
+single-consumer shared-memory frame lifecycle stays intact. A custom
+<code class="docutils literal notranslate"><span class="pre">frame_resolver</span></code> (the scheduler’s Python parameter) is likewise executed only
+on rank 0 under TP.</p>
+<p>The default server configuration is the validated single-stream setup:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Setting</p></th>
+<th class="head text-right"><p>Default</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Context length</p></td>
+<td class="text-right"><p>262144 (256K)</p></td>
+<td><p>Matches the checkpoint’s <code class="docutils literal notranslate"><span class="pre">max_position_embeddings</span></code>; startup fails fast if the KV pool cannot hold one full session context (raise <code class="docutils literal notranslate"><span class="pre">--mem-fraction-static</span></code> or lower <code class="docutils literal notranslate"><span class="pre">--context-length</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Static memory fraction</p></td>
+<td class="text-right"><p>0.40</p></td>
+<td><p>Attention: at 0.40 the H100 KV pool (~185K tokens) cannot fit the default 256K context, so startup is rejected — raise it (e.g. 0.87) or lower <code class="docutils literal notranslate"><span class="pre">--context-length</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Concurrent sessions</p></td>
+<td class="text-right"><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">--max-running-requests</span> <span class="pre">N</span></code>; also the WebSocket session cap; parked sessions still occupy a slot</p></td>
+</tr>
+<tr class="row-odd"><td><p>Decode CUDA Graph</p></td>
+<td class="text-right"><p>On</p></td>
+<td><p>FlashInfer decode; dynamic frame extend remains eager</p></td>
+</tr>
+<tr class="row-even"><td><p>KV page size</p></td>
+<td class="text-right"><p>1</p></td>
+<td><p>Fixed; realtime does not patch SGLang’s paged allocator</p></td>
+</tr>
+<tr class="row-odd"><td><p>Async decode</p></td>
+<td class="text-right"><p>Off</p></td>
+<td><p>Optional <code class="docutils literal notranslate"><span class="pre">--enable-async-decode</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Tensor parallelism</p></td>
+<td class="text-right"><p>1</p></td>
+<td><p>Use <code class="docutils literal notranslate"><span class="pre">--tp-size</span> <span class="pre">N</span> <span class="pre">--gpus</span> <span class="pre">g0,...,gN-1</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Overlap scheduling</p></td>
+<td class="text-right"><p>Off</p></td>
+<td><p>Not supported by the realtime update invariants</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Use <code class="docutils literal notranslate"><span class="pre">--disable-decode-cuda-graph</span></code> to run eager decode. When decode Graph is on,
+the launcher only accepts the FlashInfer decode backend.</p>
+<p>Before Uvicorn starts listening, the launcher opens an internal temporary
+request and processes one generated 640 x 352 RGB frame through the normal
+realtime update path. Startup only continues after <code class="docutils literal notranslate"><span class="pre">input.frame.processed</span></code>, so
+the first external WebSocket does not pay the one-time vision/JIT setup cost.
+The warmup request is then aborted and its shared-memory frame is cleaned up.
+It is excluded from radix-prefix insertion and does not consume the single
+user-session slot after startup, so its internal KV cannot cross into a real
+streaming session.
+Use <code class="docutils literal notranslate"><span class="pre">--disable-startup-warmup</span></code> only to isolate startup problems; warmup remains
+enabled by default.</p>
+</section>
+<section id="send-timestamped-frames">
+<h2>Send timestamped frames<a class="headerlink" href="#send-timestamped-frames" title="Link to this heading">#</a></h2>
+<p>The example client defaults to <strong>1 FPS</strong>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/moss_vl_realtime_client.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--url<span class="w"> </span>ws://127.0.0.1:8000/v1/video/realtime<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--prompt<span class="w"> </span><span class="s2">"Describe relevant changes."</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--frame<span class="w"> </span>/path/to/frame_000.png<span class="w"> </span>--timestamp<span class="w"> </span><span class="m">0</span>.0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--frame<span class="w"> </span>/path/to/frame_001.png<span class="w"> </span>--timestamp<span class="w"> </span><span class="m">1</span>.0<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--frame<span class="w"> </span>/path/to/frame_002.png<span class="w"> </span>--timestamp<span class="w"> </span><span class="m">2</span>.0
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--fps</span></code> and <code class="docutils literal notranslate"><span class="pre">--frame-interval</span></code> expose producer pacing controls and are mutually
+exclusive. The model was trained and semantically validated at <strong>1 FPS</strong>. Other
+positive FPS values are accepted by the interface, but their answer quality is
+not qualified and should not be treated as a framework correctness criterion.
+No higher-FPS model-quality experiments are required for acceptance.</p>
+<p>The explicit timestamp is part of the model input. Each frame is lowered to the
+same structure used by offline singleton video segments:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;|vision_start|&gt;&lt;|time_start|&gt;1.0 seconds&lt;|time_end|&gt;&lt;|image|&gt;&lt;|vision_end|&gt;
+</pre></div>
+</div>
+</section>
+<section id="websocket-protocol">
+<h2>WebSocket protocol<a class="headerlink" href="#websocket-protocol" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">session.configure</span></code> accepts <code class="docutils literal notranslate"><span class="pre">prompt</span></code> (the initial user prompt), whose default
+is an empty string, matching the Transformers realtime reference. Production
+deployments are expected to pass the SFT prompt explicitly; the system prompt
+default is byte-identical to the reference implementation.</p>
+<p><code class="docutils literal notranslate"><span class="pre">session.configure</span></code> accepts <code class="docutils literal notranslate"><span class="pre">max_tokens_per_turn</span></code>, matching the Transformers
+realtime API. Despite its historical name, this is a generation-rate cap in
+tokens per second, not a per-turn token-count limit. Its default <code class="docutils literal notranslate"><span class="pre">86400</span></code> is
+effectively unlimited. <code class="docutils literal notranslate"><span class="pre">max_new_tokens</span></code> is the decode allowance that is
+re-anchored after every input extend (it is not a lifetime session budget), so
+long quiet sessions that mostly emit silence are no longer length-terminated
+mid-stream.</p>
+<p>Rate limiting happens in the scheduler before model execution. The request
+keeps its KV allocation while ordinary decode waits, and the event loop
+continues accepting frames and prompt interrupts. Frame/prompt extend always
+takes priority over the decode-rate deadline, so a low output rate does not add
+the same delay to user input handling. All TP ranks receive the same request
+configuration and rank 0 broadcasts scheduler inputs to keep their forward
+sequence aligned.</p>
+<p>A normal frame follows this sequence:</p>
+<ol class="arabic simple">
+<li><p>Server sends <code class="docutils literal notranslate"><span class="pre">session.created</span></code>.</p></li>
+<li><p>Client sends <code class="docutils literal notranslate"><span class="pre">session.configure</span></code>.</p></li>
+<li><p>Server sends <code class="docutils literal notranslate"><span class="pre">session.configured</span></code>, then <code class="docutils literal notranslate"><span class="pre">session.ready</span></code> after initial prefill.</p></li>
+<li><p>Client sends <code class="docutils literal notranslate"><span class="pre">input.frame</span></code> JSON metadata.</p></li>
+<li><p>Server sends <code class="docutils literal notranslate"><span class="pre">input.frame.ready</span></code> when the bounded queue has capacity.</p></li>
+<li><p>Client sends the binary image payload.</p></li>
+<li><p>Server sends <code class="docutils literal notranslate"><span class="pre">input.frame.accepted</span></code> after reliable submission.</p></li>
+<li><p>Server sends <code class="docutils literal notranslate"><span class="pre">input.frame.processed</span></code> after incremental forward and KV commit.</p></li>
+<li><p>Text arrives through <code class="docutils literal notranslate"><span class="pre">response.text.delta</span></code>; terminal requests end with
+<code class="docutils literal notranslate"><span class="pre">response.done</span></code> and <code class="docutils literal notranslate"><span class="pre">session.done</span></code>.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">session.configured</span></code> also advertises two operational limits:
+<code class="docutils literal notranslate"><span class="pre">max_frame_bytes</span></code> (the largest binary frame the server accepts; the transport
+is configured to allow it end to end) and <code class="docutils literal notranslate"><span class="pre">parked_request_timeout_s</span></code> (the idle
+timeout after which a silence-parked request is aborted and the session ends).</p>
+<p>Frame metadata contains <code class="docutils literal notranslate"><span class="pre">seq_no</span></code>, video <code class="docutils literal notranslate"><span class="pre">timestamp</span></code>, optional <code class="docutils literal notranslate"><span class="pre">prompt</span></code>, <code class="docutils literal notranslate"><span class="pre">final</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">mime_type</span></code>. Prompt-only updates use <code class="docutils literal notranslate"><span class="pre">input.prompt</span></code> and the same ordered
+sequence number space.</p>
+<p>Event ordering is validated at the WebSocket edge: <code class="docutils literal notranslate"><span class="pre">seq_no</span></code> must be dense,
+starting at 0 for the session, and frame timestamps must be
+non-decreasing. A violating event is rejected with a per-event
+<code class="docutils literal notranslate"><span class="pre">invalid_request</span></code> error and the session stays alive; only engine-internal
+failures abort the request.</p>
+<section id="text-barge-in-and-turns">
+<h3>Text barge-in and turns<a class="headerlink" href="#text-barge-in-and-turns" title="Link to this heading">#</a></h3>
+<p>There is no separate turn-interrupt input. Any <code class="docutils literal notranslate"><span class="pre">input.prompt</span></code>, or an
+<code class="docutils literal notranslate"><span class="pre">input.frame</span></code> carrying a non-empty <code class="docutils literal notranslate"><span class="pre">prompt</span></code>, atomically closes the current
+assistant turn and opens the next user/assistant turn in the same persistent
+request. The appended training-format text is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;|im_end|&gt;\n&lt;|im_start|&gt;user\n{prompt}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n
+</pre></div>
+</div>
+<p>The scheduler applies the update at the next safe token boundary, retains the
+existing text and vision KV, and commits the prompt extend before confirming
+the transition. It does not abort the request or recreate the WebSocket.
+Already-running CUDA work is cooperative rather than forcibly cancelled.</p>
+<p>All events queued at one scheduler step are drained into a single segment,
+matching the Transformers reference drain: prompts are spliced first in
+arrival order and every prompt is followed by <code class="docutils literal notranslate"><span class="pre">&lt;|silence|&gt;</span></code> when the same
+drain cycle also appends frames (the trained assistant-turn opener); frames
+follow, sorted by timestamp. Multiple prompts in one cycle therefore transition
+through consecutive turn ids, and a frame that races with a prompt is appended
+after the prompt text.</p>
+<p>The observable event order is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>input.prompt.accepted (or input.frame.accepted)
+response.turn.interrupted  turn_id=N, next_turn_id=N+1
+input.prompt.processed (or input.frame.processed)  turn_id=N+1
+response.text.delta  turn_id=N+1
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">session.created</span></code>, <code class="docutils literal notranslate"><span class="pre">session.ready</span></code>, every text delta, and <code class="docutils literal notranslate"><span class="pre">response.done</span></code> carry
+a <code class="docutils literal notranslate"><span class="pre">turn_id</span></code>. Clients should stop rendering or speaking the old turn as soon as
+they submit the new prompt, and use the server-confirmed
+<code class="docutils literal notranslate"><span class="pre">response.turn.interrupted</span></code> boundary to reject any stale turn output.</p>
+</section>
+<section id="backpressure">
+<h3>Backpressure<a class="headerlink" href="#backpressure" title="Link to this heading">#</a></h3>
+<p>The input queue defaults to 4 events and is configurable from 1 to 256. When it
+is full, the server delays <code class="docutils literal notranslate"><span class="pre">input.frame.ready</span></code>; a conforming client keeps the
+next frame on the producer side until capacity is released. The server does not
+silently drop frames and does not create an unbounded overflow queue.</p>
+<p>If a live camera permanently produces faster than the model consumes, the
+producer must slow down or provide its own bounded buffering/storage policy.
+Finite memory, constant capture FPS, and unlimited no-drop retention cannot all
+be guaranteed simultaneously.</p>
+</section>
+</section>
+<section id="concurrent-sessions-and-kv-pressure">
+<h2>Concurrent sessions and KV pressure<a class="headerlink" href="#concurrent-sessions-and-kv-pressure" title="Link to this heading">#</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">--max-running-requests</span> <span class="pre">N</span></code> (N &gt; 1) the instance serves N concurrent
+sessions, each an independent persistent request; parked sessions still occupy
+their slot, so the WebSocket session cap is kept equal to N. Sessions do not
+share prefix KV (radix insertion is skipped for realtime requests), so each
+session pays its own prefill.</p>
+<p>Capacity ordering is:</p>
+<ul class="simple">
+<li><p><strong>Admission</strong>: when all slots are busy, a new WebSocket receives
+<code class="docutils literal notranslate"><span class="pre">error(session_capacity_exceeded)</span></code> and is closed with code 1013.</p></li>
+<li><p><strong>Startup precheck</strong>: boot fails fast when the KV pool cannot hold one full
+session context; oversubscribing sessions (<code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">*</span> <span class="pre">context_len</span> <span class="pre">&gt;</span> <span class="pre">pool</span></code>) logs a
+warning, because the runtime then relies on the degradation below.</p></li>
+<li><p><strong>Runtime degradation</strong>: when the KV pool cannot fit the next extend/decode,
+the scheduler aborts the currently heaviest session first (its client
+receives <code class="docutils literal notranslate"><span class="pre">error(response_failed)</span></code> and a closed connection) until the batch
+fits again. A session aborted this way must reconnect as a new session and
+re-push its stream from scratch.</p></li>
+</ul>
+<p>Under concurrent load the decode-rate cap (<code class="docutils literal notranslate"><span class="pre">max_tokens_per_turn</span></code>) becomes a
+soft target: a step runs as soon as any session in the batch is due, letting
+not-yet-due sessions ride along.</p>
+</section>
+<section id="benchmark-mode">
+<h2>Benchmark mode<a class="headerlink" href="#benchmark-mode" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">benchmark_ignore_eos</span></code> exists only to collect a fixed number of decode tokens.
+Production servers reject it. A benchmark server must be started explicitly:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model-path<span class="w"> </span>/path/to/moss-vl-realtime-checkpoint<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--enable-benchmark-mode
+</pre></div>
+</div>
+<p>Do not enable benchmark mode for production traffic.</p>
+</section>
+<section id="vision-kv-sliding-window-opt-in">
+<h2>Vision KV sliding window (opt-in)<a class="headerlink" href="#vision-kv-sliding-window-opt-in" title="Link to this heading">#</a></h2>
+<p>Long-running sessions can bound vision KV memory with a two-level window:
+recent frames stay raw, aged frames fold into mean-pooled virtual frames
+(<code class="docutils literal notranslate"><span class="pre">pool_ratio</span></code> frames to one), and virtual frames older than <code class="docutils literal notranslate"><span class="pre">pool_window_s</span></code>
+are evicted. It is disabled by default; enable it via the pipeline config or
+<code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_WINDOW_ENABLED=1</span></code> (thresholds: <code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_WINDOW_RAW_S</span></code>,
+<code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_POOL_WINDOW_S</span></code>, <code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_POOL_RATIO</span></code>). With the feature
+off, serving behavior is byte-identical to the un-windowed server.</p>
+<p>Caveats to understand before enabling:</p>
+<ul class="simple">
+<li><p><strong>This is an engineering degradation, not a training-equivalent path.</strong> The
+training distribution always sees the full vision KV. With the window on,
+aged frames become a mean of RoPE-rotated K (not a legal RoPE position) and
+evicted frames disappear entirely; a token that saw one member of a pooled
+chunk attends to the chunk mean, including frames that had not arrived yet.
+Expect output drift once the session’s frame span exceeds <code class="docutils literal notranslate"><span class="pre">raw_window_s</span></code>.</p></li>
+<li><p><strong>The window reclaims KV memory, not session length.</strong> Token space keeps one
+pad placeholder per historical encoder slot, so the max-context guard still
+terminates long sessions at the same point as without the window.</p></li>
+<li><p><strong>Under allocator pressure a round degrades to plain eviction</strong> (no pooled
+copy) so the raw-window bound still holds; watched in the logs as
+“degraded to eviction”.</p></li>
+</ul>
+</section>
+<section id="validation">
+<h2>Validation<a class="headerlink" href="#validation" title="Link to this heading">#</a></h2>
+<p>Run the model-specific and serving tests:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>-q<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/unit_test/moss_vl_realtime<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/unit_test/serve/test_video_realtime.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tests/unit_test/client/test_control_event.py
+</pre></div>
+</div>
+<p>The semantic acceptance baseline uses real 1 FPS streams. Decode Graph, eager
+decode, and optional async decode must preserve greedy output against
+that baseline. Higher FPS is an exposed producer-control capability, not a
+model-accuracy acceptance matrix.</p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="moss_transcribe_diarize.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">MOSS-Transcribe-Diarize</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="whisper_asr.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Whisper ASR</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#send-timestamped-frames">Send timestamped frames</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#websocket-protocol">WebSocket protocol</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#text-barge-in-and-turns">Text barge-in and turns</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backpressure">Backpressure</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#concurrent-sessions-and-kv-pressure">Concurrent sessions and KV pressure</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-mode">Benchmark mode</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#vision-kv-sliding-window-opt-in">Vision KV sliding window (opt-in)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#validation">Validation</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By SGLang-Omni Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2025-2026, SGLang-Omni.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    <p class="last-updated">
+  Last updated on Sep 06, 2026.
+  <br/>
+</p>
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
