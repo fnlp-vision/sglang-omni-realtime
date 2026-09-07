@@ -10,51 +10,49 @@ One instance can serve **multiple concurrent sessions**: the cap is
 `--max-running-requests` (default 1), kept equal to the WebSocket session limit,
 and parked sessions still occupy their slot. Once the cap is reached, a new
 connection receives `session_capacity_exceeded` and is closed with code 1013.
-Cross-host media relay is not supported.
+The launch examples place all TP ranks on one host.
 
 ## Prerequisites
 
-Install this repository and use a MOSS-VL streaming checkpoint whose processor
-and model code implement the realtime timestamp, incremental vision KV, and
-silence semantics:
+Install this repository following the [installation guide](../get_started/installation.md).
+Use the [MOSS-VL-Realtime-SGLANG checkpoint](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG),
+which includes Transformers 5.12.1-compatible configuration and processor code:
 
 ```bash
 uv pip install -e .
+hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
+  --local-dir /path/to/MOSS-VL-Realtime-SGLANG
+export MODEL_PATH=/path/to/MOSS-VL-Realtime-SGLANG
 ```
 
-The validated environment uses SGLang 0.5.16 and Transformers 5.12.1. Keep the
-checkpoint outside the source tree and pass its path with `--model-path`.
-The project acceptance checkpoint is:
-
-```text
-/inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1
-```
-
-Do not substitute `MOSS-VL-0708-Instruct-sglang` for realtime semantic
-validation. That checkpoint can load through the same SGLang model class, but
-on the 1 FPS SB-Pro contract it produces ordinary video descriptions instead
-of the trained `<|silence|>` / event-trigger behavior. A successful model load
-therefore proves framework compatibility, not streaming-model correctness.
+Private checkpoint access requires an authorized Hugging Face account
+(`hf auth login`). Keep the full downloaded directory together and pass its
+local path with `--model-path`. The original
+[MOSS-VL-Realtime](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime)
+repository contains the 4.57-series reference implementation; this backend
+uses the 5.12.1 compatibility package linked above.
 
 ## Start the server
 
 ```bash
 python examples/run_moss_vl_realtime_server.py \
-  --model-path /inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1 \
+  --model-path "$MODEL_PATH" \
   --gpu 0 \
-  --host 0.0.0.0 \
-  --port 8000
+  --host 127.0.0.1 --port 8000 \
+  --context-length 131072 --mem-fraction-static 0.60 \
+  --max-running-requests 1
 ```
 
 For tensor parallel deployment, provide one distinct GPU per rank:
 
 ```bash
 python examples/run_moss_vl_realtime_server.py \
-  --model-path /inspire/qb-ilm/project/video-understanding/public/train/moss_vl_streaming/8B/final_release/mossvl_streaming_tf_5.12.1 \
+  --model-path "$MODEL_PATH" \
   --tp-size 2 \
   --gpus 0,1 \
-  --host 0.0.0.0 \
-  --port 8000
+  --host 127.0.0.1 --port 8000 \
+  --context-length 131072 --mem-fraction-static 0.60 \
+  --max-running-requests 2
 ```
 
 `--gpus` must contain exactly `--tp-size` unique GPU ids. Omni starts one
@@ -68,12 +66,15 @@ single-consumer shared-memory frame lifecycle stays intact. A custom
 `frame_resolver` (the scheduler's Python parameter) is likewise executed only
 on rank 0 under TP.
 
-The default server configuration is the validated single-stream setup:
+The examples explicitly choose 128K context and a 0.60 memory fraction.
+The launcher's code defaults are listed below. Size context and concurrency
+against the available KV pool; startup reports an error if one full context
+cannot fit.
 
 | Setting | Default | Notes |
 |---|---:|---|
 | Context length | 262144 (256K) | Matches the checkpoint's `max_position_embeddings`; startup fails fast if the KV pool cannot hold one full session context (raise `--mem-fraction-static` or lower `--context-length`) |
-| Static memory fraction | 0.40 | Attention: at 0.40 the H100 KV pool (~185K tokens) cannot fit the default 256K context, so startup is rejected — raise it (e.g. 0.87) or lower `--context-length` |
+| Static memory fraction | 0.40 | Adjust to available device memory together with `--context-length` |
 | Concurrent sessions | 1 | `--max-running-requests N`; also the WebSocket session cap; parked sessions still occupy a slot |
 | Decode CUDA Graph | On | FlashInfer decode; dynamic frame extend remains eager |
 | KV page size | 1 | Fixed; realtime does not patch SGLang's paged allocator |
@@ -108,11 +109,11 @@ python examples/moss_vl_realtime_client.py \
   --frame /path/to/frame_002.png --timestamp 2.0
 ```
 
-`--fps` and `--frame-interval` expose producer pacing controls and are mutually
-exclusive. The model was trained and semantically validated at **1 FPS**. Other
-positive FPS values are accepted by the interface, but their answer quality is
-not qualified and should not be treated as a framework correctness criterion.
-No higher-FPS model-quality experiments are required for acceptance.
+The example client schedules events with explicit timestamps relative to the
+start of replay. `--fps` and `--frame-interval` are mutually exclusive and
+provide fallback spacing for events without an explicit timestamp; explicit
+timestamps take precedence. The example above therefore sends frames one
+second apart. The existing semantic baseline uses 1 FPS.
 
 The explicit timestamp is part of the model input. Each frame is lowered to the
 same structure used by offline singleton video segments:
@@ -131,10 +132,8 @@ default is byte-identical to the reference implementation.
 `session.configure` accepts `max_tokens_per_turn`, matching the Transformers
 realtime API. Despite its historical name, this is a generation-rate cap in
 tokens per second, not a per-turn token-count limit. Its default `86400` is
-effectively unlimited. `max_new_tokens` is the decode allowance that is
-re-anchored after every input extend (it is not a lifetime session budget), so
-long quiet sessions that mostly emit silence are no longer length-terminated
-mid-stream.
+effectively unlimited. `max_new_tokens` is the decode allowance re-anchored
+after every input extend, rather than a lifetime session budget.
 
 Rate limiting happens in the scheduler before model execution. The request
 keeps its KV allocation while ordinary decode waits, and the event loop
@@ -169,8 +168,28 @@ sequence number space.
 Event ordering is validated at the WebSocket edge: `seq_no` must be dense,
 starting at 0 for the session, and frame timestamps must be
 non-decreasing. A violating event is rejected with a per-event
-`invalid_request` error and the session stays alive; only engine-internal
-failures abort the request.
+`invalid_request` error and the session stays alive. Input submission failures
+and engine failures terminate the session; explicit abort, disconnect and
+parked timeout also end it.
+
+### Context usage and completion
+
+`session.created.capabilities` includes `session.usage`. Set `include_usage`
+to `true` in `session.configure` to receive these resource updates:
+
+| Field | Meaning |
+| --- | --- |
+| `decoder_tokens` | Decoder positions, including a sampled token awaiting its next forward |
+| `encoder_tokens` | Historical encoder positions appended to the request |
+| `encoder_kv_tokens` | Encoder positions currently retained in the KV cache |
+| `token_space_used` | Historical encoder positions plus decoder positions |
+| `context_limit` / `context_remaining` | Configured context and remaining positions |
+
+`response.done` and `session.done` end the persistent session. A `turn_id` can
+contain several text segments separated by `response.turn.silence`; it is not
+a separate ID for every proactive answer. A final input closes the input
+stream and lets generation finish. `session.abort` explicitly stops the whole
+session. Handle errors and use a completion timeout in client applications.
 
 ### Text barge-in and turns
 
@@ -254,7 +273,8 @@ Production servers reject it. A benchmark server must be started explicitly:
 
 ```bash
 python examples/run_moss_vl_realtime_server.py \
-  --model-path /path/to/moss-vl-realtime-checkpoint \
+  --model-path "$MODEL_PATH" \
+  --context-length 131072 --mem-fraction-static 0.60 \
   --enable-benchmark-mode
 ```
 
@@ -262,28 +282,30 @@ Do not enable benchmark mode for production traffic.
 
 ## Vision KV sliding window (opt-in)
 
-Long-running sessions can bound vision KV memory with a two-level window:
-recent frames stay raw, aged frames fold into mean-pooled virtual frames
-(`pool_ratio` frames to one), and virtual frames older than `pool_window_s`
-are evicted. It is disabled by default; enable it via the pipeline config or
-`REALTIME_FRAME_WINDOW_ENABLED=1` (thresholds: `REALTIME_FRAME_WINDOW_RAW_S`,
-`REALTIME_FRAME_POOL_WINDOW_S`, `REALTIME_FRAME_POOL_RATIO`). With the feature
-off, serving behavior is byte-identical to the un-windowed server.
+The window is disabled by default. To retain recent raw frames and evict older
+visual KV, set these variables before starting the server:
 
-Caveats to understand before enabling:
+```bash
+export REALTIME_FRAME_WINDOW_ENABLED=1
+export REALTIME_FRAME_WINDOW_RAW_S=60
+export REALTIME_FRAME_POOLING_ENABLED=0
+```
 
-- **This is an engineering degradation, not a training-equivalent path.** The
-  training distribution always sees the full vision KV. With the window on,
-  aged frames become a mean of RoPE-rotated K (not a legal RoPE position) and
-  evicted frames disappear entirely; a token that saw one member of a pooled
-  chunk attends to the chunk mean, including frames that had not arrived yet.
-  Expect output drift once the session's frame span exceeds `raw_window_s`.
-- **The window reclaims KV memory, not session length.** Token space keeps one
-  pad placeholder per historical encoder slot, so the max-context guard still
-  terminates long sessions at the same point as without the window.
-- **Under allocator pressure a round degrades to plain eviction** (no pooled
-  copy) so the raw-window bound still holds; watched in the logs as
-  "degraded to eviction".
+Pooling is a separate experimental option, also disabled by default. Setting
+`REALTIME_FRAME_POOLING_ENABLED=1` allows full groups of aged raw frames to
+become mean-pooled virtual frames. `REALTIME_FRAME_POOL_RATIO` controls group
+size, and `REALTIME_FRAME_POOL_WINDOW_S` controls virtual-frame retention.
+
+Window behavior:
+
+- **Visual context:** The raw-only window removes aged visual context. Pooling additionally averages
+  RoPE-rotated keys and values from different frames. Both change the visual
+  history available to attention and can change the output.
+- **Context accounting:** Token space keeps one pad placeholder per historical
+  encoder slot. The context guard therefore still counts these positions after
+  physical KV slots have been reclaimed.
+- **Pooling under pressure:** If a pooled copy cannot be allocated, the round
+  evicts aged frames directly and logs "degraded to eviction".
 
 ## Validation
 
@@ -296,7 +318,17 @@ python -m pytest -q \
   tests/unit_test/client/test_control_event.py
 ```
 
-The semantic acceptance baseline uses real 1 FPS streams. Decode Graph, eager
-decode, and optional async decode must preserve greedy output against
-that baseline. Higher FPS is an exposed producer-control capability, not a
-model-accuracy acceptance matrix.
+Use GPU model-step and processor tests for reference comparisons, and fix the
+model revision, prompts, timestamps and token boundaries when comparing eager,
+CUDA Graph and async decode. Live input arrival can place new frames at
+different generation boundaries.
+
+The 2026-09-06 CPU regression run on `e1b5fcf` passed 268 tests with five skips
+when also including `tests/unit_test/pipeline/test_async_decode.py` (without
+the extra client tests in the command above). Four skips required CUDA and one
+required a model path. Existing GPU checks cover single-device and TP2 paths.
+
+An earlier accelerated mixed long/short-session workload produced short-session
+completion timeouts after all inputs had been processed. Recheck this workload
+when selecting deployment concurrency, and distinguish an input being processed
+from the entire session completing.
