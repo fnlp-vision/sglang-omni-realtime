@@ -17,6 +17,9 @@
 
 浏览器视频/语音交互、ASR/TTS、记忆编排和 REST 薄网关见 [MOSS-VL-Realtime_Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo)。
 
+只传模型路径的一键启动、TF/SGLang 单卡单/多会话测试和结果表生成，见
+[启动与测试入口](./deployment/moss_vl_realtime/README.md)。测试默认单卡完整执行，可选双卡并行加速。
+
 ## 安装
 
 使用 Linux、NVIDIA GPU 和 Python 3.12。当前依赖组合为 SGLang 0.5.16、Transformers 5.12.1、PyTorch 2.11.0、FlashInfer 0.6.14；CUDA 组件和编译环境要求见[安装指南](./docs/get_started/installation.md)。
