@@ -162,16 +162,22 @@ def test_update_barrier_resolves_pending_step_before_materialize(monkeypatch) ->
         scheduler._async_pending = None
 
     scheduler._resolve_pending_async = _resolve
-    scheduler._materialize_realtime_extensions = lambda: calls.append("materialize")
+    extension = object()
+    scheduler._materialize_realtime_extensions = lambda: calls.append("materialize") or extension
     scheduler._expire_parked_requests = lambda: None
+    def plan_after_handoff(self):
+        calls.append("super")
+        plan = self.get_new_batch_prefill(self.running_batch)
+        assert plan.batch_to_run is extension
+        return "plan"
     monkeypatch.setattr(
         OmniScheduler,
         "get_next_batch_to_run",
-        lambda self: calls.append("super") or "plan",
+        plan_after_handoff,
     )
 
     assert scheduler.get_next_batch_to_run() == "plan"
-    assert calls == ["resolve", "materialize", "super"]
+    assert calls == ["resolve", "super", "materialize"]
 
 
 def test_update_barrier_skips_resolve_without_pending_events(monkeypatch) -> None:

@@ -266,6 +266,11 @@ Under concurrent load the decode-rate cap (`max_tokens_per_turn`) becomes a
 soft target: a step runs as soon as any session in the batch is due, letting
 not-yet-due sessions ride along.
 
+Completed prefills are handed off to the running batch before the decode rate
+gate. New prefills and frame updates are not delayed by that gate. See the
+[capacity measurements](moss_vl_realtime_capacity.md) for tested workloads,
+memory rollover and deployment sizing.
+
 ## Benchmark mode
 
 `benchmark_ignore_eos` exists only to collect a fixed number of decode tokens.
@@ -323,7 +328,7 @@ model revision, prompts, timestamps and token boundaries when comparing eager,
 CUDA Graph and async decode. Live input arrival can place new frames at
 different generation boundaries.
 
-The 2026-09-06 CPU regression run on `e1b5fcf` passed 268 tests with five skips
+The 2026-09-07 CPU regression run passed 279 tests with five skips
 when also including `tests/unit_test/pipeline/test_async_decode.py` (without
 the extra client tests in the command above). Four skips required CUDA and one
 required a model path. Existing GPU checks cover single-device and TP2 paths.

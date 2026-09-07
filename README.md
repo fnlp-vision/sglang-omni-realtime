@@ -86,6 +86,8 @@ python examples/run_moss_vl_realtime_server.py \
 
 `--gpus` 数量应与 `--tp-size` 一致且不重复。`--max-running-requests` 控制实例会话上限，静默挂起的会话也占用 slot；并发和 context 共同决定 KV 内存需求。
 
+已修复低速 decode 下多会话 prefill 交接丢失导致的停滞。单卡 H200、128K context、60 秒视觉滑窗、1 FPS 输入下，开启 Demo memory 的 4 路测试已连续运行 20 分钟，并完成每路两次自然 rollover。纯 VLM 与完整 memory 链路的容量不同，具体配置和结果见 [并发容量测试](./docs/cookbook/moss_vl_realtime_capacity.md)。
+
 Decode CUDA Graph 默认开启并使用 FlashInfer。`--disable-decode-cuda-graph` 切换到 eager decode，`--enable-async-decode` 开启异步 decode。完整参数可运行：
 
 ```bash

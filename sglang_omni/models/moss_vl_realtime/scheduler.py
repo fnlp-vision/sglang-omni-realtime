@@ -47,6 +47,10 @@ from sglang_omni.scheduling.omni_scheduler import _FAILED_BATCH_RESULT, OmniSche
 logger = logging.getLogger(__name__)
 
 
+class _RealtimeDecodeDeferred(Exception):
+    """Stop planning after prefill handoff, before decode allocates step KV."""
+
+
 class MossVLRealtimeScheduler(OmniScheduler):
     """Interrupt decode between steps to extend one or more frame events."""
 
@@ -162,20 +166,19 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
     def get_next_batch_to_run(self) -> Any | None:
         self._expire_parked_requests()
-        self._evaluate_frame_window()
         self._abort_retracted_realtime_requests()
-        if self._realtime_extend_batch is None:
-            if self._async_pending is not None and self._has_pending_realtime_events():
-                # Update barrier: resolve the in-flight lookahead step before
-                # materializing events, so _build_segment's "exactly one
-                # committed pending token" invariant holds at materialize time.
-                self._resolve_pending_async()
-            self._realtime_extend_batch = self._materialize_realtime_extensions()
-        if self._realtime_extend_batch is None and self._decode_rate_limited():
+        if (
+            self._realtime_extend_batch is None
+            and self._async_pending is not None
+            and self._has_pending_realtime_events()
+        ):
+            self._resolve_pending_async()
+        try:
+            return super().get_next_batch_to_run()
+        except _RealtimeDecodeDeferred:
+            # get_new_batch_prefill retained the reconciled running batch.
+            # The event loop can now clear last_batch without losing requests.
             return None
-        if self._realtime_extend_batch is None:
-            self._preempt_decode_memory_pressure()
-        return super().get_next_batch_to_run()
 
     def _evaluate_frame_window(self) -> None:
         """Evict/pool aged vision frames during a decode gap.
@@ -402,14 +405,30 @@ class MossVLRealtimeScheduler(OmniScheduler):
         return False
 
     def get_new_batch_prefill(self, running_batch: Any) -> NextBatchPlan:
+        # SGLang 0.5.16 calls this hook AFTER filtering/merging last_batch.
+        # Use that authoritative batch for updates, eviction and rate checks.
+        self.running_batch = running_batch
+        self.last_batch = None
+        self._evaluate_frame_window()
+        if self._realtime_extend_batch is None:
+            self._realtime_extend_batch = self._materialize_realtime_extensions()
         realtime_batch = self._realtime_extend_batch
         if realtime_batch is not None:
             self._realtime_extend_batch = None
             return NextBatchPlan(
                 batch_to_run=realtime_batch,
-                running_batch=running_batch,
+                running_batch=self.running_batch,
             )
-        return super().get_new_batch_prefill(running_batch)
+        plan = super().get_new_batch_prefill(self.running_batch)
+        self.running_batch = plan.running_batch
+        if plan.batch_to_run is not None:
+            return plan
+        if self._decode_rate_limited():
+            # NextBatchPlan has no "idle with a nonempty running batch" flag;
+            # stop here, before the upstream planner prepares decode KV.
+            raise _RealtimeDecodeDeferred()
+        self._preempt_decode_memory_pressure()
+        return NextBatchPlan(batch_to_run=None, running_batch=self.running_batch)
 
     def _materialize_realtime_extensions(self) -> ScheduleBatch | None:
         running_batch = self.running_batch
