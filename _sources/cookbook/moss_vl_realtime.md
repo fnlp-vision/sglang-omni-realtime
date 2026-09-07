@@ -328,12 +328,13 @@ model revision, prompts, timestamps and token boundaries when comparing eager,
 CUDA Graph and async decode. Live input arrival can place new frames at
 different generation boundaries.
 
-The 2026-09-07 CPU regression run passed 279 tests with five skips
-when also including `tests/unit_test/pipeline/test_async_decode.py` (without
-the extra client tests in the command above). Four skips required CUDA and one
-required a model path. Existing GPU checks cover single-device and TP2 paths.
+Include `tests/unit_test/pipeline/test_async_decode.py` when validating async
+decode. CUDA-dependent tests require a GPU; reference-model tests also require
+the corresponding model path. Exercise single-device and TP deployments
+separately.
 
-An earlier accelerated mixed long/short-session workload produced short-session
-completion timeouts after all inputs had been processed. Recheck this workload
-when selecting deployment concurrency, and distinguish an input being processed
-from the entire session completing.
+Deployment validation should include mixed long/short-session workloads and
+completion timeouts under accelerated input. Measure input processing and
+session completion separately: processing every input does not by itself
+guarantee that the session has finished. See the
+[capacity reference](moss_vl_realtime_capacity.md) for workload conditions.
