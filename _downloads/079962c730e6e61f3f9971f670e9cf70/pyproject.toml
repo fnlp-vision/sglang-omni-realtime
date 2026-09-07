@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sglang-omni"
 dynamic = ["version"]
-description = "Multi-stage pipeline framework for omni models"
+description = "MOSS-VL realtime video serving built on SGLang-Omni"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -104,9 +104,10 @@ sgl-omni-router = "sglang_omni_router.serve:main"
 omni = "sglang_omni.cli.sglang_backend:create_backend"
 
 [project.urls]
-Documentation = "https://sgl-project.github.io/sglang-omni/"
-Issues = "https://github.com/sgl-project/sglang-omni/issues"
-Repository = "https://github.com/sgl-project/sglang-omni"
+Documentation = "https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/docs/cookbook/moss_vl_realtime.md"
+Issues = "https://github.com/fnlp-vision/sglang-omni-realtime/issues"
+Repository = "https://github.com/fnlp-vision/sglang-omni-realtime"
+Upstream = "https://github.com/sgl-project/sglang-omni"
 
 [tool.uv]
 override-dependencies = [

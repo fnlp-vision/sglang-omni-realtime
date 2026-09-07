@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>🚀 Installation &#8212; SGLang</title>
+    <title>Installation &#8212; SGLang</title>
   
   
   
@@ -61,7 +61,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.1" />
-    <meta name="docbuild:last-update" content="Sep 06, 2026"/>
+    <meta name="docbuild:last-update" content="Sep 07, 2026"/>
   
     
     <script src="../_static/searchtools.js"></script>
@@ -206,7 +206,7 @@
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">🚀 Installation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="release_notes.html">Release Notes</a></li>
 </ul>
@@ -479,7 +479,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>🚀 Installation</h1>
+    <h1>Installation</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -489,11 +489,9 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#option-a-docker-recommended">🐳 Option A: Docker (recommended)</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#option-b-manual-install">🛠️ Option B: Manual install</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
-</ul>
-</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#environment">Environment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#download-the-checkpoint">Download the checkpoint</a></li>
 </ul>
             </nav>
         </div>
@@ -506,69 +504,69 @@
                 <article class="bd-article">
                   
   <section class="tex2jax_ignore mathjax_ignore" id="installation">
-<h1>🚀 Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h1>
-<p>Current stable release: <strong>v0.1.1</strong> on <a class="reference external" href="https://pypi.org/project/sglang-omni/">PyPI</a>.</p>
-<p>Two install paths. Docker is recommended — UCX, flash-attn, sglang, and CUDA are prebuilt.</p>
-<blockquote>
-<div><p><strong>Intel GPU (XPU)?</strong> This page targets <strong>NVIDIA CUDA</strong>. For Intel Arc GPUs, see <a class="reference internal" href="installation_xpu.html"><span class="std std-doc">Installation — Intel XPU</span></a>, which uses <a class="reference download internal" download="" href="../_downloads/e6282636738987ea324fd398b24bcb06/pyproject_xpu.toml"><span class="xref download myst"><code class="docutils literal notranslate"><span class="pre">pyproject_xpu.toml</span></code></span></a> + the PyTorch XPU wheel index instead of the CUDA-only pins below.</p>
-</div></blockquote>
-<section id="option-a-docker-recommended">
-<h2>🐳 Option A: Docker (recommended)<a class="headerlink" href="#option-a-docker-recommended" title="Link to this heading">#</a></h2>
-<p><strong>1. Pull the image</strong></p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>pull<span class="w"> </span>hongccc/sglang-omni:dev
-</pre></div>
+<h1>Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h1>
+<p>Install this checkout to use the MOSS-VL realtime backend. Its dependencies are
+defined in <a class="reference download internal" download="" href="../_downloads/079962c730e6e61f3f9971f670e9cf70/pyproject.toml"><span class="xref download myst">pyproject.toml</span></a>.</p>
+<section id="environment">
+<h2>Environment<a class="headerlink" href="#environment" title="Link to this heading">#</a></h2>
+<p>Use Linux, an NVIDIA GPU and Python 3.12. The current stack pins:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Component</p></th>
+<th class="head"><p>Version</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>SGLang</p></td>
+<td><p>0.5.16</p></td>
+</tr>
+<tr class="row-odd"><td><p>Transformers</p></td>
+<td><p>5.12.1</p></td>
+</tr>
+<tr class="row-even"><td><p>PyTorch / torchvision / torchaudio</p></td>
+<td><p>2.11.0 / 0.26.0 / 2.11.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>FlashInfer</p></td>
+<td><p>0.6.14, CUDA 13 extra</p></td>
+</tr>
+<tr class="row-even"><td><p>torchcodec</p></td>
+<td><p>0.11.1</p></td>
+</tr>
+</tbody>
+</table>
 </div>
-<p>Only the <code class="docutils literal notranslate"><span class="pre">dev</span></code> tag is published today. It moves with main — pin by digest for reproducible runs:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>pull<span class="w"> </span>lmsysorg/sglang-omni@sha256:&lt;digest&gt;
-</pre></div>
-</div>
-<p><strong>2. Run the container</strong></p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--shm-size<span class="w"> </span>32g<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--ipc<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--privileged<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>hongccc/sglang-omni:dev<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>/bin/zsh
-</pre></div>
-</div>
-<p><strong>3. Install <code class="docutils literal notranslate"><span class="pre">sglang-omni</span></code> inside the container</strong></p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span>-p<span class="w"> </span><span class="m">3</span>.12
-<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"sglang-omni==0.1.1"</span>
-</pre></div>
-</div>
+<p>Prepare a compatible NVIDIA driver and CUDA toolchain. The dependency set
+includes CUDA 13 NIXL and Mooncake wheels; native builds may also require UCX,
+compiler tools and FFmpeg libraries. The <a class="reference download internal" download="" href="../_downloads/9c6d2dd30e172995ff9466799d6f77ed/Dockerfile"><span class="xref download myst">Dockerfile</span></a>
+records the upstream environment’s build steps.</p>
 </section>
-<section id="option-b-manual-install">
-<h2>🛠️ Option B: Manual install<a class="headerlink" href="#option-b-manual-install" title="Link to this heading">#</a></h2>
-<p>Build prerequisites first:</p>
-<ul class="simple">
-<li><p><strong>UCX 1.20.x</strong> with CUDA + verbs — <a class="reference external" href="https://github.com/openucx/ucx">upstream</a>, or reuse flags in <a class="reference download internal" download="" href="../_downloads/9c6d2dd30e172995ff9466799d6f77ed/Dockerfile"><span class="xref download myst"><code class="docutils literal notranslate"><span class="pre">docker/Dockerfile</span></code></span></a>.</p></li>
-<li><p><strong>flash-attn-4</strong> <code class="docutils literal notranslate"><span class="pre">&gt;=4.0.0b18</span></code>, matching <code class="docutils literal notranslate"><span class="pre">torch==2.11.0</span></code> and SGLang 0.5.16’s <code class="docutils literal notranslate"><span class="pre">nvidia-cutlass-dsl</span></code> 4.6.0 pin.</p></li>
-</ul>
-<p>Then:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span>-p<span class="w"> </span><span class="m">3</span>.12
-<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"sglang-omni==0.1.1"</span>
-</pre></div>
-</div>
-<p>Latest on the index without a pin: <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sglang-omni</span></code>.</p>
 <section id="install-from-source">
-<h3>Install from source<a class="headerlink" href="#install-from-source" title="Link to this heading">#</a></h3>
-<p>For development or unreleased changes:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:sgl-project/sglang-omni.git
-<span class="nb">cd</span><span class="w"> </span>sglang-omni
-
+<h2>Install from source<a class="headerlink" href="#install-from-source" title="Link to this heading">#</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">uv</span></code> installed:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/fnlp-vision/sglang-omni-realtime.git
+<span class="nb">cd</span><span class="w"> </span>sglang-omni-realtime
 uv<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span>-p<span class="w"> </span><span class="m">3</span>.12
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-v<span class="w"> </span>-e<span class="w"> </span>.<span class="w">   </span><span class="c1"># drop -e for a non-editable install</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
 </pre></div>
 </div>
+<p>The Python distribution name remains <code class="docutils literal notranslate"><span class="pre">sglang-omni</span></code>. Installing this local
+checkout selects the specialized implementation. Use separate environments
+for the Demo and optional TTS engines.</p>
 </section>
+<section id="download-the-checkpoint">
+<h2>Download the checkpoint<a class="headerlink" href="#download-the-checkpoint" title="Link to this heading">#</a></h2>
+<p>Use <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG">OpenMOSS-Team/MOSS-VL-Realtime-SGLANG</a>,
+which contains the Transformers 5.12.1-compatible model and processor code.
+For private-repository access, sign in with an authorized account using
+<code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--local-dir<span class="w"> </span>/path/to/MOSS-VL-Realtime-SGLANG
+</pre></div>
+</div>
+<p>Continue with the <a class="reference internal" href="../cookbook/moss_vl_realtime.html"><span class="std std-doc">realtime serving guide</span></a>.
+For installation of the general upstream framework and its other platforms,
+refer to the <a class="reference external" href="https://sgl-project.github.io/sglang-omni/">official SGLang-Omni documentation</a>.</p>
 </section>
 </section>
 
@@ -619,11 +617,9 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#option-a-docker-recommended">🐳 Option A: Docker (recommended)</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#option-b-manual-install">🛠️ Option B: Manual install</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
-</ul>
-</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#environment">Environment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#download-the-checkpoint">Download the checkpoint</a></li>
 </ul>
   </nav></div>
 
@@ -657,7 +653,7 @@ By SGLang-Omni Team
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Sep 06, 2026.
+  Last updated on Sep 07, 2026.
   <br/>
 </p>
   </div>
