@@ -800,6 +800,10 @@ re-push its stream from scratch.</p></li>
 <p>Under concurrent load the decode-rate cap (<code class="docutils literal notranslate"><span class="pre">max_tokens_per_turn</span></code>) becomes a
 soft target: a step runs as soon as any session in the batch is due, letting
 not-yet-due sessions ride along.</p>
+<p>Completed prefills are handed off to the running batch before the decode rate
+gate. New prefills and frame updates are not delayed by that gate. See the
+<a class="reference internal" href="moss_vl_realtime_capacity.html"><span class="std std-doc">capacity measurements</span></a> for tested workloads,
+memory rollover and deployment sizing.</p>
 </section>
 <section id="benchmark-mode">
 <h2>Benchmark mode<a class="headerlink" href="#benchmark-mode" title="Link to this heading">#</a></h2>
@@ -851,7 +855,7 @@ evicts aged frames directly and logs “degraded to eviction”.</p></li>
 model revision, prompts, timestamps and token boundaries when comparing eager,
 CUDA Graph and async decode. Live input arrival can place new frames at
 different generation boundaries.</p>
-<p>The 2026-09-06 CPU regression run on <code class="docutils literal notranslate"><span class="pre">e1b5fcf</span></code> passed 268 tests with five skips
+<p>The 2026-09-07 CPU regression run passed 279 tests with five skips
 when also including <code class="docutils literal notranslate"><span class="pre">tests/unit_test/pipeline/test_async_decode.py</span></code> (without
 the extra client tests in the command above). Four skips required CUDA and one
 required a model path. Existing GPU checks cover single-device and TP2 paths.</p>
