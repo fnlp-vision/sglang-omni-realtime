@@ -42,7 +42,7 @@ hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
 
 模型仓库目前需要访问授权；如提示无权访问，先用获授权的 Hugging Face 账号执行 `hf auth login`。下载时保留完整配置、自定义 Python 文件、tokenizer、processor 和五个权重分片。
 
-这个模型包与原版使用相同权重，提供 TF 5.12.1 兼容实现，并包含缓存视觉 KV 路径的 Query RoPE 修复和视觉旋转频率重建修复。原始 TF 4.57 系列参考代码保留在 [MOSS-VL-Realtime](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime)。复现实验时，可通过 `hf download --revision <commit>` 固定模型版本。
+模型包与原版使用相同权重，提供 Transformers 5.12.1 兼容实现。Transformers 4.57 系列参考实现见 [MOSS-VL-Realtime](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime)。部署和实验可通过 `hf download --revision <commit>` 固定模型版本。
 
 ## 启动服务
 
@@ -86,7 +86,7 @@ python examples/run_moss_vl_realtime_server.py \
 
 `--gpus` 数量应与 `--tp-size` 一致且不重复。`--max-running-requests` 控制实例会话上限，静默挂起的会话也占用 slot；并发和 context 共同决定 KV 内存需求。
 
-已修复低速 decode 下多会话 prefill 交接丢失导致的停滞。单卡 H200、128K context、60 秒视觉滑窗、1 FPS 输入下，开启 Demo memory 的 4 路测试已连续运行 20 分钟，并完成每路两次自然 rollover。纯 VLM 与完整 memory 链路的容量不同，具体配置和结果见 [并发容量测试](./docs/cookbook/moss_vl_realtime_capacity.md)。
+四会话长时视频服务可采用 128K context、60 秒视觉窗口和每路 1 FPS 输入，并配合 Demo memory rollover。纯 VLM 与包含 memory 的服务链路需要分别规划 GPU、CPU 和队列容量，配置与测量条件见 [并发容量规划](./docs/cookbook/moss_vl_realtime_capacity.md)。
 
 Decode CUDA Graph 默认开启并使用 FlashInfer。`--disable-decode-cuda-graph` 切换到 eager decode，`--enable-async-decode` 开启异步 decode。完整参数可运行：
 

@@ -1,6 +1,14 @@
-# MOSS-VL Realtime 并发容量测试
+# MOSS-VL Realtime 并发容量规划
 
-## 配置与结论
+## 部署配置
+
+包含 Demo memory 的长时视频服务，参考配置为每实例 4 个会话。
+后端设置 `--max-running-requests 4`，Demo 设置
+`SGLANG_OMNI_SESSIONS_PER_REPLICA=4`，两端 context 均为 131,072。
+每路输入 1 FPS、最长边 512，视觉 raw window 为 60 秒，pooling 关闭，
+并启用 memory rollover。更高并发应同时评估 GPU、CPU 和 memory 队列容量。
+
+## 测量条件
 
 2026-09-07 的隔离测试使用单张 H200（143,771 MiB），context 131,072，
 `--mem-fraction-static 0.60`，CUDA Graph 开启，async decode 关闭。
@@ -12,9 +20,10 @@
 rollover 阈值为 idle 8K / hard 12K；ASR、TTS 未开启。
 采样使用 Demo 默认 temperature 0.7、top_p 0.8；纯 VLM 测试使用 greedy。
 
-当前保留每实例 4 路配置。该配置完成了 20 分钟测试；6 路和 8 路完整 memory
-短测出现明显写入积压，不能仅凭 VLM 显存剩余就提高 Demo 的会话上限。
-测试没有修改或重启线上服务。
+完整 memory 链路的四会话配置完成了 20 分钟测试；六会话与八会话的
+短测存在写入积压。实例扩容应以整条服务链路的持续处理能力为依据。
+
+## 容量参考
 
 | 链路 | 并发 | 时长 | 结果 |
 | --- | ---: | ---: | --- |
@@ -35,9 +44,9 @@ rollover 阈值为 idle 8K / hard 12K；ASR、TTS 未开启。
 
 这里的帧转发数是 Demo 输入侧统计；模型接收数还包含问题附带帧和
 rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
-转发期间的少量丢帧和关闭时的 KV 回收是不同指标，不应混为一谈。
+输入帧转发率、模型处理率和关闭后的 KV 回收分别统计。
 
-## 为什么滑窗不等于固定会话成本
+## 资源规划
 
 - 视觉滑窗回收老帧的物理视觉 KV，但不清除历史 context 位置。
 - 文本 decoder KV 仍会增长，需要通过 memory rollover 重建上下文。
@@ -48,25 +57,7 @@ rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
 配置，并在实际视频尺寸、问答频率和 memory 配置下复测。90 秒纯 VLM
 结果不代表多小时、完整音视频链路或任意输入下的最大并发。
 
-测试发现的 Demo 握手预留计数问题已在
-[Demo `215eabf`](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/commit/215eabf3912edb6eb6797dd5364480050d5e9ec8)
-修复：探活和容量重试不再清除本地握手预留。部署时需要一起更新 Demo，
-仅更新本后端不会替换 Demo 进程中的连接池代码。每路实际 KV、共享权重
-和缩减显存预算测试见 [VLM 显存说明](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/vlm_memory_capacity.md)。
-
-## 本次调度修复
-
-原实现先检查 decode 限速，再进入 SGLang 的调度规划。限速返回 `None`
-时，刚完成的 prefill 还没有从 `last_batch` 合并进 `running_batch`；
-事件循环随后清空 `last_batch`，导致会话仍占用连接和 KV，却不再被调度。
-该问题在 KV 池基本空闲时也能复现，不是显存不足。
-
-现在使用 SGLang 0.5.16 已有的 post-handoff prefill hook：先完成请求
-交接，再处理视觉窗口、增量输入和新 prefill，最后决定是否延后 decode。
-延后发生在 decode 分配本步 KV 之前，且保留合并后的 running batch。
-模型计算、TF 实现、通用事件循环和安装目录中的 SGLang 均未修改。
-
-验证包括 279 项 CPU 回归通过、5 项跳过，以及同步/异步的单卡
-1/2/4 路、TP2 同步/异步 4 路 GPU 测试（每路 75 帧、4 tokens/s）。
-GPU 正确性用例全部处理完输入，关闭后各 rank 的 KV 全部回收。
-最初新增的 8 项回归在修复前均失败，修复后通过。
+Demo 与后端独立部署，版本和进程生命周期分别管理。每路实际 KV、
+共享权重、80GB 级别显存预算和连接池观测字段见
+[VLM 显存与并发配置](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/vlm_memory_capacity.md)。
+协议与验证入口见 [Realtime Cookbook](./moss_vl_realtime.md#validation)。
