@@ -590,10 +590,11 @@ rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
 <p>扩容时需一起调整后端 <code class="docutils literal notranslate"><span class="pre">--max-running-requests</span></code> 和 Demo 对应实例的 slot
 配置，并在实际视频尺寸、问答频率和 memory 配置下复测。90 秒纯 VLM
 结果不代表多小时、完整音视频链路或任意输入下的最大并发。</p>
-<p>测试还发现 Demo 连接池的独立问题：健康探测可能把握手中的 slot 预留
-误当作旧的满额标记清除，造成网关少算占用、额外尝试连接。后端仍按自身
-会话上限拒绝超额连接。这个计数问题不属于本次后端调度修改，扩容前需
-单独修复 Demo 的预留计数，并复测并发建连和 rollover。</p>
+<p>测试发现的 Demo 握手预留计数问题已在
+<a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/commit/215eabf3912edb6eb6797dd5364480050d5e9ec8">Demo <code class="docutils literal notranslate"><span class="pre">215eabf</span></code></a>
+修复：探活和容量重试不再清除本地握手预留。部署时需要一起更新 Demo，
+仅更新本后端不会替换 Demo 进程中的连接池代码。每路实际 KV、共享权重
+和缩减显存预算测试见 <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/vlm_memory_capacity.md">VLM 显存说明</a>。</p>
 </section>
 <section id="id3">
 <h2>本次调度修复<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
