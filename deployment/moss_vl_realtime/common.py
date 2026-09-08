@@ -1,9 +1,8 @@
-"""Configuration, process ownership and bundled validation inputs."""
+"""Shared model validation, GPU selection and process management."""
 
 from __future__ import annotations
 
 import csv
-import importlib.util
 import json
 import os
 import signal
@@ -26,12 +25,16 @@ def write_json(path, data):
     temporary.replace(path)
 
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def validate_model(path):
+    path = path.expanduser().resolve()
+    if not path.is_dir() or not (path / "config.json").is_file():
+        raise ValueError(
+            "Provide a downloaded local model directory containing config.json"
+        )
+    config = json.loads((path / "config.json").read_text())
+    if not any("MossVL" in name for name in config.get("architectures", [])):
+        raise ValueError("Expected a MOSS-VL checkpoint")
+    return path
 
 
 def environment(gpu):
@@ -132,12 +135,8 @@ def free_port(host="127.0.0.1", port=0):
         return sock.getsockname()[1]
 
 
-def server_command(model, port, host="127.0.0.1", probe=False):
-    entry = (
-        HERE / "server_probe.py"
-        if probe
-        else ROOT / "examples/run_moss_vl_realtime_server.py"
-    )
+def server_command(model, port, host="127.0.0.1"):
+    entry = ROOT / "examples/run_moss_vl_realtime_server.py"
     return [
         sys.executable,
         "-u",
@@ -204,77 +203,3 @@ class Child:
             self.process.wait(10)
         finally:
             self.log.close()
-
-
-def prepare_cases(output):
-    import av
-    from PIL import Image
-
-    frames_dir = output / "frames"
-    frames_dir.mkdir()
-
-    def save(image, name):
-        image = image.convert("RGB")
-        image.thumbnail((CONFIG["image_max_edge"], CONFIG["image_max_edge"]))
-        path = frames_dir / name
-        image.save(path, quality=CONFIG["jpeg_quality"])
-        return str(path)
-
-    with Image.open(ROOT / "tests/data/cars.jpg") as image:
-        cars = save(image, "cars.jpg")
-    draw = []
-    with av.open(str(ROOT / "tests/data/draw.mp4")) as video:
-        for frame in video.decode(video=0):
-            if float(frame.time or 0) >= len(draw) / CONFIG["fps"]:
-                draw.append(save(frame.to_image(), f"draw_{len(draw):03d}.jpg"))
-            if len(draw) >= CONFIG["comparison_frames"]:
-                break
-    if not draw:
-        raise ValueError("Bundled draw.mp4 has no decodable frames")
-    return [
-        dict(
-            case_id="cars",
-            frames=[cars],
-            question="What vehicles are visible? Answer briefly.",
-        ),
-        dict(
-            case_id="drawing",
-            frames=draw,
-            question="Describe the drawing in the video. Answer briefly.",
-        ),
-    ]
-
-
-def events_for(case, count):
-    events = [
-        dict(
-            type="frame",
-            seq_no=i,
-            timestamp=i / CONFIG["fps"],
-            frame_path=case["frames"][i % len(case["frames"])],
-            final=False,
-        )
-        for i in range(count)
-    ]
-    events.append(
-        dict(
-            type="prompt",
-            seq_no=count,
-            timestamp=count / CONFIG["fps"],
-            prompt=case["question"],
-            final=True,
-        )
-    )
-    return events
-
-
-def initial_prompt(case):
-    return "Watch the video stream. " + case["question"]
-
-
-def groups(cases, count):
-    return (
-        [[case] for case in cases]
-        if count == 1
-        else [[cases[i % len(cases)] for i in range(count)]]
-    )

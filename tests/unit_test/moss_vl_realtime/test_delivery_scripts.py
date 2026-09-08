@@ -1,7 +1,9 @@
-"""Portable delivery entrypoints without loading a model or discovering GPUs."""
+"""Server launcher and shared GPU safety checks without loading a model."""
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,12 +14,25 @@ HERE = Path(__file__).resolve().parents[3] / "deployment/moss_vl_realtime"
 
 @pytest.fixture
 def modules(monkeypatch):
-    spec = importlib.util.spec_from_file_location("common", HERE / "common.py")
-    common = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, "common", common)
-    spec.loader.exec_module(common)
-    entry = common.load_module("delivery_test_entry", HERE / "entry.py")
-    return common, entry
+    modules = []
+    for name, filename in (
+        ("common", "common.py"),
+        ("delivery_test_entry", "entry.py"),
+    ):
+        spec = importlib.util.spec_from_file_location(name, HERE / filename)
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, module)
+        spec.loader.exec_module(module)
+        modules.append(module)
+    return tuple(modules)
+
+
+@pytest.fixture
+def model(tmp_path):
+    (tmp_path / "config.json").write_text(
+        json.dumps({"architectures": ["MossVLForConditionalGeneration"]})
+    )
+    return tmp_path
 
 
 def inventory():
@@ -33,17 +48,10 @@ def inventory():
     ]
 
 
-def test_single_gpu_default_and_explicit_parallel_waves(modules):
-    common, entry = modules
-    picked = common.select_gpus(None, inventory())
-    assert [g["index"] for g in picked] == ["1"]
-    assert [[name for name, _ in wave] for wave in entry.execution_waves(picked)] == [
-        ["tf"],
-        ["sglang"],
-    ]
-    picked = common.select_gpus("2,3", inventory())
-    assert len(entry.execution_waves(picked)) == 1
-    assert [g["index"] for _, g in entry.execution_waves(picked)[0]] == ["2", "3"]
+def test_single_gpu_default_and_explicit_selection(modules):
+    common, _ = modules
+    assert [g["index"] for g in common.select_gpus(None, inventory())] == ["1"]
+    assert [g["index"] for g in common.select_gpus("2,3", inventory())] == ["2", "3"]
 
 
 @pytest.mark.parametrize(
@@ -69,88 +77,68 @@ def test_server_is_single_gpu_four_sessions_and_environment_is_direct(
 ):
     common, _ = modules
     command = common.server_command("/model with spaces", 18500)
-    assert command[command.index("--gpu") + 1] == "0"
-    assert command[command.index("--max-running-requests") + 1] == "4"
-    assert "--tp-size" not in command
-    assert "/model with spaces" in command
+    assert Path(command[2]).is_file()
+    expected = {
+        "--gpu": "0",
+        "--max-running-requests": "4",
+        "--context-length": "131072",
+        "--mem-fraction-static": "0.6",
+        "--parked-request-timeout": "3600",
+    }
+    for option, value in expected.items():
+        assert command[command.index(option) + 1] == value
+    assert "--tp-size" not in command and "/model with spaces" in command
     monkeypatch.setenv("HTTPS_PROXY", "http://unused")
     monkeypatch.setenv("REALTIME_FRAME_POOLING_ENABLED", "1")
     env = common.environment("GPU-2")
     assert "HTTPS_PROXY" not in env
     assert env["CUDA_VISIBLE_DEVICES"] == "GPU-2"
     assert env["REALTIME_FRAME_POOLING_ENABLED"] == "0"
+    assert env["REALTIME_FRAME_WINDOW_RAW_S"] == "60"
 
 
-def test_case_schedule_and_manifest_groups(modules):
-    common, _ = modules
-    case = dict(case_id="cars", frames=["a.jpg", "b.jpg"], question="Question?")
-    events = common.events_for(case, 12)
-    assert [e["seq_no"] for e in events] == list(range(13))
-    assert events[-1]["type"] == "prompt" and events[-1]["final"]
-    assert all(not e["final"] for e in events[:-1])
-    assert len(common.groups([case, case], 1)) == 2
-    assert len(common.groups([case, case], 4)[0]) == 4
-
-
-def test_model_validation_and_dry_run(modules, tmp_path):
-    _, entry = modules
+def test_model_validation_and_dry_run(modules, model, tmp_path, capsys):
+    common, entry = modules
     with pytest.raises(ValueError):
-        entry.validate_model(tmp_path)
-    (tmp_path / "config.json").write_text(
-        json.dumps({"architectures": ["MossVLForConditionalGeneration"]})
-    )
-    assert entry.main(["test", str(tmp_path), "--dry-run"]) == 0
+        common.validate_model(tmp_path / "missing")
+    assert entry.main(["serve", str(model), "--port", "18510", "--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["port"] == 18510
 
 
-def test_missing_worker_is_not_reported_as_pass(modules, tmp_path):
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_invalid_port_is_rejected(modules, model, port):
+    with pytest.raises(ValueError, match="port"):
+        modules[1].main(["serve", str(model), "--port", port, "--dry-run"])
+
+
+@pytest.mark.parametrize("mode", ["test", "worker"])
+def test_server_entry_only_accepts_serving(modules, model, mode):
+    with pytest.raises(SystemExit):
+        modules[1].parse_args([mode, str(model)])
+
+
+@pytest.mark.parametrize("gpus", ["2", "2,3"])
+def test_launch_dispatch_and_multi_gpu_rejection(modules, model, monkeypatch, gpus):
     common, entry = modules
-    common.write_json(
-        tmp_path / "tf.json",
-        [
-            dict(
-                backend="TF",
-                phase="comparison",
-                sessions=1,
-                case="cars",
-                status="PASS",
-                text="cars",
-                frames=12,
-                expected_frames=12,
-            )
-        ],
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setattr(entry, "gpu_inventory", inventory)
+    monkeypatch.setattr(entry.importlib.metadata, "version", lambda name: "5.12.1")
+    ports, launched = [], []
+    monkeypatch.setattr(
+        entry, "free_port", lambda host, port: ports.append((host, port))
     )
-    assert not entry.report(
-        tmp_path, {"tf": 0}, {"gpus": inventory()[1:2], "revision": "fixture"}
-    )
-    result = json.loads((tmp_path / "summary.json").read_text())
-    assert not result["passed"]
-    assert any(row["phase"] == "worker" for row in result["results"])
-
-
-def test_existing_failed_case_is_not_called_an_incomplete_worker(modules, tmp_path):
-    common, entry = modules
-    for backend in ("tf", "sglang"):
-        common.write_json(
-            tmp_path / f"{backend}.json",
-            [
-                dict(
-                    backend=backend,
-                    phase="comparison",
-                    sessions=4,
-                    case="drawing",
-                    status="FAIL",
-                    checks={"visible_output": False},
-                )
-            ],
-        )
-    assert not entry.report(
-        tmp_path,
-        {"tf": 1, "sglang": 1},
-        {"gpus": inventory()[1:2], "revision": "fixture"},
-    )
-    result = json.loads((tmp_path / "summary.json").read_text())
-    assert len(result["results"]) == 2
-    assert "visible_output" in (tmp_path / "report.md").read_text()
+    monkeypatch.setattr(entry.os, "execve", lambda *args: launched.append(args))
+    if "," in gpus:
+        with pytest.raises(ValueError, match="single-GPU"):
+            entry.main(["serve", str(model), "--gpus", gpus])
+        assert not ports and not launched
+    else:
+        entry.main(["serve", str(model), "--gpus", gpus, "--port", "18510"])
+        assert ports == [("127.0.0.1", 18510)]
+        executable, command, env = launched[0]
+        assert executable == sys.executable
+        assert command == common.server_command(model.resolve(), 18510)
+        assert env["CUDA_VISIBLE_DEVICES"] == "GPU-2"
 
 
 def test_occupied_port_is_not_reused(modules):
@@ -161,3 +149,41 @@ def test_occupied_port_is_not_reused(modules):
         sock.listen()
         with pytest.raises(OSError):
             modules[0].free_port(port=sock.getsockname()[1])
+
+
+@pytest.mark.parametrize(
+    "script", ["start.sh", "test_accuracy.sh", "test_latency.sh", "test_concurrency.sh"]
+)
+def test_shell_entry_dry_run_with_explicit_python(model, script):
+    env = {**os.environ, "PYTHON": sys.executable, "PYTHONDONTWRITEBYTECODE": "1"}
+    result = subprocess.run(
+        ["bash", str(HERE / script), str(model), "--dry-run"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["model_path"] == str(model.resolve())
+    if script == "test_concurrency.sh":
+        settings = json.loads(result.stdout)
+        assert settings["sessions"] == [1, 2, 4, 8]
+        assert settings["token_rate"] == 10
+        assert settings["fps"] == 1
+
+
+@pytest.mark.parametrize("suite", ["accuracy", "latency", "concurrency"])
+def test_help_only_shows_relevant_parameters(suite):
+    env = {**os.environ, "PYTHON": sys.executable, "PYTHONDONTWRITEBYTECODE": "1"}
+    result = subprocess.run(
+        ["bash", str(HERE / f"test_{suite}.sh"), "--help"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"usage: test_{suite}.sh" in result.stdout
+    assert ("--token-rate" in result.stdout) == (suite == "concurrency")
+    assert ("--strict-tokens" in result.stdout) == (suite == "accuracy")
+    assert ("--hf-attention" in result.stdout) == (suite != "concurrency")

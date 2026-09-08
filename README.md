@@ -17,8 +17,8 @@
 
 浏览器视频/语音交互、ASR/TTS、记忆编排和 REST 薄网关见 [MOSS-VL-Realtime_Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo)。
 
-只传模型路径的一键启动、TF/SGLang 单卡单/多会话测试和结果表生成，见
-[启动与测试入口](./deployment/moss_vl_realtime/README.md)。测试默认单卡完整执行，可选双卡并行加速。
+只传模型路径的一键启动，以及精度对齐、单路时延、多路时延三项测试，见
+[启动与测试入口](./deployment/moss_vl_realtime/README.md)。默认单卡；HF/SGLang 对照可选双卡加速，多路时延测试始终使用同一卡。
 
 ## 安装
 

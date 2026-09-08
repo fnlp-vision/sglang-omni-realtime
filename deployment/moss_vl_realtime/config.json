@@ -1,12 +1,11 @@
 {
-  "host": "127.0.0.1", "port": 18500,
-  "context_length": 131072, "mem_fraction_static": 0.60,
-  "max_sessions": 4, "raw_window_seconds": 60, "parked_timeout_seconds": 3600,
-  "tokens_per_second": 4, "max_new_tokens": 128,
-  "fps": 1, "image_max_edge": 512, "jpeg_quality": 60,
-  "comparison_frames": 12, "stability_frames": 75, "session_counts": [1, 2, 4],
-  "tf_tokens_per_frame": 4, "tf_final_tokens": 64,
-  "event_timeout_seconds": 30, "final_timeout_seconds": 90,
-  "startup_timeout_seconds": 900, "worker_timeout_seconds": 1800,
-  "minimum_free_gib": 65, "maximum_existing_memory_mib": 2048
+  "host": "127.0.0.1",
+  "port": 18500,
+  "context_length": 131072,
+  "mem_fraction_static": 0.6,
+  "max_sessions": 4,
+  "raw_window_seconds": 60,
+  "parked_timeout_seconds": 3600,
+  "minimum_free_gib": 65,
+  "maximum_existing_memory_mib": 2048
 }

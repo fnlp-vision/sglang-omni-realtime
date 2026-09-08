@@ -8,4 +8,4 @@ if [[ -z "${PYTHON:-}" ]]; then
     PYTHON="$ROOT/.venv/bin/python"
   fi
 fi
-exec "$PYTHON" "$HERE/entry.py" serve "$@"
+exec "$PYTHON" "$HERE/evaluation.py" latency "$@"
