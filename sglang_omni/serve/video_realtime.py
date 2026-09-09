@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
+import time
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
@@ -24,6 +26,8 @@ from sglang_omni.models.moss_vl_realtime.frame_store import (
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
 
 logger = logging.getLogger(__name__)
+CONFIGURE_TIMEOUT_S = 180.0
+MAX_INPUT_QUEUE_CAPACITY = 256
 
 
 class VideoRealtimeSubmissionError(RuntimeError):
@@ -124,7 +128,7 @@ class VideoSessionConfigure(BaseModel):
     )
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
-    input_queue_capacity: int = Field(default=4, ge=1, le=256)
+    input_queue_capacity: int = Field(default=4, ge=1, le=MAX_INPUT_QUEUE_CAPACITY)
     benchmark_ignore_eos: bool = False
     include_usage: bool = False
 
@@ -180,6 +184,7 @@ class VideoRealtimeSession:
         frame_store: SharedMemoryFrameStore,
         allow_benchmark_mode: bool = False,
         parked_request_timeout_s: float = 300.0,
+        configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
     ) -> None:
         self.websocket = websocket
         self.client = client
@@ -187,6 +192,10 @@ class VideoRealtimeSession:
         self.frame_store = frame_store
         self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.parked_request_timeout_s = float(parked_request_timeout_s)
+        self.configure_timeout_s = float(configure_timeout_s)
+        if not math.isfinite(self.configure_timeout_s) or self.configure_timeout_s <= 0:
+            raise ValueError("configure_timeout_s must be finite and positive")
+        self._configure_deadline = time.monotonic() + self.configure_timeout_s
         self.session_id = f"video_sess_{uuid.uuid4().hex}"
         self.request_id = f"video_req_{uuid.uuid4().hex}"
         self.pending_frame: _PendingFrame | None = None
@@ -208,62 +217,114 @@ class VideoRealtimeSession:
         self.closed = False
 
     async def run(self) -> None:
-        await self.send(
-            {
-                "type": "session.created",
-                "session_id": self.session_id,
-                "request_id": self.request_id,
-                "model": self.model_name,
-                "turn_id": self.current_turn_id,
-                "capabilities": ["session.usage"],
-            }
+        inputs: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(
+            maxsize=2 * MAX_INPUT_QUEUE_CAPACITY + 2
         )
+        tasks: list[asyncio.Task] = []
         try:
-            while not self.closed:
-                message = await self.websocket.receive()
-                if message["type"] == "websocket.disconnect":
-                    break
-                if message["type"] != "websocket.receive":
+            await self.send(
+                {
+                    "type": "session.created",
+                    "session_id": self.session_id,
+                    "request_id": self.request_id,
+                    "model": self.model_name,
+                    "turn_id": self.current_turn_id,
+                    "capabilities": ["session.usage"],
+                    "configure_timeout_s": self.configure_timeout_s,
+                }
+            )
+            tasks = [
+                asyncio.create_task(self._receive_inputs(inputs)),
+                asyncio.create_task(self._process_inputs(inputs)),
+            ]
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        finally:
+            self.closed = True
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await self.teardown()
+
+    async def _receive_inputs(self, inputs: asyncio.Queue) -> None:
+        while not self.closed:
+            timeout = None if self.configured else max(
+                0.0, self._configure_deadline - time.monotonic()
+            )
+            try:
+                message = await asyncio.wait_for(self.websocket.receive(), timeout=timeout)
+            except asyncio.TimeoutError:
+                # Configuration may have completed while receive was pending.
+                if self.configured:
                     continue
-                try:
-                    if message.get("bytes") is not None:
-                        await self.handle_frame_bytes(message["bytes"])
-                        continue
+                self.closed = True
+                await self.send_error_safely(
+                    "session.configure was not received before the deadline",
+                    code="configuration_timeout",
+                )
+                return
+            if message["type"] == "websocket.disconnect":
+                self.closed = True
+                return
+            if message["type"] != "websocket.receive":
+                continue
+            try:
+                if message.get("bytes") is not None:
+                    kind, payload = "bytes", message["bytes"]
+                    if len(payload) > MAX_FRAME_BYTES:
+                        self.closed = True
+                        await self.send_error_safely(
+                            "frame payload exceeds max_frame_bytes", code="frame_too_large"
+                        )
+                        return
+                else:
                     raw = message.get("text")
                     if raw is None:
                         raise ValueError("empty WebSocket message")
                     payload = json.loads(raw)
                     if not isinstance(payload, dict):
                         raise TypeError("top-level message must be a JSON object")
+                    if payload.get("type") == "session.abort":
+                        # Teardown cancels a blocked input worker before aborting
+                        # the model request; control never waits for input credit.
+                        self.closed = True
+                        return
+                    kind = "json"
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                await self.send_error_safely(str(exc), code="invalid_request")
+                continue
+            # One metadata/binary pair per configured credit, plus one pair
+            # waiting for credit. Never block the control receiver on queue.put.
+            if inputs.qsize() >= 2 * self.input_queue_capacity + 2:
+                self.closed = True
+                await self.send_error_safely(
+                    "too many queued input messages; wait for input acknowledgements",
+                    code="input_queue_full",
+                )
+                return
+            inputs.put_nowait((kind, payload))
+
+    async def _process_inputs(self, inputs: asyncio.Queue) -> None:
+        while not self.closed:
+            kind, payload = await inputs.get()
+            try:
+                if self.closed:
+                    return
+                if kind == "bytes":
+                    await self.handle_frame_bytes(payload)
+                else:
                     await self.handle_json(payload)
-                except VideoRealtimeSubmissionError as exc:
-                    logger.exception(
-                        "Realtime input submission failed for request %s",
-                        self.request_id,
-                    )
-                    await self.send_error_safely(
-                        str(exc),
-                        code="input_submission_failed",
-                    )
-                    self.closed = True
-                except (
-                    json.JSONDecodeError,
-                    TypeError,
-                    ValidationError,
-                    ValueError,
-                    # Session-closed race (e.g. a frame arriving while the final
-                    # extend finishes) and post-close socket writes surface as
-                    # RuntimeError; they are protocol errors, not stage crashes.
-                    # Order matters: this handler must come after
-                    # VideoRealtimeSubmissionError (a RuntimeError subclass).
-                    RuntimeError,
-                ) as exc:
-                    await self.send_error_safely(
-                        str(exc),
-                        code="invalid_request",
-                    )
-        finally:
-            await self.teardown()
+            except VideoRealtimeSubmissionError as exc:
+                logger.exception(
+                    "Realtime input submission failed for request %s", self.request_id
+                )
+                await self.send_error_safely(str(exc), code="input_submission_failed")
+                self.closed = True
+            except (TypeError, ValidationError, ValueError, RuntimeError) as exc:
+                await self.send_error_safely(str(exc), code="invalid_request")
+            finally:
+                inputs.task_done()
 
     async def handle_json(self, payload: dict[str, Any]) -> None:
         event_type = payload.get("type")
@@ -734,12 +795,16 @@ class VideoRealtimeSessionManager:
         allow_benchmark_mode: bool = False,
         parked_request_timeout_s: float = 300.0,
         max_sessions: int = 1,
+        configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
     ) -> None:
         self.client = client
         self.model_name = model_name
         self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.parked_request_timeout_s = float(parked_request_timeout_s)
         self.max_sessions = int(max_sessions)
+        self.configure_timeout_s = float(configure_timeout_s)
+        if not math.isfinite(self.configure_timeout_s) or self.configure_timeout_s <= 0:
+            raise ValueError("configure_timeout_s must be finite and positive")
         if self.max_sessions < 1:
             raise ValueError("max_sessions must be at least 1")
         self.frame_store = SharedMemoryFrameStore()
@@ -758,6 +823,7 @@ class VideoRealtimeSessionManager:
             frame_store=self.frame_store,
             allow_benchmark_mode=self.allow_benchmark_mode,
             parked_request_timeout_s=self.parked_request_timeout_s,
+            configure_timeout_s=self.configure_timeout_s,
         )
         self.sessions[session.session_id] = session
         return session
@@ -774,6 +840,7 @@ def register_video_realtime(
     allow_benchmark_mode: bool = False,
     parked_request_timeout_s: float = 300.0,
     max_sessions: int = 1,
+    configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
 ) -> None:
     manager = VideoRealtimeSessionManager(
         client=app.state.client,
@@ -781,6 +848,7 @@ def register_video_realtime(
         allow_benchmark_mode=allow_benchmark_mode,
         parked_request_timeout_s=parked_request_timeout_s,
         max_sessions=max_sessions,
+        configure_timeout_s=configure_timeout_s,
     )
     app.state.video_realtime_manager = manager
 

@@ -187,6 +187,7 @@ def create_app(
     video_realtime_benchmark_mode: bool = False,
     video_realtime_parked_request_timeout_s: float = 300.0,
     video_realtime_max_sessions: int = 1,
+    video_realtime_configure_timeout_s: float = 180.0,
     supports_realtime_audio_output: bool = False,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
@@ -222,6 +223,8 @@ def create_app(
         video_realtime_max_sessions: Maximum concurrent video realtime
             sessions accepted by the WebSocket endpoint; additional
             connections are rejected with ``session_capacity_exceeded``.
+        video_realtime_configure_timeout_s: Deadline for receiving a valid
+            session.configure, excluding model prefill time.
         supports_realtime_audio_output: Whether the mounted realtime endpoint
             can request streamed audio from the configured pipeline.
         allowed_local_media_path: Directory allowed for ``file://`` TTS
@@ -301,6 +304,7 @@ def create_app(
             allow_benchmark_mode=video_realtime_benchmark_mode,
             parked_request_timeout_s=video_realtime_parked_request_timeout_s,
             max_sessions=video_realtime_max_sessions,
+            configure_timeout_s=video_realtime_configure_timeout_s,
         )
 
     return app
