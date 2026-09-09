@@ -2,7 +2,7 @@
 
 ## 环境
 
-使用已安装本仓库依赖的 Python 3.12 / Transformers 5.12.1 后端环境，
+先按[安装指南](../../docs/get_started/installation.md)创建本仓库的独立 Python 3.12 环境并安装版本约束，
 准备一张 80 GB 级别及以上显存的空闲 GPU，以及本地
 [MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG) 模型目录。
 
@@ -46,6 +46,7 @@ bash deployment/moss_vl_realtime/test_concurrency.sh /path/to/model \
 
 其余选项见各入口的 `--help`。`PYTHON=/path/to/python` 可指定解释器。
 测试使用本地模型，不使用代理，不停止已有服务。
+测试 worker 使用独立进程组，结束时清理该组中的残留子进程；清理超时会明确报错。
 
 ## 结果
 
