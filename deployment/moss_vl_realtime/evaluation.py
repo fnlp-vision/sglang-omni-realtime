@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common import (
+    CONFIG,
     HERE,
     ROOT,
     Child,
@@ -27,6 +28,7 @@ from common import (
     write_json,
 )
 from evaluation_reports import render
+from memory_monitor import MemoryMonitor
 from semantic_checks import groups, load_suite
 
 LATENCY_CASE = "cd067_sbpro_L2_stream_000122"
@@ -184,6 +186,11 @@ def execution_waves(gpus):
 
 
 def worker(args, cases):
+    with MemoryMonitor(args.output_dir / f"{args.worker}_memory.json"):
+        return run_worker(args, cases)
+
+
+def run_worker(args, cases):
     import torch
 
     random.seed(0)
@@ -280,6 +287,8 @@ def metadata_for(args, cases, gpus):
         repository_commit=revision.stdout.strip(),
         seed=0,
         dtype="bfloat16",
+        mem_fraction_static=CONFIG["mem_fraction_static"],
+        memory_monitoring=True,
         hf_attention=args.hf_attention,
         sglang_attention="flashinfer",
         sglang_fp32_lm_head=args.sg_fp32_lm_head,
@@ -341,6 +350,7 @@ def main(argv=None):
                 dict(
                     suite=args.suite,
                     model_path=str(args.model_path),
+                    mem_fraction_static=CONFIG["mem_fraction_static"],
                     cases=[c["case_id"] for c in cases],
                     gpus=args.gpus or "auto: one idle GPU",
                     sessions=args.sessions,

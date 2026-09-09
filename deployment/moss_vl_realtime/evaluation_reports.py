@@ -315,6 +315,45 @@ def render(output, cases, codes, metadata, errors=None):
         records = read_rows(output, metadata["suite"], errors)
         builder = accuracy_report if metadata["suite"] == "accuracy" else latency_report
         summary, lines = builder(cases, records, metadata, errors)
+    memory = {}
+    if metadata.get("memory_monitoring"):
+        for backend in required:
+            try:
+                measurement = json.loads(
+                    (output / f"{backend}_memory.json").read_text()
+                )
+                peaks = [measurement[k] for k in (
+                    "process_peak_bytes", "device_peak_bytes", "device_total_bytes"
+                )]
+                if not all(type(value) is int for value in peaks):
+                    raise ValueError("Memory measurements must be integer byte counts")
+                if measurement["errors"] or not 0 < peaks[0] <= peaks[1] <= peaks[2]:
+                    errors.append(f"{backend}: invalid or incomplete memory measurement")
+                memory[backend] = measurement
+            except (OSError, KeyError, TypeError, ValueError) as exc:
+                errors.append(f"{backend}: missing memory measurement: {exc}")
+        lines.extend(
+            [
+                "",
+                "## 显存",
+                "",
+                f"mem_fraction_static={metadata.get('mem_fraction_static')}；NVML 每 50 ms 采样。",
+                "80 GB 为容量参考目标，显存峰值单独记录，不作为测试通过的硬门槛。",
+                "",
+                "| 后端 | 进程峰值 GiB | 整卡峰值 GiB | 整卡峰值 GB |",
+                "| --- | ---: | ---: | ---: |",
+            ]
+        )
+        for backend, measurement in memory.items():
+            lines.append(
+                f"| {backend} | {measurement['process_peak_bytes']/2**30:.3f} | "
+                f"{measurement['device_peak_bytes']/2**30:.3f} | {measurement['device_peak_bytes']/10**9:.3f} |"
+            )
+        summary["memory_policy"] = "reference_only"
+    summary["memory"] = {
+        backend: {k: v for k, v in measurement.items() if k != "samples"}
+        for backend, measurement in memory.items()
+    }
     status = (
         "FAIL"
         if errors

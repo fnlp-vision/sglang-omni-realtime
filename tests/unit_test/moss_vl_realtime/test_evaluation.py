@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,9 @@ def modules(monkeypatch):
         monkeypatch.setitem(sys.modules, name, module)
         spec.loader.exec_module(module)
         result[name] = module
+    monkeypatch.setattr(
+        result["evaluation"], "MemoryMonitor", lambda path: nullcontext()
+    )
     return result
 
 
@@ -94,6 +98,40 @@ def test_full_accuracy_matrix_and_no_latency_file(modules, tmp_path):
     )
     assert (tmp_path / "accuracy.md").exists()
     assert not (tmp_path / "latency.md").exists()
+
+
+@pytest.mark.parametrize("issue", [None, "sampling", "zero", "missing", "execution"])
+def test_memory_capacity_is_reference_but_real_failures_remain(modules, tmp_path, issue):
+    cases, records, metadata = fixture_data()
+    metadata["memory_monitoring"] = True
+    measurement = dict(
+        process_peak_bytes=80_293_658_624,
+        device_peak_bytes=81_704_648_704,
+        device_total_bytes=150_754_820_096,
+        budget_bytes=80_000_000_000,
+        within_budget=False,
+        errors=[],
+    )
+    for backend in records:
+        value = copy.deepcopy(measurement)
+        if backend == "sglang":
+            if issue == "missing":
+                continue
+            if issue == "sampling":
+                value["errors"] = ["NVML sampling failed"]
+            if issue == "zero":
+                value["process_peak_bytes"] = 0
+        (tmp_path / f"{backend}_memory.json").write_text(json.dumps(value))
+    if issue == "execution":
+        records["sglang"][0]["error"] = "CUDA out of memory"
+    passed, summary = report(modules, tmp_path, cases, records, metadata)
+    assert passed is (issue is None)
+    assert summary["status"] == ("PASS" if issue is None else "FAIL")
+    assert summary["memory_policy"] == "reference_only"
+    assert summary["memory"]["hf"]["device_peak_bytes"] == 81_704_648_704
+    if issue is None:
+        assert summary["errors"] == []
+        assert "81.705" in (tmp_path / "accuracy.md").read_text()
 
 
 @pytest.mark.parametrize(
@@ -230,6 +268,16 @@ def test_invalid_json_still_produces_failure_report(modules, tmp_path):
     (tmp_path / "hf_accuracy.json").write_text("{")
     assert not modules["evaluation_reports"].render(tmp_path, cases, {}, metadata)
     assert (tmp_path / "accuracy.md").exists()
+
+
+def test_incomplete_concurrency_report_does_not_require_hf(modules, tmp_path):
+    metadata = dict(suite="concurrency", sessions=[1], repeats=1)
+    assert not modules["evaluation_reports"].render(
+        tmp_path, [], {"sglang": 0}, metadata
+    )
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["status"] == "FAIL"
+    assert (tmp_path / "concurrency.md").exists()
 
 
 def test_cli_and_single_gpu_waves(modules):

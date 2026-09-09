@@ -82,7 +82,7 @@ def test_server_is_single_gpu_four_sessions_and_environment_is_direct(
         "--gpu": "0",
         "--max-running-requests": "4",
         "--context-length": "131072",
-        "--mem-fraction-static": "0.6",
+        "--mem-fraction-static": "0.5",
         "--parked-request-timeout": "3600",
     }
     for option, value in expected.items():

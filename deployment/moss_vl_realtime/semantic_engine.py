@@ -5,6 +5,8 @@ import threading
 import time
 import uuid
 
+from common import CONFIG
+
 
 class Engine:
     def __init__(
@@ -14,6 +16,7 @@ class Engine:
         disable_cuda_graph=False,
         server_args_overrides=None,
         max_running_requests=4,
+        frame_window_enabled=False,
     ):
         import torch
 
@@ -29,11 +32,12 @@ class Engine:
             max_running_requests=max_running_requests,
             max_new_tokens=4096,
             context_length=131072,
-            mem_fraction_static=0.60,
+            mem_fraction_static=CONFIG["mem_fraction_static"],
             disable_cuda_graph=disable_cuda_graph,
             enable_async_decode=False,
             server_args_overrides=server_args_overrides,
-            realtime_frame_window_enabled=False,
+            realtime_frame_window_enabled=frame_window_enabled,
+            realtime_frame_window_raw_s=CONFIG["raw_window_seconds"],
             realtime_frame_pooling_enabled=False,
         )
         self.tokenizer = self.scheduler.segment_builder.processor.tokenizer
