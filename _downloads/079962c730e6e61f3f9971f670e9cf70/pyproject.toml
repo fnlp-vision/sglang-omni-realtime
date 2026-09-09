@@ -25,6 +25,8 @@ dependencies = [
     "transformers==5.12.1",  # Match SGLang 0.5.16
     "safetensors>=0.4.3",     # Direct weight loading
     "pillow>=10.0.0",         # Required by AutoImageProcessor
+    "nvidia-ml-py>=12.0.0",   # NVML memory measurements in the delivery tests
+    "psutil>=5.9.0",         # Owned process-group cleanup in delivery tools
     "huggingface-hub[hf_xet]>=0.36.0",# HF model downloads with Xet transport
     "datasets>=2.14.0",       # Arrow-based SeedTTS dataset loading
     "fastapi>=0.110.0",       # OpenAI-compatible API adapter
