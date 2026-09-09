@@ -100,6 +100,35 @@ def test_full_accuracy_matrix_and_no_latency_file(modules, tmp_path):
     assert not (tmp_path / "latency.md").exists()
 
 
+def test_unthrottled_sixteen_session_capacity(modules, monkeypatch):
+    from types import SimpleNamespace
+
+    evaluation = modules["evaluation"]
+    args = evaluation.parse_args([
+        "concurrency", "/model", "--worker", "sglang",
+        "--sessions", "1", "2", "4", "8", "16", "--token-rate", "86400",
+    ])
+    assert args.sessions == [1, 2, 4, 8, 16] and args.token_rate == 86400
+    captured = {}
+
+    def engine(path, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(close=lambda: None)
+
+    def run(model, case, sessions, repeats, save, *, fps, token_rate):
+        assert sessions == [1, 2, 4, 8, 16]
+        assert repeats == 3 and fps == 1 and token_rate == 86400
+        return []
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(manual_seed=lambda seed: None))
+    monkeypatch.setitem(sys.modules, "semantic_engine", SimpleNamespace(Engine=engine))
+    monkeypatch.setitem(sys.modules, "concurrency_benchmark", SimpleNamespace(run_interleaved=run))
+    cases, _, _ = fixture_data()
+    cases[0]["case_id"] = evaluation.LATENCY_CASE
+    assert evaluation.run_worker(args, cases) == 0
+    assert captured["max_running_requests"] == 16
+
+
 @pytest.mark.parametrize("issue", [None, "sampling", "zero", "missing", "execution"])
 def test_memory_capacity_is_reference_but_real_failures_remain(modules, tmp_path, issue):
     cases, records, metadata = fixture_data()

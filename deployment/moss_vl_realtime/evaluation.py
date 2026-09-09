@@ -85,7 +85,7 @@ def parse_args(argv=None):
         "--token-rate",
         type=float,
         help=(
-            "Output rate per session (default: 10 tokens/s)"
+            "Output rate per session (default: 10 tokens/s; use 86400 for unthrottled testing)"
             if selected == "concurrency"
             else argparse.SUPPRESS
         ),
@@ -98,7 +98,7 @@ def parse_args(argv=None):
             "Session counts (default: 1 2 4)"
             if selected == "accuracy"
             else (
-                "Session counts (default: 1 2 4 8)"
+                "Session counts: 1 2 4 8 16 (default: 1 2 4 8)"
                 if selected == "concurrency"
                 else argparse.SUPPRESS
             )
@@ -165,7 +165,7 @@ def parse_args(argv=None):
     if (
         1 not in args.sessions
         or any(
-            n not in ((1, 2, 4, 8) if args.suite == "concurrency" else (1, 2, 4))
+            n not in ((1, 2, 4, 8, 16) if args.suite == "concurrency" else (1, 2, 4))
             for n in args.sessions
         )
         or len(set(args.sessions)) != len(args.sessions)
@@ -206,7 +206,7 @@ def run_worker(args, cases):
 
         model = Engine(
             args.model_path,
-            max_running_requests=8 if args.suite == "concurrency" else 4,
+            max_running_requests=max(8, max(args.sessions)) if args.suite == "concurrency" else 4,
             server_args_overrides={
                 "prefill_attention_backend": "flashinfer",
                 "decode_attention_backend": "flashinfer",
@@ -309,7 +309,7 @@ def metadata_for(args, cases, gpus):
         concurrency_token_rate=args.token_rate if args.suite == "concurrency" else None,
         timing_units="seconds",
         sessions=args.sessions,
-        test_max_running_requests=8 if args.suite == "concurrency" else 4,
+        test_max_running_requests=max(8, max(args.sessions)) if args.suite == "concurrency" else 4,
         strict_tokens=args.strict_tokens,
         repeats=args.repeats,
         warmup_trials=0 if args.suite == "concurrency" else 1,

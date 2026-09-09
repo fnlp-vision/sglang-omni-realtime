@@ -17,7 +17,7 @@
 | [test_concurrency.sh](./test_concurrency.sh) | 实时单/多路场景：首段可见文本时延、token 间隔和速度 | 1、2、4、8 路；每路 1 FPS、10 token/s，重复 3 轮 |
 
 精度测试按受控输入顺序比较输出；多路时延测试中，每路独立按时间表送帧、提问和接收，
-不等待其他会话，也不等待回答结束。输出为自然生成，10 token/s 是配置目标，实际速度单独测量。
+不等待其他会话，也不等待回答结束。多路测试采用自然生成，支持限速和不限速两种配置。
 
 默认使用 BF16、HF eager、SGLang FlashInfer + decode CUDA Graph；
 启动与 SGLang 测试共用 `config.json` 中的 `mem_fraction_static=0.5`。
@@ -52,15 +52,17 @@ bash deployment/moss_vl_realtime/test_concurrency.sh /path/to/model \
 报告分别写入 `results/accuracy/`、`results/latency/`、`results/concurrency/` 下的独立运行目录。
 每次保留 Markdown 报告、`summary.json`、原始输出、运行参数和日志。
 显存使用 NVML 每 50 ms 采样，覆盖模型加载和测试；`*_memory.json` 保留字节值与峰值。
-80 GB 为容量参考目标，不是测试通过的硬门槛；显存峰值单独展示，执行、输出和采样异常仍按原规则检查。
+显存以 80 GB 级别为容量参考，单独记录峰值，不作为硬通过门槛。
 
 `PASS` 表示对应自动检查通过；`FAIL` 表示执行或检查失败；
 `REVIEW` 表示需要核对输出差异。多路报告额外记录逐路指标、发送迟到、待处理事件和未响应情况。
 
 ## 参考结果
 
-2026-09-08，NVIDIA H200 单卡，BF16；PyTorch 2.11.0、Transformers 5.12.1、
-SGLang 0.5.16、FlashInfer 0.6.14，SGLang `mem_fraction_static=0.5`。以下时间单位均为毫秒。
+测试环境：NVIDIA H200 单卡，BF16；PyTorch 2.11.0、Transformers 5.12.1、
+SGLang 0.5.16、FlashInfer 0.6.14，`mem_fraction_static=0.5`。
+时间单位为毫秒，TPS（Tokens Per Second）单位为 tokens/s。
+实时 TTFT 计到首段可见文本；TPOT 和 TPS 按连续回答期间计算，排除静默期。
 
 ### 精度对齐
 
@@ -98,14 +100,12 @@ Decode 吞吐：HF **19.21 token/s**，SGLang **90.26 token/s**。
 | 4 | 298.19 | 625.84 / 1135.57 | 114.13 / 235.76 | 8.76 | 8.65 |
 | 8 | 385.91 | 794.75 / 1315.16 | 148.31 / 490.91 | 6.71 | 6.03 |
 
-多路 TTFT 以首段可见文本为终点；TPOT 和 token/s 按连续回答期间计算，排除静默期。
-该表使用 10 token/s 配置下重新测量的单路基线，不与上面的不限速固定 token 基准混比。
-10 token/s 对应约 100 ms 的 token 间隔；不限速基准中的 11.08 ms 衡量另一种运行条件。
-实时 TTFT 还包含调度、静默及等待后续帧的时间；本次单路每轮首次提问约 0.88–0.91 秒出现文字，
-第二次约 0.14–0.15 秒，平均约 0.52 秒。并发影响应在本表内比较 1、2、4、8 路。
+![限速实时多路：每路平均 TPS 与平均 TTFT](./assets/concurrency_10_tps.png)
 
-本次全部输入处理完成、全部问题有可见回答，无执行异常。4 路的平均 token 间隔比单路增加约 15%，
-8 路增加约 49%。
+图中左轴为每路平均 TPS，右轴为首段可见文本的平均 TTFT（ms）。
+
+该配置用于观察 10 token/s 目标下的并发体验：4 路平均 8.76 tokens/s，8 路平均 6.71 tokens/s。
+这是实时自然生成场景，与不限速固定 token 的单路基准分别衡量。
 
 三项测试的显存采样峰值如下；整卡列包含驱动及既有基础占用。
 
@@ -116,6 +116,34 @@ Decode 吞吐：HF **19.21 token/s**，SGLang **90.26 token/s**。
 | 独立多路时延 | 72.879 | 74.193 | 79.664 |
 
 `1 GiB=2^30 bytes`，`1 GB=10^9 bytes`。显存约为 80 GB 级别，不影响三项测试的通过结论。
+
+### 实时多路时延（不限速）
+
+结果：**PASS**。
+
+测试纯 SGLang-Omni 后端在 1/2/4/8/16 路并发下的速度和响应时延。
+每路 1 FPS、自然生成，`token_rate=86400`；不接入 Demo、memory、ASR、TTS 或网络链路。
+测试会话容量为 16，生产默认仍为 4 路。
+
+```bash
+bash deployment/moss_vl_realtime/test_concurrency.sh /path/to/model \
+  --sessions 1 2 4 8 16 --fps 1 --token-rate 86400 --repeats 3
+```
+
+| Sessions | 帧处理 P95 | TTFT 均值 / P95 | TPOT 均值 / P95 | 每路平均 TPS（tokens/s） | 最慢一路 TPS（tokens/s） |
+| ---: | ---: | --- | --- | ---: | ---: |
+| 1 | 157.50 | 512.53 / 974.75 | 16.95 / 27.45 | 59.00 | 59.00 |
+| 2 | 233.59 | 543.75 / 1040.60 | 18.76 / 27.81 | 53.21 | 50.93 |
+| 4 | 234.78 | 548.92 / 1026.21 | 21.43 / 27.92 | 47.82 | 45.26 |
+| 8 | 401.91 | 728.11 / 1334.30 | 39.03 / 143.36 | 25.57 | 23.70 |
+| 16 | 491.57 | 1684.67 / 3556.17 | 93.27 / 686.57 | 10.70 | 9.21 |
+
+![不限速实时多路：每路平均 TPS 与平均 TTFT](./assets/concurrency_unthrottled.png)
+
+图中左轴为每路平均 TPS，右轴为首段可见文本的平均 TTFT（ms）。
+
+并发从 1 路增加到 16 路时，每路平均速度从 59.00 降至 10.70 tokens/s，
+平均 TTFT 从 512.53 增至 1684.67 ms。
 
 ## 推理启动
 
