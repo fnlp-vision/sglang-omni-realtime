@@ -206,7 +206,7 @@
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">安装指南</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
 </ul>
@@ -530,13 +530,13 @@ The launch examples place all TP ranks on one host.</p>
 <p>Install this repository following the <a class="reference internal" href="../get_started/installation.html"><span class="std std-doc">installation guide</span></a>.
 Use the <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG">MOSS-VL-Realtime-SGLANG checkpoint</a>,
 which includes Transformers 5.12.1-compatible configuration and processor code:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w"> </span>-c<span class="w"> </span>deployment/moss_vl_realtime/constraints.txt
 hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--local-dir<span class="w"> </span>/path/to/MOSS-VL-Realtime-SGLANG
 <span class="nb">export</span><span class="w"> </span><span class="nv">MODEL_PATH</span><span class="o">=</span>/path/to/MOSS-VL-Realtime-SGLANG
 </pre></div>
 </div>
-<p>Private checkpoint access requires an authorized Hugging Face account
+<p>If checkpoint access returns 401/403, use an authorized Hugging Face account
 (<code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>). Keep the full downloaded directory together and pass its
 local path with <code class="docutils literal notranslate"><span class="pre">--model-path</span></code>. The original
 <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime">MOSS-VL-Realtime</a>
@@ -545,12 +545,20 @@ uses the 5.12.1 compatibility package linked above.</p>
 </section>
 <section id="start-the-server">
 <h2>Start the server<a class="headerlink" href="#start-the-server" title="Link to this heading">#</a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
+<p>The recommended single-GPU entry is <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">deployment/moss_vl_realtime/start.sh</span> <span class="pre">&quot;$MODEL_PATH&quot;</span></code>:
+four sessions, 128K context, memory fraction 0.5, a 60-second raw visual window,
+and port 18500. The lower-level launcher below exposes explicit overrides.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_WINDOW_ENABLED</span><span class="o">=</span><span class="m">1</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_WINDOW_RAW_S</span><span class="o">=</span><span class="m">60</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_POOLING_ENABLED</span><span class="o">=</span><span class="m">0</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">SGLANG_OMNI_STRICT_PORT</span><span class="o">=</span><span class="m">1</span>
+
+python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model-path<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--gpu<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.60<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--max-running-requests<span class="w"> </span><span class="m">1</span>
+<span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">18500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-running-requests<span class="w"> </span><span class="m">4</span>
 </pre></div>
 </div>
 <p>For tensor parallel deployment, provide one distinct GPU per rank:</p>
@@ -558,9 +566,9 @@ uses the 5.12.1 compatibility package linked above.</p>
 <span class="w">  </span>--model-path<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--tp-size<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--gpus<span class="w"> </span><span class="m">0</span>,1<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.60<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--max-running-requests<span class="w"> </span><span class="m">2</span>
+<span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">18500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--max-running-requests<span class="w"> </span><span class="m">4</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">--gpus</span></code> must contain exactly <code class="docutils literal notranslate"><span class="pre">--tp-size</span></code> unique GPU ids. Omni starts one
@@ -572,7 +580,7 @@ only, and the pixels are broadcast to every rank over the TP CPU group; the
 single-consumer shared-memory frame lifecycle stays intact. A custom
 <code class="docutils literal notranslate"><span class="pre">frame_resolver</span></code> (the scheduler’s Python parameter) is likewise executed only
 on rank 0 under TP.</p>
-<p>The examples explicitly choose 128K context and a 0.60 memory fraction.
+<p>The examples explicitly choose 128K context and a 0.5 memory fraction.
 The launcher’s code defaults are listed below. Size context and concurrency
 against the available KV pool; startup reports an error if one full context
 cannot fit.</p>
@@ -636,7 +644,7 @@ enabled by default.</p>
 <h2>Send timestamped frames<a class="headerlink" href="#send-timestamped-frames" title="Link to this heading">#</a></h2>
 <p>The example client defaults to <strong>1 FPS</strong>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/moss_vl_realtime_client.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--url<span class="w"> </span>ws://127.0.0.1:8000/v1/video/realtime<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--url<span class="w"> </span>ws://127.0.0.1:18500/v1/video/realtime<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--prompt<span class="w"> </span><span class="s2">"Describe relevant changes."</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--frame<span class="w"> </span>/path/to/frame_000.png<span class="w"> </span>--timestamp<span class="w"> </span><span class="m">0</span>.0<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--frame<span class="w"> </span>/path/to/frame_001.png<span class="w"> </span>--timestamp<span class="w"> </span><span class="m">1</span>.0<span class="w"> </span><span class="se">\</span>
@@ -689,6 +697,19 @@ sequence aligned.</p>
 <code class="docutils literal notranslate"><span class="pre">max_frame_bytes</span></code> (the largest binary frame the server accepts; the transport
 is configured to allow it end to end) and <code class="docutils literal notranslate"><span class="pre">parked_request_timeout_s</span></code> (the idle
 timeout after which a silence-parked request is aborted and the session ends).</p>
+<p><code class="docutils literal notranslate"><span class="pre">session.created.configure_timeout_s</span></code> advertises the deadline for a valid
+<code class="docutils literal notranslate"><span class="pre">session.configure</span></code> (180 seconds by default, starting when the connection is
+admitted). Invalid messages do not reset it. Expiry returns
+<code class="docutils literal notranslate"><span class="pre">configuration_timeout</span></code>, closes the connection, and releases its session slot.
+The deadline does not limit model prefill after configuration. Applications
+embedding the API can set <code class="docutils literal notranslate"><span class="pre">create_app(video_realtime_configure_timeout_s=...)</span></code>.</p>
+<p>Control reception remains active while ordered input processing waits for
+capacity, so <code class="docutils literal notranslate"><span class="pre">session.abort</span></code> and disconnects do not wait for a model input ACK.
+The transport-side staging queue is also bounded: at most one metadata/binary
+pair per configured input credit plus one additional pair. Exceeding that
+queue returns <code class="docutils literal notranslate"><span class="pre">input_queue_full</span></code> and ends the session; oversized binary messages
+return <code class="docutils literal notranslate"><span class="pre">frame_too_large</span></code> and end the session. Clients should respect the ready
+and accepted acknowledgements instead of sending an unbounded input burst.</p>
 <p>Frame metadata contains <code class="docutils literal notranslate"><span class="pre">seq_no</span></code>, video <code class="docutils literal notranslate"><span class="pre">timestamp</span></code>, optional <code class="docutils literal notranslate"><span class="pre">prompt</span></code>, <code class="docutils literal notranslate"><span class="pre">final</span></code>,
 and <code class="docutils literal notranslate"><span class="pre">mime_type</span></code>. Prompt-only updates use <code class="docutils literal notranslate"><span class="pre">input.prompt</span></code> and the same ordered
 sequence number space.</p>
@@ -802,8 +823,8 @@ soft target: a step runs as soon as any session in the batch is due, letting
 not-yet-due sessions ride along.</p>
 <p>Completed prefills are handed off to the running batch before the decode rate
 gate. New prefills and frame updates are not delayed by that gate. See the
-<a class="reference internal" href="moss_vl_realtime_capacity.html"><span class="std std-doc">capacity measurements</span></a> for tested workloads,
-memory rollover and deployment sizing.</p>
+<a class="reference internal" href="moss_vl_realtime_capacity.html"><span class="std std-doc">capacity planning guide</span></a> for memory rollover,
+deployment sizing and links to the standard performance results.</p>
 </section>
 <section id="benchmark-mode">
 <h2>Benchmark mode<a class="headerlink" href="#benchmark-mode" title="Link to this heading">#</a></h2>
@@ -811,7 +832,7 @@ memory rollover and deployment sizing.</p>
 Production servers reject it. A benchmark server must be started explicitly:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/run_moss_vl_realtime_server.py<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model-path<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.60<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--context-length<span class="w"> </span><span class="m">131072</span><span class="w"> </span>--mem-fraction-static<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--enable-benchmark-mode
 </pre></div>
 </div>
@@ -819,8 +840,9 @@ Production servers reject it. A benchmark server must be started explicitly:</p>
 </section>
 <section id="vision-kv-sliding-window-opt-in">
 <h2>Vision KV sliding window (opt-in)<a class="headerlink" href="#vision-kv-sliding-window-opt-in" title="Link to this heading">#</a></h2>
-<p>The window is disabled by default. To retain recent raw frames and evict older
-visual KV, set these variables before starting the server:</p>
+<p>The lower-level launcher leaves the window disabled unless configured;
+<code class="docutils literal notranslate"><span class="pre">deployment/moss_vl_realtime/start.sh</span></code> enables a 60-second raw window.
+To configure it explicitly with the lower-level launcher, set:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_WINDOW_ENABLED</span><span class="o">=</span><span class="m">1</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_WINDOW_RAW_S</span><span class="o">=</span><span class="m">60</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">REALTIME_FRAME_POOLING_ENABLED</span><span class="o">=</span><span class="m">0</span>

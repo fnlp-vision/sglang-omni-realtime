@@ -19,13 +19,13 @@ Use the [MOSS-VL-Realtime-SGLANG checkpoint](https://huggingface.co/OpenMOSS-Tea
 which includes Transformers 5.12.1-compatible configuration and processor code:
 
 ```bash
-uv pip install -e .
+uv pip install -e . -c deployment/moss_vl_realtime/constraints.txt
 hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
   --local-dir /path/to/MOSS-VL-Realtime-SGLANG
 export MODEL_PATH=/path/to/MOSS-VL-Realtime-SGLANG
 ```
 
-Private checkpoint access requires an authorized Hugging Face account
+If checkpoint access returns 401/403, use an authorized Hugging Face account
 (`hf auth login`). Keep the full downloaded directory together and pass its
 local path with `--model-path`. The original
 [MOSS-VL-Realtime](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime)
@@ -34,13 +34,22 @@ uses the 5.12.1 compatibility package linked above.
 
 ## Start the server
 
+The recommended single-GPU entry is `bash deployment/moss_vl_realtime/start.sh "$MODEL_PATH"`:
+four sessions, 128K context, memory fraction 0.5, a 60-second raw visual window,
+and port 18500. The lower-level launcher below exposes explicit overrides.
+
 ```bash
+export REALTIME_FRAME_WINDOW_ENABLED=1
+export REALTIME_FRAME_WINDOW_RAW_S=60
+export REALTIME_FRAME_POOLING_ENABLED=0
+export SGLANG_OMNI_STRICT_PORT=1
+
 python examples/run_moss_vl_realtime_server.py \
   --model-path "$MODEL_PATH" \
   --gpu 0 \
-  --host 127.0.0.1 --port 8000 \
-  --context-length 131072 --mem-fraction-static 0.60 \
-  --max-running-requests 1
+  --host 127.0.0.1 --port 18500 \
+  --context-length 131072 --mem-fraction-static 0.5 \
+  --max-running-requests 4
 ```
 
 For tensor parallel deployment, provide one distinct GPU per rank:
@@ -50,9 +59,9 @@ python examples/run_moss_vl_realtime_server.py \
   --model-path "$MODEL_PATH" \
   --tp-size 2 \
   --gpus 0,1 \
-  --host 127.0.0.1 --port 8000 \
-  --context-length 131072 --mem-fraction-static 0.60 \
-  --max-running-requests 2
+  --host 127.0.0.1 --port 18500 \
+  --context-length 131072 --mem-fraction-static 0.5 \
+  --max-running-requests 4
 ```
 
 `--gpus` must contain exactly `--tp-size` unique GPU ids. Omni starts one
@@ -66,7 +75,7 @@ single-consumer shared-memory frame lifecycle stays intact. A custom
 `frame_resolver` (the scheduler's Python parameter) is likewise executed only
 on rank 0 under TP.
 
-The examples explicitly choose 128K context and a 0.60 memory fraction.
+The examples explicitly choose 128K context and a 0.5 memory fraction.
 The launcher's code defaults are listed below. Size context and concurrency
 against the available KV pool; startup reports an error if one full context
 cannot fit.
@@ -102,7 +111,7 @@ The example client defaults to **1 FPS**:
 
 ```bash
 python examples/moss_vl_realtime_client.py \
-  --url ws://127.0.0.1:8000/v1/video/realtime \
+  --url ws://127.0.0.1:18500/v1/video/realtime \
   --prompt "Describe relevant changes." \
   --frame /path/to/frame_000.png --timestamp 0.0 \
   --frame /path/to/frame_001.png --timestamp 1.0 \
@@ -160,6 +169,21 @@ A normal frame follows this sequence:
 `max_frame_bytes` (the largest binary frame the server accepts; the transport
 is configured to allow it end to end) and `parked_request_timeout_s` (the idle
 timeout after which a silence-parked request is aborted and the session ends).
+
+`session.created.configure_timeout_s` advertises the deadline for a valid
+`session.configure` (180 seconds by default, starting when the connection is
+admitted). Invalid messages do not reset it. Expiry returns
+`configuration_timeout`, closes the connection, and releases its session slot.
+The deadline does not limit model prefill after configuration. Applications
+embedding the API can set `create_app(video_realtime_configure_timeout_s=...)`.
+
+Control reception remains active while ordered input processing waits for
+capacity, so `session.abort` and disconnects do not wait for a model input ACK.
+The transport-side staging queue is also bounded: at most one metadata/binary
+pair per configured input credit plus one additional pair. Exceeding that
+queue returns `input_queue_full` and ends the session; oversized binary messages
+return `frame_too_large` and end the session. Clients should respect the ready
+and accepted acknowledgements instead of sending an unbounded input burst.
 
 Frame metadata contains `seq_no`, video `timestamp`, optional `prompt`, `final`,
 and `mime_type`. Prompt-only updates use `input.prompt` and the same ordered
@@ -268,8 +292,8 @@ not-yet-due sessions ride along.
 
 Completed prefills are handed off to the running batch before the decode rate
 gate. New prefills and frame updates are not delayed by that gate. See the
-[capacity measurements](moss_vl_realtime_capacity.md) for tested workloads,
-memory rollover and deployment sizing.
+[capacity planning guide](moss_vl_realtime_capacity.md) for memory rollover,
+deployment sizing and links to the standard performance results.
 
 ## Benchmark mode
 
@@ -279,7 +303,7 @@ Production servers reject it. A benchmark server must be started explicitly:
 ```bash
 python examples/run_moss_vl_realtime_server.py \
   --model-path "$MODEL_PATH" \
-  --context-length 131072 --mem-fraction-static 0.60 \
+  --context-length 131072 --mem-fraction-static 0.5 \
   --enable-benchmark-mode
 ```
 
@@ -287,8 +311,9 @@ Do not enable benchmark mode for production traffic.
 
 ## Vision KV sliding window (opt-in)
 
-The window is disabled by default. To retain recent raw frames and evict older
-visual KV, set these variables before starting the server:
+The lower-level launcher leaves the window disabled unless configured;
+`deployment/moss_vl_realtime/start.sh` enables a 60-second raw window.
+To configure it explicitly with the lower-level launcher, set:
 
 ```bash
 export REALTIME_FRAME_WINDOW_ENABLED=1

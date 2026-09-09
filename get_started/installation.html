@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Installation &#8212; SGLang</title>
+    <title>安装指南 &#8212; SGLang</title>
   
   
   
@@ -206,7 +206,7 @@
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Installation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">安装指南</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="release_notes.html">Release Notes</a></li>
 </ul>
@@ -479,7 +479,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Installation</h1>
+    <h1>安装指南</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -489,9 +489,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#environment">Environment</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#download-the-checkpoint">Download the checkpoint</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">系统准备</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">安装后端</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">下载模型</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">配置工具链并启动</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">版本与更新</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">常见问题</a></li>
 </ul>
             </nav>
         </div>
@@ -503,70 +506,140 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="installation">
-<h1>Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h1>
-<p>Install this checkout to use the MOSS-VL realtime backend. Its dependencies are
-defined in <a class="reference download internal" download="" href="../_downloads/079962c730e6e61f3f9971f670e9cf70/pyproject.toml"><span class="xref download myst">pyproject.toml</span></a>.</p>
-<section id="environment">
-<h2>Environment<a class="headerlink" href="#environment" title="Link to this heading">#</a></h2>
-<p>Use Linux, an NVIDIA GPU and Python 3.12. The current stack pins:</p>
+  <section class="tex2jax_ignore mathjax_ignore" id="id1">
+<h1>安装指南<a class="headerlink" href="#id1" title="Link to this heading">#</a></h1>
+<p>本页用于独立部署 MOSS-VL Realtime 推理后端。需要完整浏览器、语音和 memory 时，使用 <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/deployment/repro/README.md">Demo 安装器</a>，无需再执行本页安装步骤。</p>
+<section id="id2">
+<h2>系统准备<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
-<tr class="row-odd"><th class="head"><p>Component</p></th>
-<th class="head"><p>Version</p></th>
+<tr class="row-odd"><th class="head"><p>项目</p></th>
+<th class="head"><p>要求</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>SGLang</p></td>
-<td><p>0.5.16</p></td>
+<tr class="row-even"><td><p>系统 / Python</p></td>
+<td><p>Linux x86_64 / Python 3.12</p></td>
 </tr>
-<tr class="row-odd"><td><p>Transformers</p></td>
-<td><p>5.12.1</p></td>
+<tr class="row-odd"><td><p>GPU / 驱动</p></td>
+<td><p>NVIDIA GPU、CUDA 13 兼容驱动；常规安装要求 R580 或更新版本</p></td>
 </tr>
-<tr class="row-even"><td><p>PyTorch / torchvision / torchaudio</p></td>
-<td><p>2.11.0 / 0.26.0 / 2.11.0</p></td>
+<tr class="row-even"><td><p>编译及媒体工具</p></td>
+<td><p>Git、C/C++ 编译器、CMake、FFmpeg</p></td>
 </tr>
-<tr class="row-odd"><td><p>FlashInfer</p></td>
-<td><p>0.6.14, CUDA 13 extra</p></td>
-</tr>
-<tr class="row-even"><td><p>torchcodec</p></td>
-<td><p>0.11.1</p></td>
+<tr class="row-odd"><td><p>网络</p></td>
+<td><p>GitHub、PyPI、Hugging Face；首次 JIT 可能需要下载内核资源</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Prepare a compatible NVIDIA driver and CUDA toolchain. The dependency set
-includes CUDA 13 NIXL and Mooncake wheels; native builds may also require UCX,
-compiler tools and FFmpeg libraries. The <a class="reference download internal" download="" href="../_downloads/9c6d2dd30e172995ff9466799d6f77ed/Dockerfile"><span class="xref download myst">Dockerfile</span></a>
-records the upstream environment’s build steps.</p>
+<p>驱动支持能力与 Toolkit 版本不同，见 <a class="reference external" href="https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html">NVIDIA 兼容性说明</a>。系统依赖可由管理员安装：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
+sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>git<span class="w"> </span>curl<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>pkg-config<span class="w"> </span>python3-venv<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>ffmpeg<span class="w"> </span>libsndfile1<span class="w"> </span>libsox-dev<span class="w"> </span>libnuma-dev<span class="w"> </span>libibverbs1<span class="w"> </span>librdmacm1<span class="w"> </span>libucx-dev
+</pre></div>
+</div>
+<p>确认 Python 3.12 可用，并安装 <a class="reference external" href="https://docs.astral.sh/uv/getting-started/installation/">uv</a>。驱动由管理员准备，以下命令不会修改系统 CUDA。</p>
 </section>
-<section id="install-from-source">
-<h2>Install from source<a class="headerlink" href="#install-from-source" title="Link to this heading">#</a></h2>
-<p>With <code class="docutils literal notranslate"><span class="pre">uv</span></code> installed:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/fnlp-vision/sglang-omni-realtime.git
-<span class="nb">cd</span><span class="w"> </span>sglang-omni-realtime
-uv<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span>-p<span class="w"> </span><span class="m">3</span>.12
+<section id="id3">
+<h2>安装后端<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>从本仓库源码根目录执行；不要复用 Demo 或其他推理引擎的虚拟环境：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+uv<span class="w"> </span>pip<span class="w"> </span>sync<span class="w"> </span>--require-hashes<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--build-constraint<span class="w"> </span>deployment/repro/build-constraints.txt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--index-url<span class="w"> </span>https://pypi.org/simple<span class="w"> </span>deployment/repro/requirements.lock
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--no-deps<span class="w"> </span>--no-build-isolation<span class="w"> </span>-e<span class="w"> </span>.
+uv<span class="w"> </span>pip<span class="w"> </span>check
 </pre></div>
 </div>
-<p>The Python distribution name remains <code class="docutils literal notranslate"><span class="pre">sglang-omni</span></code>. Installing this local
-checkout selects the specialized implementation. Use separate environments
-for the Demo and optional TTS engines.</p>
+<p><a class="reference download internal" download="" href="../_downloads/55ba228783579f23366229f6642b7f31/requirements.lock"><span class="xref download myst">requirements.lock</span></a> 固定全部依赖版本，与 Demo 推荐路径使用的后端依赖锁一致。<code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> 定义开发依赖范围；<code class="docutils literal notranslate"><span class="pre">constraints.txt</span></code> 仅保留版本约束参考，不是另一套推荐安装方法。</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>依赖</p></th>
+<th class="head"><p>固定版本</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>SGLang / Transformers</p></td>
+<td><p>0.5.16 / 5.12.1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Torch / FlashInfer</p></td>
+<td><p>2.11.0 / 0.6.14</p></td>
+</tr>
+<tr class="row-even"><td><p>CUDA 编译器、CRT、NVVM</p></td>
+<td><p>13.0.88</p></td>
+</tr>
+<tr class="row-odd"><td><p>CUDA 运行库</p></td>
+<td><p>13.0.96</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 </section>
-<section id="download-the-checkpoint">
-<h2>Download the checkpoint<a class="headerlink" href="#download-the-checkpoint" title="Link to this heading">#</a></h2>
-<p>Use <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG">OpenMOSS-Team/MOSS-VL-Realtime-SGLANG</a>,
-which contains the Transformers 5.12.1-compatible model and processor code.
-For private-repository access, sign in with an authorized account using
-<code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--local-dir<span class="w"> </span>/path/to/MOSS-VL-Realtime-SGLANG
+<section id="id4">
+<h2>下载模型<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">MODEL_PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/models/MOSS-VL-Realtime-SGLANG"</span>
+hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--revision<span class="w"> </span>bcfd9ccf1e9db2896ad852301cc8dde4a6349c78<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--local-dir<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span>
 </pre></div>
 </div>
-<p>Continue with the <a class="reference internal" href="../cookbook/moss_vl_realtime.html"><span class="std std-doc">realtime serving guide</span></a>.
-For installation of the general upstream framework and its other platforms,
-refer to the <a class="reference external" href="https://sgl-project.github.io/sglang-omni/">official SGLang-Omni documentation</a>.</p>
+<p>该模型仓库公开可访问。出现 401/403 时检查访问策略，并在确有需要时使用自己的 <code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>；不要把 token 放进源码。模型目录应保留配置、自定义代码、tokenizer、processor 和全部权重分片。</p>
+</section>
+<section id="id5">
+<h2>配置工具链并启动<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
+<p>在启动终端中执行以下命令。重新打开终端后也需激活环境并设置工具链：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+<span class="nb">export</span><span class="w"> </span><span class="nv">CUDA_HOME</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>deployment/repro/cuda_toolkit.py<span class="k">)</span><span class="s2">"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">CUDA_PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$CUDA_HOME</span><span class="s2">"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$CUDA_HOME</span><span class="s2">/bin:</span><span class="nv">$PATH</span><span class="s2">"</span>
+python<span class="w"> </span>deployment/moss_vl_realtime/check_env.py<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span>
+bash<span class="w"> </span>deployment/moss_vl_realtime/start.sh<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>工具链来自已安装的 NVIDIA wheel，目录适配仅在仓库 <code class="docutils literal notranslate"><span class="pre">.repro/cuda-toolkit</span></code> 下创建链接，补齐 JIT 所需的 <code class="docutils literal notranslate"><span class="pre">lib64</span></code> 和 <code class="docutils literal notranslate"><span class="pre">libcudart.so</span></code>；不依赖系统 <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> 的版本。</p>
+<p>自检不加载模型权重；无 GPU 时可加 <code class="docutils literal notranslate"><span class="pre">--no-gpu</span></code>，但不能据此认定 GPU 部署通过。首次启动需要编译与视觉预热，等待 <code class="docutils literal notranslate"><span class="pre">/health</span></code> 就绪后按<span class="xref myst">中文 README</span>运行实际请求。</p>
+</section>
+<section id="id6">
+<h2>版本与更新<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<p>配套组件与依赖版本见 <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md">Demo 兼容清单</a>。</p>
+<p>升级代码、模型或依赖后，需要重新验证；不要只替换模型目录里的个别自定义文件。旧版 Transformers 4.57 参考实现不用于此后端环境。</p>
+</section>
+<section id="id7">
+<h2>常见问题<a class="headerlink" href="#id7" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>现象</p></th>
+<th class="head"><p>处理</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CUDA 不可用</p></td>
+<td><p>检查驱动、GPU 可见性和 CUDA 版 Torch</p></td>
+</tr>
+<tr class="row-odd"><td><p>编译器与头文件不匹配</p></td>
+<td><p>使用完整依赖锁，重新设置上述 CUDA_HOME，不混用系统 Toolkit</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cannot</span> <span class="pre">find</span> <span class="pre">-lcudart</span></code></p></td>
+<td><p>检查工具链目录视图是否生成，以及启动终端的 CUDA_HOME</p></td>
+</tr>
+<tr class="row-odd"><td><p>动态库或 FFmpeg 缺失</p></td>
+<td><p>补齐系统依赖；不复制其他环境的库路径</p></td>
+</tr>
+<tr class="row-even"><td><p>KV 容量不足</p></td>
+<td><p>降低 context 或并发，按硬件调整显存比例</p></td>
+</tr>
+<tr class="row-odd"><td><p>GPU / 端口已占用</p></td>
+<td><p>用 <code class="docutils literal notranslate"><span class="pre">--gpus</span></code> / <code class="docutils literal notranslate"><span class="pre">--port</span></code> 选择空闲资源，不停止其他部署</p></td>
+</tr>
+<tr class="row-even"><td><p>下载超时</p></td>
+<td><p>按所在网络配置代理，不把代理或凭据写入仓库</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Docker 入口见 <span class="xref myst">容器说明</span>。容器构建和 GPU 运行尚未验收，原生路径通过不代表容器通过。</p>
 </section>
 </section>
 
@@ -617,9 +690,12 @@ refer to the <a class="reference external" href="https://sgl-project.github.io/s
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#environment">Environment</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-from-source">Install from source</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#download-the-checkpoint">Download the checkpoint</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">系统准备</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">安装后端</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">下载模型</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">配置工具链并启动</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">版本与更新</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">常见问题</a></li>
 </ul>
   </nav></div>
 

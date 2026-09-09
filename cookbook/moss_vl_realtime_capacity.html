@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>MOSS-VL Realtime 并发容量规划 &#8212; SGLang</title>
+    <title>MOSS-VL Realtime 容量规划 &#8212; SGLang</title>
   
   
   
@@ -206,7 +206,7 @@
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">安装指南</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
 </ul>
@@ -479,7 +479,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>MOSS-VL Realtime 并发容量规划</h1>
+    <h1>MOSS-VL Realtime 容量规划</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -489,10 +489,10 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">部署配置</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">测量条件</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">容量参考</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">资源规划</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">推荐起点</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">显存组成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">长会话</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">扩容</a></li>
 </ul>
             </nav>
         </div>
@@ -505,106 +505,62 @@
                 <article class="bd-article">
                   
   <section class="tex2jax_ignore mathjax_ignore" id="moss-vl-realtime">
-<h1>MOSS-VL Realtime 并发容量规划<a class="headerlink" href="#moss-vl-realtime" title="Link to this heading">#</a></h1>
+<h1>MOSS-VL Realtime 容量规划<a class="headerlink" href="#moss-vl-realtime" title="Link to this heading">#</a></h1>
 <section id="id1">
-<h2>部署配置<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
-<p>包含 Demo memory 的长时视频服务，参考配置为每实例 4 个会话。
-后端设置 <code class="docutils literal notranslate"><span class="pre">--max-running-requests</span> <span class="pre">4</span></code>，Demo 设置
-<code class="docutils literal notranslate"><span class="pre">SGLANG_OMNI_SESSIONS_PER_REPLICA=4</span></code>，两端 context 均为 131,072。
-每路输入 1 FPS、最长边 512，视觉 raw window 为 60 秒，pooling 关闭，
-并启用 memory rollover。更高并发应同时评估 GPU、CPU 和 memory 队列容量。</p>
-</section>
-<section id="id2">
-<h2>测量条件<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
-<p>2026-09-07 的隔离测试使用单张 H200（143,771 MiB），context 131,072，
-<code class="docutils literal notranslate"><span class="pre">--mem-fraction-static</span> <span class="pre">0.60</span></code>，CUDA Graph 开启，async decode 关闭。
-实测 KV 池为 336,874 slots。视觉 raw window 为 60 秒，pooling 关闭；
-每路输入 1 FPS，最长边 512，JPEG quality 60，生成速率目标 4 tokens/s。</p>
-<p>完整 Demo 开启文本和图像 memory，使用 CPU BGE-M3、Chinese-CLIP、
-96 个 Torch 线程、独立会话存储，以及 Pi 对接的独立 Qwen3-4B GPU 服务。
-rollover 阈值为 idle 8K / hard 12K；ASR、TTS 未开启。
-采样使用 Demo 默认 temperature 0.7、top_p 0.8；纯 VLM 测试使用 greedy。</p>
-<p>完整 memory 链路的四会话配置完成了 20 分钟测试；六会话与八会话的
-短测存在写入积压。实例扩容应以整条服务链路的持续处理能力为依据。</p>
-</section>
-<section id="id3">
-<h2>容量参考<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<h2>推荐起点<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p>使用 <code class="docutils literal notranslate"><span class="pre">deployment/moss_vl_realtime/start.sh</span></code> 启动单卡实例时，默认 4 个会话、
+128K context、<code class="docutils literal notranslate"><span class="pre">mem_fraction_static=0.5</span></code>，开启 60 秒原始视觉 KV 滑窗，关闭 pooling。
+参数由 <a class="reference download internal" download="" href="../_downloads/cfb3803cced7b077a2f72be2086daec3/config.json"><span class="xref download myst">config.json</span></a> 管理。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
-<tr class="row-odd"><th class="head"><p>链路</p></th>
-<th class="head text-right"><p>并发</p></th>
-<th class="head text-right"><p>时长</p></th>
-<th class="head"><p>结果</p></th>
+<tr class="row-odd"><th class="head"><p>后端参数</p></th>
+<th class="head"><p>Demo 对应配置</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>完整 memory</p></td>
-<td class="text-right"><p>4</p></td>
-<td class="text-right"><p>150 秒</p></td>
-<td><p>600/600 帧转发成功，4 次同时触发的 rollover 完成，写入队列归零</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">max_sessions=4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SGLANG_OMNI_SESSIONS_PER_REPLICA=4</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p>完整 memory</p></td>
-<td class="text-right"><p>4</p></td>
-<td class="text-right"><p>20 分钟</p></td>
-<td><p>4,795/4,800 帧转发成功，每路两次自然 rollover，写入丢弃 0、队列 0</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">context_length=131072</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SGLANG_OMNI_CONTEXT_LENGTH=131072</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p>完整 memory</p></td>
-<td class="text-right"><p>6</p></td>
-<td class="text-right"><p>180 秒</p></td>
-<td><p>1,077/1,080 帧转发成功，6 次 rollover 完成，结束时写入队列积压 231 项</p></td>
-</tr>
-<tr class="row-odd"><td><p>完整 memory</p></td>
-<td class="text-right"><p>8</p></td>
-<td class="text-right"><p>150 秒</p></td>
-<td><p>1,187/1,200 帧转发成功，8 次 rollover 完成，结束时写入队列积压 366 项</p></td>
-</tr>
-<tr class="row-even"><td><p>纯 VLM，512 最长边</p></td>
-<td class="text-right"><p>8 / 12 / 16 / 24 / 28</p></td>
-<td class="text-right"><p>每档 90 秒</p></td>
-<td><p>所有输入帧处理完成</p></td>
-</tr>
-<tr class="row-odd"><td><p>纯 VLM，512 最长边</p></td>
-<td class="text-right"><p>30</p></td>
-<td class="text-right"><p>90 秒</p></td>
-<td><p>KV 容量保护终止 1 路，其余继续运行</p></td>
-</tr>
-<tr class="row-even"><td><p>纯 VLM，512 最长边</p></td>
-<td class="text-right"><p>32</p></td>
-<td class="text-right"><p>90 秒</p></td>
-<td><p>KV 容量保护终止 2 路，其余继续运行</p></td>
-</tr>
-<tr class="row-odd"><td><p>纯 VLM，1024 x 576</p></td>
-<td class="text-right"><p>4 / 8</p></td>
-<td class="text-right"><p>每档 90 秒</p></td>
-<td><p>360 / 720 帧全部处理完成</p></td>
+<tr class="row-even"><td><p>服务基础 URL</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SGLANG_OMNI_URLS</span></code></p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>以上测试关闭会话后 KV 均完全回收。4 路长测的峰值为 71,443 slots；
-28 路纯 VLM 短测达到 316,032 slots（池的 93.8%），不能作为长期部署上限。
-1024 x 576 的 8 路短测达到 298,503 slots，分辨率同样需要计入容量预算。
-完整 memory 长测结束时，4 路都能回答各自预设的会话标记，未检测到其他
-会话的标记出现在输出或该会话的 memory 中。</p>
-<p>这里的帧转发数是 Demo 输入侧统计；模型接收数还包含问题附带帧和
-rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
-输入帧转发率、模型处理率和关闭后的 KV 回收分别统计。</p>
+<p>一键入口要求至少 65 GiB 空闲显存，且已有显存占用不超过 2048 MiB。这是启动筛选条件，
+不是任何输入长度下的并发保证。会话满额返回 <code class="docutils literal notranslate"><span class="pre">session_capacity_exceeded</span></code>。</p>
+</section>
+<section id="id2">
+<h2>显存组成<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<p>模型权重由实例共享；每个会话有自己的文本/视觉 KV 映射和状态。
+显存还包含 CUDA Graph、临时计算缓冲和分配器保留空间。</p>
+<ul class="simple">
+<li><p>更高并发、更长文本、更高视频分辨率或帧率都会增加负载。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mem_fraction_static</span></code> 用于规划 SGLang 静态内存，不是整卡显存的硬上限。</p></li>
+<li><p>调整 context 和并发时，应一起检查启动日志中的 KV pool 容量。</p></li>
+<li><p>启动时若一个完整 context 都无法容纳，服务会报错；运行中 KV 不足可能终止会话。</p></li>
+</ul>
+<p>显存峰值及 1/2/4/8/16 路性能参考见<span class="xref myst">测试结果</span>。
+80 GB 级别是容量参考目标，测试结果以明确的硬件、输入和参数为条件。</p>
+</section>
+<section id="id3">
+<h2>长会话<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>视觉滑窗只回收较早帧的物理视觉 KV，不会清除历史 token 位置；文本 KV 也会持续增长。
+接近 context 上限时，客户端需要创建新会话。跨 context 保留交互记忆由 Demo 的 memory
+rollover 负责，不是本后端自动执行的功能。</p>
+<p>接入 Demo 时，还需为其编码、检索、摘要以及可选 ASR/TTS 单独规划资源。
+纯 VLM 的吞吐结果不能直接替代整条应用链路的容量评估。</p>
 </section>
 <section id="id4">
-<h2>资源规划<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
-<ul class="simple">
-<li><p>视觉滑窗回收老帧的物理视觉 KV，但不清除历史 context 位置。</p></li>
-<li><p>文本 decoder KV 仍会增长，需要通过 memory rollover 重建上下文。</p></li>
-<li><p>memory 编码、写入、检索和摘要另有 CPU、队列和服务容量成本。</p></li>
-<li><p>同时 rollover 会带来摘要与重新 prefill 的瞬时负载，应预留余量。</p></li>
-</ul>
-<p>扩容时需一起调整后端 <code class="docutils literal notranslate"><span class="pre">--max-running-requests</span></code> 和 Demo 对应实例的 slot
-配置，并在实际视频尺寸、问答频率和 memory 配置下复测。90 秒纯 VLM
-结果不代表多小时、完整音视频链路或任意输入下的最大并发。</p>
-<p>Demo 与后端独立部署，版本和进程生命周期分别管理。每路实际 KV、
-共享权重、80GB 级别显存预算和连接池观测字段见
-<a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/vlm_memory_capacity.md">VLM 显存与并发配置</a>。
-协议与验证入口见 <a class="reference internal" href="moss_vl_realtime.html#validation"><span class="std std-ref">Realtime Cookbook</span></a>。</p>
+<h2>扩容<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
+<p>先在目标输入规格下运行<span class="xref myst">实时多路测试</span>，
+观察每路 TPS、首段可见文本 TTFT、待处理事件和显存峰值，再决定增加单实例会话数、
+使用 TP，或部署多个独立实例。</p>
+<p>多实例应使用不同 GPU 和端口，Demo 中为每个实例填写正确的 URL 与 slot 数。
+协议和高级启动参数见 <a class="reference internal" href="moss_vl_realtime.html"><span class="std std-doc">Realtime Cookbook</span></a>。</p>
 </section>
 </section>
 
@@ -637,10 +593,10 @@ rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">部署配置</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">测量条件</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">容量参考</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">资源规划</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">推荐起点</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">显存组成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">长会话</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">扩容</a></li>
 </ul>
   </nav></div>
 
