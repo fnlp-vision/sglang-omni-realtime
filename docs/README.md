@@ -1,32 +1,38 @@
-# SGLang-Omni Documentation
+# Documentation
 
-Most docs live under `docs/` as Markdown cookbooks and guides. Start there if you are new to the codebase.
+**English** | [简体中文](./README_zh.md)
 
-## Docs Workflow
+## MOSS-VL Realtime
 
-### Install Dependency
+| Guide | Contents |
+| --- | --- |
+| [Installation](./get_started/installation.md) | Independent environment, pinned dependencies, model download, and startup checks |
+| [Launch and tests](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README.md) | Three public tests, commands, reference tables, and charts |
+| [Realtime protocol](./cookbook/moss_vl_realtime.md) | WebSocket events, backpressure, TP, and advanced settings |
+| [Capacity planning](./cookbook/moss_vl_realtime_capacity.md) | Session capacity, memory, visual windows, and long conversations |
+| [Architecture](./developer_reference/main.md) | Pipeline, scheduling, and communication |
+| [Examples](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/examples/README.md) | Model launchers and clients |
+
+For the browser application, ASR/TTS, and memory, see the [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo).
+
+## Build Locally
+
+Use a separate documentation environment. From the repository root:
 
 ```bash
-apt-get update && apt-get install -y pandoc parallel retry
-pip install -r requirements.txt
+uv venv .venv-docs --python 3.12
+uv pip install --python .venv-docs/bin/python -r docs/requirements.txt
+.venv-docs/bin/sphinx-build -b html docs docs/_build/html
 ```
 
-### Update Documentation
-
-Edit the Markdown (or RST) under `docs/`. New pages must be listed in `index.rst` (or the relevant toctree).
-
-- Run `pre-commit run --all-files` before opening a PR. Re-run once if the first pass auto-fixes files.
-- Preview locally:
+Live preview:
 
 ```bash
-bash serve.sh
-
-# custom port
-PORT=8080 make serve
+PATH="$PWD/.venv-docs/bin:$PATH" make -C docs serve PORT=8080
 ```
 
-## Style
+Notebook execution is disabled in the normal documentation build. Install system Pandoc only when building notebook content that requires it.
 
-- Prefer **Markdown** for cookbooks and usage guides. Use notebooks only when the example must be executed in docs CI.
-- Prefer relative links (`../get_started/installation.md`), not absolute docs URLs.
-- Match existing launch / request examples in neighboring cookbooks.
+## Contributing
+
+Prefer Markdown and relative links. Register new site pages in [index.rst](./index.rst). README pairs use `README.md` (English) and `README_zh.md` (Chinese), with reciprocal links. Keep commands, defaults, and numerical results identical between languages. Run the relevant regression tests and documentation checks before submitting changes.

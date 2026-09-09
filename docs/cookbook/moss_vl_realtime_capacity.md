@@ -1,63 +1,47 @@
-# MOSS-VL Realtime 并发容量规划
+# MOSS-VL Realtime 容量规划
 
-## 部署配置
+## 推荐起点
 
-包含 Demo memory 的长时视频服务，参考配置为每实例 4 个会话。
-后端设置 `--max-running-requests 4`，Demo 设置
-`SGLANG_OMNI_SESSIONS_PER_REPLICA=4`，两端 context 均为 131,072。
-每路输入 1 FPS、最长边 512，视觉 raw window 为 60 秒，pooling 关闭，
-并启用 memory rollover。更高并发应同时评估 GPU、CPU 和 memory 队列容量。
+使用 `deployment/moss_vl_realtime/start.sh` 启动单卡实例时，默认 4 个会话、
+128K context、`mem_fraction_static=0.5`，开启 60 秒原始视觉 KV 滑窗，关闭 pooling。
+参数由 [config.json](../../deployment/moss_vl_realtime/config.json) 管理。
 
-## 测量条件
+| 后端参数 | Demo 对应配置 |
+| --- | --- |
+| `max_sessions=4` | `SGLANG_OMNI_SESSIONS_PER_REPLICA=4` |
+| `context_length=131072` | `SGLANG_OMNI_CONTEXT_LENGTH=131072` |
+| 服务基础 URL | `SGLANG_OMNI_URLS` |
 
-2026-09-07 的隔离测试使用单张 H200（143,771 MiB），context 131,072，
-`--mem-fraction-static 0.60`，CUDA Graph 开启，async decode 关闭。
-实测 KV 池为 336,874 slots。视觉 raw window 为 60 秒，pooling 关闭；
-每路输入 1 FPS，最长边 512，JPEG quality 60，生成速率目标 4 tokens/s。
+一键入口要求至少 65 GiB 空闲显存，且已有显存占用不超过 2048 MiB。这是启动筛选条件，
+不是任何输入长度下的并发保证。会话满额返回 `session_capacity_exceeded`。
 
-完整 Demo 开启文本和图像 memory，使用 CPU BGE-M3、Chinese-CLIP、
-96 个 Torch 线程、独立会话存储，以及 Pi 对接的独立 Qwen3-4B GPU 服务。
-rollover 阈值为 idle 8K / hard 12K；ASR、TTS 未开启。
-采样使用 Demo 默认 temperature 0.7、top_p 0.8；纯 VLM 测试使用 greedy。
+## 显存组成
 
-完整 memory 链路的四会话配置完成了 20 分钟测试；六会话与八会话的
-短测存在写入积压。实例扩容应以整条服务链路的持续处理能力为依据。
+模型权重由实例共享；每个会话有自己的文本/视觉 KV 映射和状态。
+显存还包含 CUDA Graph、临时计算缓冲和分配器保留空间。
 
-## 容量参考
+- 更高并发、更长文本、更高视频分辨率或帧率都会增加负载。
+- `mem_fraction_static` 用于规划 SGLang 静态内存，不是整卡显存的硬上限。
+- 调整 context 和并发时，应一起检查启动日志中的 KV pool 容量。
+- 启动时若一个完整 context 都无法容纳，服务会报错；运行中 KV 不足可能终止会话。
 
-| 链路 | 并发 | 时长 | 结果 |
-| --- | ---: | ---: | --- |
-| 完整 memory | 4 | 150 秒 | 600/600 帧转发成功，4 次同时触发的 rollover 完成，写入队列归零 |
-| 完整 memory | 4 | 20 分钟 | 4,795/4,800 帧转发成功，每路两次自然 rollover，写入丢弃 0、队列 0 |
-| 完整 memory | 6 | 180 秒 | 1,077/1,080 帧转发成功，6 次 rollover 完成，结束时写入队列积压 231 项 |
-| 完整 memory | 8 | 150 秒 | 1,187/1,200 帧转发成功，8 次 rollover 完成，结束时写入队列积压 366 项 |
-| 纯 VLM，512 最长边 | 8 / 12 / 16 / 24 / 28 | 每档 90 秒 | 所有输入帧处理完成 |
-| 纯 VLM，512 最长边 | 30 | 90 秒 | KV 容量保护终止 1 路，其余继续运行 |
-| 纯 VLM，512 最长边 | 32 | 90 秒 | KV 容量保护终止 2 路，其余继续运行 |
-| 纯 VLM，1024 x 576 | 4 / 8 | 每档 90 秒 | 360 / 720 帧全部处理完成 |
+显存峰值及 1/2/4/8/16 路性能参考见[测试结果](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README_zh.md#参考结果)。
+80 GB 级别是容量参考目标，测试结果以明确的硬件、输入和参数为条件。
 
-以上测试关闭会话后 KV 均完全回收。4 路长测的峰值为 71,443 slots；
-28 路纯 VLM 短测达到 316,032 slots（池的 93.8%），不能作为长期部署上限。
-1024 x 576 的 8 路短测达到 298,503 slots，分辨率同样需要计入容量预算。
-完整 memory 长测结束时，4 路都能回答各自预设的会话标记，未检测到其他
-会话的标记出现在输出或该会话的 memory 中。
+## 长会话
 
-这里的帧转发数是 Demo 输入侧统计；模型接收数还包含问题附带帧和
-rollover 恢复的最新帧。4 路长测模型共接收并处理 4,967 帧。
-输入帧转发率、模型处理率和关闭后的 KV 回收分别统计。
+视觉滑窗只回收较早帧的物理视觉 KV，不会清除历史 token 位置；文本 KV 也会持续增长。
+接近 context 上限时，客户端需要创建新会话。跨 context 保留交互记忆由 Demo 的 memory
+rollover 负责，不是本后端自动执行的功能。
 
-## 资源规划
+接入 Demo 时，还需为其编码、检索、摘要以及可选 ASR/TTS 单独规划资源。
+纯 VLM 的吞吐结果不能直接替代整条应用链路的容量评估。
 
-- 视觉滑窗回收老帧的物理视觉 KV，但不清除历史 context 位置。
-- 文本 decoder KV 仍会增长，需要通过 memory rollover 重建上下文。
-- memory 编码、写入、检索和摘要另有 CPU、队列和服务容量成本。
-- 同时 rollover 会带来摘要与重新 prefill 的瞬时负载，应预留余量。
+## 扩容
 
-扩容时需一起调整后端 `--max-running-requests` 和 Demo 对应实例的 slot
-配置，并在实际视频尺寸、问答频率和 memory 配置下复测。90 秒纯 VLM
-结果不代表多小时、完整音视频链路或任意输入下的最大并发。
+先在目标输入规格下运行[实时多路测试](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README.md)，
+观察每路 TPS、首段可见文本 TTFT、待处理事件和显存峰值，再决定增加单实例会话数、
+使用 TP，或部署多个独立实例。
 
-Demo 与后端独立部署，版本和进程生命周期分别管理。每路实际 KV、
-共享权重、80GB 级别显存预算和连接池观测字段见
-[VLM 显存与并发配置](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/vlm_memory_capacity.md)。
-协议与验证入口见 [Realtime Cookbook](./moss_vl_realtime.md#validation)。
+多实例应使用不同 GPU 和端口，Demo 中为每个实例填写正确的 URL 与 slot 数。
+协议和高级启动参数见 [Realtime Cookbook](./moss_vl_realtime.md)。

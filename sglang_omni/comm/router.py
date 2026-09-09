@@ -166,7 +166,7 @@ class CommRouter:
             )
         if target in self.remote_stage_names:
             return TransportKind.MOONCAKE
-        if data.device.type != current_platform.device_type:
+        if data.device.type == "cpu" or data.device.type != current_platform.device_type:
             return TransportKind.SHM
         if self.self_is_gpu and target in self.gpu_stage_names:
             return self._intra_node_transport(target)

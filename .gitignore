@@ -12,6 +12,7 @@ build/
 # Virtual environments
 venv/
 .venv/
+.venv-*/
 env/
 /omni
 
@@ -31,6 +32,9 @@ htmlcov/
 # Logs
 *.log
 *.txt
+!/deployment/moss_vl_realtime/constraints.txt
+!/deployment/repro/build-constraints.txt
+/.repro/
 output.wav
 
 # OS
