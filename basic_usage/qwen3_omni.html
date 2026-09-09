@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Omni Model Usage &#8212; SGLang</title>
+    <title>Omni Model Usage &#8212; MOSS-VL Realtime Backend</title>
   
   
   
@@ -190,8 +190,8 @@
       
     
     
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="SGLang - Home"/>
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="SGLang - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="MOSS-VL Realtime Backend - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="MOSS-VL Realtime Backend - Home"/>
   
   
 </a></div>
@@ -204,11 +204,20 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">MOSS-VL Realtime</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README_zh.html">文档</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation_zh.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime_capacity.html">MOSS-VL Realtime 容量规划</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/apiserver_quickstart.html">API Server Quickstart</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
 <ul class="nav bd-sidenav">
@@ -226,7 +235,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/fun_asr.html">Fun-ASR-Nano</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/arkasr.html">ARK-ASR-3B</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_transcribe_diarize.html">MOSS-Transcribe-Diarize</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/whisper_asr.html">Whisper ASR</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/qwen3_omni.html">Qwen3-Omni</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/ming_omni.html">Ming-Omni</a></li>
@@ -256,6 +264,12 @@
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/rl_admin_control.html">RL Admin Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/tts_model_integration.html">TTS Model Integration</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../design/gpu_radix_hash.html">Capture-safe GPU radix hash (MOSS-TTS Local generated rows)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/refactor_rfc.html">SGLang Omni Refactor Tracking</a></li>
 </ul>
 
     </div>
@@ -315,7 +329,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime" target="_blank"
    class="btn btn-sm btn-source-repository-button dropdown-item"
    title="Source repository"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -332,7 +346,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/blob/main/docs/basic_usage/qwen3_omni.md?plain=1" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/docs/basic_usage/qwen3_omni.md?plain=1" target="_blank"
    class="btn btn-sm btn-source-file-button dropdown-item"
    title="Show source"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -349,7 +363,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/edit/main/docs/basic_usage/qwen3_omni.md" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/edit/main/docs/basic_usage/qwen3_omni.md" target="_blank"
    class="btn btn-sm btn-source-edit-button dropdown-item"
    title="Suggest edit"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -366,7 +380,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/issues/new?title=Issue%20on%20page%20%2Fbasic_usage/qwen3_omni.html&body=Your%20issue%20content%20here." target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/issues/new?title=Issue%20on%20page%20%2Fbasic_usage/qwen3_omni.html&body=Your%20issue%20content%20here." target="_blank"
    class="btn btn-sm btn-source-issues-button dropdown-item"
    title="Open an issue"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -498,16 +512,16 @@
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#speech-mode">Speech Mode</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Launch the Server</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#launch-the-speech-server">Launch the Speech Server</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#speech-stage-placement">Speech Stage Placement</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#realtime-speech-with-server-vad">Realtime Speech with Server VAD</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#single-gpu-fp8-on-h100-h20">Single-GPU FP8 on H100/H20</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#single-gpu-autoround-int4-thinker-on-h100-h20">Single-GPU AutoRound INT4 Thinker on H100/H20</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Image and Text Input</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Audio and Image Input</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">Video and Audio Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-image-and-text-input">INT4 Image and Text Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-audio-and-image-input">INT4 Audio and Image Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-video-and-audio-input">INT4 Video and Audio Input</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#request-parameters">Request Parameters</a></li>
@@ -668,8 +682,8 @@ instructions in the text message.</p>
 <h2>Speech Mode<a class="headerlink" href="#speech-mode" title="Link to this heading">#</a></h2>
 <p>Speech mode runs the full eight-stage pipeline on one or more GPUs. It produces
 both text (from the thinker) and audio (from the talker) output.</p>
-<section id="id1">
-<h3>Launch the Server<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<section id="launch-the-speech-server">
+<h3>Launch the Speech Server<a class="headerlink" href="#launch-the-speech-server" title="Link to this heading">#</a></h3>
 <p>Speech mode can run as a colocated one-GPU worker using the colocated config:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sgl-omni<span class="w"> </span>serve<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--model-path<span class="w"> </span>Qwen/Qwen3-Omni-30B-A3B-Instruct<span class="w"> </span><span class="se">\</span>
@@ -941,8 +955,8 @@ with the AutoRound checkpoint:</p>
 <li><p><strong>~25% memory reduction</strong> compared to FP8 (from ~40GB to ~30GB)</p></li>
 <li><p><strong>Accuracy at ultra-low bit widths</strong>: maintains high accuracy even at 2–4 bits, requiring minimal tuning effort thanks to its sign-gradient descent optimization.</p></li>
 </ul>
-<section id="id2">
-<h3>Image and Text Input<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<section id="int4-image-and-text-input">
+<h3>INT4 Image and Text Input<a class="headerlink" href="#int4-image-and-text-input" title="Link to this heading">#</a></h3>
 <p>Send an image with a text question to get both text and audio responses. Set <code class="docutils literal notranslate"><span class="pre">&quot;modalities&quot;:</span> <span class="pre">[&quot;text&quot;,</span> <span class="pre">&quot;audio&quot;]</span></code> to enable audio output.</p>
 <p><strong>cURL</strong></p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8008/v1/chat/completions<span class="w"> </span><span class="se">\</span>
@@ -982,8 +996,8 @@ with the AutoRound checkpoint:</p>
 </pre></div>
 </div>
 </section>
-<section id="id3">
-<h3>Audio and Image Input<a class="headerlink" href="#id3" title="Link to this heading">#</a></h3>
+<section id="int4-audio-and-image-input">
+<h3>INT4 Audio and Image Input<a class="headerlink" href="#int4-audio-and-image-input" title="Link to this heading">#</a></h3>
 <p>Send an audio file with an image. The model hears the spoken question and sees the image, then responds with both text and audio.</p>
 <p><strong>cURL</strong></p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8008/v1/chat/completions<span class="w"> </span><span class="se">\</span>
@@ -1025,8 +1039,8 @@ with the AutoRound checkpoint:</p>
 </pre></div>
 </div>
 </section>
-<section id="id4">
-<h3>Video and Audio Input<a class="headerlink" href="#id4" title="Link to this heading">#</a></h3>
+<section id="int4-video-and-audio-input">
+<h3>INT4 Video and Audio Input<a class="headerlink" href="#int4-video-and-audio-input" title="Link to this heading">#</a></h3>
 <p>Send a video with a spoken audio question. The model watches the video, hears the question, and responds with both text and audio.</p>
 <p><strong>cURL</strong></p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8008/v1/chat/completions<span class="w"> </span><span class="se">\</span>
@@ -1223,16 +1237,16 @@ with the AutoRound checkpoint:</p>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#speech-mode">Speech Mode</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Launch the Server</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#launch-the-speech-server">Launch the Speech Server</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#speech-stage-placement">Speech Stage Placement</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#realtime-speech-with-server-vad">Realtime Speech with Server VAD</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#single-gpu-fp8-on-h100-h20">Single-GPU FP8 on H100/H20</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#single-gpu-autoround-int4-thinker-on-h100-h20">Single-GPU AutoRound INT4 Thinker on H100/H20</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Image and Text Input</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Audio and Image Input</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">Video and Audio Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-image-and-text-input">INT4 Image and Text Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-audio-and-image-input">INT4 Audio and Image Input</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#int4-video-and-audio-input">INT4 Video and Audio Input</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#request-parameters">Request Parameters</a></li>

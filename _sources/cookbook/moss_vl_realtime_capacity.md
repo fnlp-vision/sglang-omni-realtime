@@ -25,7 +25,7 @@
 - 调整 context 和并发时，应一起检查启动日志中的 KV pool 容量。
 - 启动时若一个完整 context 都无法容纳，服务会报错；运行中 KV 不足可能终止会话。
 
-显存峰值及 1/2/4/8/16 路性能参考见[测试结果](../../deployment/moss_vl_realtime/README.md#参考结果)。
+显存峰值及 1/2/4/8/16 路性能参考见[测试结果](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README_zh.md#参考结果)。
 80 GB 级别是容量参考目标，测试结果以明确的硬件、输入和参数为条件。
 
 ## 长会话
@@ -39,7 +39,7 @@ rollover 负责，不是本后端自动执行的功能。
 
 ## 扩容
 
-先在目标输入规格下运行[实时多路测试](../../deployment/moss_vl_realtime/README.md)，
+先在目标输入规格下运行[实时多路测试](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README.md)，
 观察每路 TPS、首段可见文本 TTFT、待处理事件和显存峰值，再决定增加单实例会话数、
 使用 TP，或部署多个独立实例。
 

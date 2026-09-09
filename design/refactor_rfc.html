@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>SGLang Omni Refactor Tracking &#8212; SGLang</title>
+    <title>SGLang Omni Refactor Tracking &#8212; MOSS-VL Realtime Backend</title>
   
   
   
@@ -414,6 +414,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="icon" href="../_static/logo.ico"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Capture-safe GPU radix hash (MOSS-TTS Local generated rows)" href="gpu_radix_hash.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.1" />
@@ -516,8 +517,6 @@ window.runMermaid = runMermaid;</script>
       
       
       
-        
-      
       <dialog id="pst-primary-sidebar-modal"></dialog>
       <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
         
@@ -548,8 +547,8 @@ window.runMermaid = runMermaid;</script>
       
     
     
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="SGLang - Home"/>
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="SGLang - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="MOSS-VL Realtime Backend - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="MOSS-VL Realtime Backend - Home"/>
   
   
 </a></div>
@@ -562,11 +561,20 @@ window.runMermaid = runMermaid;</script>
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">MOSS-VL Realtime</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README_zh.html">文档</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation_zh.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime_capacity.html">MOSS-VL Realtime 容量规划</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/apiserver_quickstart.html">API Server Quickstart</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
 <ul class="nav bd-sidenav">
@@ -584,7 +592,6 @@ window.runMermaid = runMermaid;</script>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/fun_asr.html">Fun-ASR-Nano</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/arkasr.html">ARK-ASR-3B</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_transcribe_diarize.html">MOSS-Transcribe-Diarize</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/whisper_asr.html">Whisper ASR</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/qwen3_omni.html">Qwen3-Omni</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../cookbook/ming_omni.html">Ming-Omni</a></li>
@@ -614,6 +621,12 @@ window.runMermaid = runMermaid;</script>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/rl_admin_control.html">RL Admin Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/tts_model_integration.html">TTS Model Integration</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="gpu_radix_hash.html">Capture-safe GPU radix hash (MOSS-TTS Local generated rows)</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">SGLang Omni Refactor Tracking</a></li>
 </ul>
 
     </div>
@@ -673,7 +686,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime" target="_blank"
    class="btn btn-sm btn-source-repository-button dropdown-item"
    title="Source repository"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -690,7 +703,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/blob/main/docs/design/refactor_rfc.md?plain=1" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/docs/design/refactor_rfc.md?plain=1" target="_blank"
    class="btn btn-sm btn-source-file-button dropdown-item"
    title="Show source"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -707,7 +720,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/edit/main/docs/design/refactor_rfc.md" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/edit/main/docs/design/refactor_rfc.md" target="_blank"
    class="btn btn-sm btn-source-edit-button dropdown-item"
    title="Suggest edit"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -724,7 +737,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/issues/new?title=Issue%20on%20page%20%2Fdesign/refactor_rfc.html&body=Your%20issue%20content%20here." target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/issues/new?title=Issue%20on%20page%20%2Fdesign/refactor_rfc.html&body=Your%20issue%20content%20here." target="_blank"
    class="btn btn-sm btn-source-issues-button dropdown-item"
    title="Open an issue"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -879,7 +892,7 @@ window.runMermaid = runMermaid;</script>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#message-types">Message Types</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#model-runner-callbacks">Model Runner + Callbacks</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#model-runner-and-callbacks">Model Runner and Callbacks</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#modelrunner-base"><code class="docutils literal notranslate"><span class="pre">ModelRunner</span></code> (Base)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#thinkermodelrunner"><code class="docutils literal notranslate"><span class="pre">ThinkerModelRunner</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#feedbackarmodelrunner"><code class="docutils literal notranslate"><span class="pre">FeedbackARModelRunner</span></code></a><ul class="nav section-nav flex-column">
@@ -928,13 +941,13 @@ window.runMermaid = runMermaid;</script>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#design-decision-history">Design Decision History</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-294-alternative-pipeline-added-rfc">2026-04-15 — PR #294: Alternative pipeline added [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-334-v1-pipeline-added-rfc">2026-04-23 — PR #334: V1 pipeline added [RFC]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-385-openai-realtime-websocket-endpoint-v1-feature">2026-05-04 — PR #385: OpenAI Realtime WebSocket endpoint [V1, Feature]</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature">PR 385 2026-05-04 OpenAI Realtime WebSocket endpoint V1 Feature</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-397-v1-unit-test-rewrite-top-down-rfc">2026-05-05 — PR #397: V1 unit test rewrite top-down [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-401-sglang-omni-router-for-v1-router">2026-05-06 — PR #401: SGLang-Omni Router for V1 [Router]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-406-qwen3-omni-v1-real-text-and-audio-streaming-v1-feature">2026-05-07 — PR #406: Qwen3-Omni V1 real text and audio streaming [V1 Feature]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-407-unify-v1-launcher-on-multiprocess-runner-bugfix-rfc">2026-05-07 — PR #407: Unify V1 launcher on multiprocess runner [Bugfix, RFC]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-430-colocated-stage-execution-colocation">2026-05-12 — PR #430: Colocated Stage Execution [Colocation]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-447-unify-serving-on-multiprocess-runner-rfc">2026-05-15 — PR #447: Unify serving on multiprocess runner [RFC]</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-430-2026-05-12-colocated-stage-execution-colocation">PR 430 2026-05-12 Colocated Stage Execution Colocation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc">PR 447 2026-05-15 Unify serving on multiprocess runner RFC</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-461-stage-gpu-process-topology-rfc">2026-05-17 — PR #461: Stage-GPU-process topology [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-496-topology-aware-inter-stage-data-transport-optimization-perf-transport">2026-05-20 — PR #496: Topology-aware inter-stage data transport optimization [Perf/Transport]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-509-remove-tcp-control-plane-endpoints-rfc-feat">2026-05-21 — PR #509: Remove TCP control-plane endpoints [RFC, Feat]</a></li>
@@ -977,7 +990,6 @@ window.runMermaid = runMermaid;</script>
                   
   <section class="tex2jax_ignore mathjax_ignore" id="sglang-omni-refactor-tracking">
 <h1>SGLang Omni Refactor Tracking<a class="headerlink" href="#sglang-omni-refactor-tracking" title="Link to this heading">#</a></h1>
-<hr class="docutils" />
 <p>Follows from <a class="reference external" href="https://github.com/sgl-project/sglang/issues/16546">sglang#16546</a>. Addresses problems in <a class="reference external" href="https://github.com/sgl-project/sglang-omni/issues/188">#188</a>.</p>
 <section id="table-of-contents">
 <h2>Table of contents<a class="headerlink" href="#table-of-contents" title="Link to this heading">#</a></h2>
@@ -985,7 +997,7 @@ window.runMermaid = runMermaid;</script>
 <li><p><a class="reference internal" href="#architecture"><span class="std std-ref">Architecture</span></a></p></li>
 <li><p><a class="reference internal" href="#pipeline-layer"><span class="std std-ref">Pipeline Layer</span></a></p></li>
 <li><p><a class="reference internal" href="#scheduling-layer"><span class="std std-ref">Scheduling Layer</span></a></p></li>
-<li><p>Model Runner + Callbacks</p></li>
+<li><p><a class="reference internal" href="#model-runner-and-callbacks"><span class="std std-ref">Model Runner and Callbacks</span></a></p></li>
 <li><p><a class="reference internal" href="#model-directory-convention"><span class="std std-ref">Model Directory Convention</span></a></p></li>
 <li><p><a class="reference internal" href="#declarative-config"><span class="std std-ref">Declarative Config</span></a></p></li>
 <li><p><a class="reference internal" href="#multi-process-runner"><span class="std std-ref">Multi-Process Runner</span></a></p></li>
@@ -1178,7 +1190,7 @@ window.runMermaid = runMermaid;</script>
 </ul>
 </li>
 </ul>
-<p>HTTP covers the request/response endpoints; the WebSocket endpoint (<code class="docutils literal notranslate"><span class="pre">/v1/realtime</span></code>, see Design Decision History § PR #385) is full-duplex for streaming audio in and server events out. There is no application-level HTTPS/TLS layer: the server binds plain HTTP via uvicorn, and TLS is expected to terminate at a reverse proxy or load balancer in front of it.</p>
+<p>HTTP covers the request/response endpoints; the WebSocket endpoint (<code class="docutils literal notranslate"><span class="pre">/v1/realtime</span></code>, see <a class="reference internal" href="#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature"><span class="std std-ref">Design Decision History § PR #385</span></a>) is full-duplex for streaming audio in and server events out. There is no application-level HTTPS/TLS layer: the server binds plain HTTP via uvicorn, and TLS is expected to terminate at a reverse proxy or load balancer in front of it.</p>
 </section>
 <section id="client">
 <h3>Client<a class="headerlink" href="#client" title="Link to this heading">#</a></h3>
@@ -1348,8 +1360,8 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 </section>
 </section>
 <hr class="docutils" />
-<section id="model-runner-callbacks">
-<h2>Model Runner + Callbacks<a class="headerlink" href="#model-runner-callbacks" title="Link to this heading">#</a></h2>
+<section id="model-runner-and-callbacks">
+<h2>Model Runner and Callbacks<a class="headerlink" href="#model-runner-and-callbacks" title="Link to this heading">#</a></h2>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span>ForwardBatch → before_*() → custom_*_forward() or standard forward → post_*() → sample/output
                     ↑ hook             ↑ explicit custom path          ↑ hook
 </pre></div>
@@ -1594,7 +1606,7 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 <p>Realtime streaming-input support is a separate workstream owned by #385 and is intentionally outside the scope of this config example.<label for='sidenote-role-1' class='margin-toggle'><span id="id1">
 <sup>1</sup></span>
 
-</label><input type='checkbox' id='sidenote-role-1' name='sidenote-role-1' class='margin-toggle'><span class="sidenote"><sup>1</sup><strong>Realtime streaming-input semantics.</strong> The <code class="docutils literal notranslate"><span class="pre">/realtime</span></code> endpoint shipped in PR #385 (merged 2026-05-18) — WebSocket-backed streaming-in audio with SSE-style server events, aligned with OpenAI’s realtime interface. Detailed protocol — chunk framing, partial-result emission, cancellation semantics — is documented in #385’s session-state-machine implementation rather than mirrored here.</span></p>
+</label><input type='checkbox' id='sidenote-role-1' name='sidenote-role-1' class='margin-toggle'><span class="sidenote"><sup>1</sup><strong>Realtime streaming-input semantics.</strong> The <code class="docutils literal notranslate"><span class="pre">/realtime</span></code> endpoint shipped in PR <a class="reference internal" href="#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature"><span class="std std-ref">#385</span></a> (merged 2026-05-18) — WebSocket-backed streaming-in audio with SSE-style server events, aligned with OpenAI’s realtime interface. Detailed protocol — chunk framing, partial-result emission, cancellation semantics — is documented in #385’s session-state-machine implementation rather than mirrored here.</span></p>
 <p>Routing rule: exactly one of <code class="docutils literal notranslate"><span class="pre">next</span></code>, <code class="docutils literal notranslate"><span class="pre">route_fn</span></code>, or <code class="docutils literal notranslate"><span class="pre">terminal=True</span></code>. There is no “one thinker, multiple talkers” fan-out — talker decode requires the thinker’s hidden state as prefix, so driving two independent talkers from the same prefix carries no useful semantics. Derived from stages: <code class="docutils literal notranslate"><span class="pre">entry_stage</span></code> (first stage), <code class="docutils literal notranslate"><span class="pre">terminal_stages</span></code>, <code class="docutils literal notranslate"><span class="pre">gpu_placement</span></code>, relay device.</p>
 </section>
 <section id="stageconfig-reference">
@@ -1688,7 +1700,7 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 </section>
 <section id="stage-placement-same-gpu-co-location">
 <h4>Stage placement — same-GPU co-location<a class="headerlink" href="#stage-placement-same-gpu-co-location" title="Link to this heading">#</a></h4>
-<p>Stages may share GPUs. Earlier topologies hard-rejected same-GPU speech-stage placement, which left Talker on H200 at &lt;2% utilization long-term. Informed by Ratish’s vLLM-Omni investigation (vLLM co-locates thinker + talker on a single device via per-stage memory budgeting + NVML accounting), the placement model now treats “any stage on any GPU” as first-class, with budgeting that accounts for co-tenants rather than rejecting the topology. See Design Decision History § PR #430 for the typed runtime config + placement planner that shipped this.</p>
+<p>Stages may share GPUs. Earlier topologies hard-rejected same-GPU speech-stage placement, which left Talker on H200 at &lt;2% utilization long-term. Informed by Ratish’s vLLM-Omni investigation (vLLM co-locates thinker + talker on a single device via per-stage memory budgeting + NVML accounting), the placement model now treats “any stage on any GPU” as first-class, with budgeting that accounts for co-tenants rather than rejecting the topology. See <a class="reference internal" href="#pr-430-2026-05-12-colocated-stage-execution-colocation"><span class="std std-ref">Design Decision History § PR #430</span></a> for the typed runtime config + placement planner that shipped this.</p>
 <p>Memory-fraction semantics have also been pinned down: vLLM’s <code class="docutils literal notranslate"><span class="pre">gpu_memory_utilization</span></code> is a fraction of total VRAM, while SGLang’s <code class="docutils literal notranslate"><span class="pre">mem_fraction_static</span></code> is a fraction of remaining VRAM after weights load — more principled for single-stage LLM, but ambiguous for omni where stages load sequentially and “remaining” depends on load order. The placement model now uses one explicit semantics rather than inheriting the ambiguity.</p>
 <p>Whether <code class="docutils literal notranslate"><span class="pre">factory</span></code> and <code class="docutils literal notranslate"><span class="pre">factory_args</span></code> should collapse into a single field is tracked in <a class="reference external" href="https://github.com/sgl-project/sglang-omni/issues/538">#538 §2.2</a>.</p>
 </section>
@@ -1696,7 +1708,7 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 <section id="pipelineconfig-reference">
 <h3><code class="docutils literal notranslate"><span class="pre">PipelineConfig</span></code> reference<a class="headerlink" href="#pipelineconfig-reference" title="Link to this heading">#</a></h3>
 <p>Derived (computed from stages, not set manually): <code class="docutils literal notranslate"><span class="pre">terminal_stages</span></code>, <code class="docutils literal notranslate"><span class="pre">gpu_placement</span></code>.</p>
-<p>There is no compiler class. An earlier proposal threaded pipeline construction through a <code class="docutils literal notranslate"><span class="pre">compiler_pipeline()</span></code> entry point, but the multi-process path (<code class="docutils literal notranslate"><span class="pre">mp_runner._build_stage_groups</span></code>) re-implemented most of the same logic independently, with two near-duplicate <code class="docutils literal notranslate"><span class="pre">_resolve_factory_args</span></code> helpers. The compiler class was removed in #447 — pipeline construction now happens through a plain init function per model, which is sufficient given how few pipelines we maintain.</p>
+<p>There is no compiler class. An earlier proposal threaded pipeline construction through a <code class="docutils literal notranslate"><span class="pre">compiler_pipeline()</span></code> entry point, but the multi-process path (<code class="docutils literal notranslate"><span class="pre">mp_runner._build_stage_groups</span></code>) re-implemented most of the same logic independently, with two near-duplicate <code class="docutils literal notranslate"><span class="pre">_resolve_factory_args</span></code> helpers. The compiler class was removed in <a class="reference internal" href="#pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc"><span class="std std-ref">#447</span></a> — pipeline construction now happens through a plain init function per model, which is sufficient given how few pipelines we maintain.</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">Pipeline</span></code> vs <code class="docutils literal notranslate"><span class="pre">Stages</span></code> distinction in code still needs to be sharper: both names appear in different places without a crisp mental model. This should be pinned down before the field set grows further.</p>
 </section>
 </section>
@@ -1857,8 +1869,8 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 </ul>
 <p><strong>Why it matters:</strong> The discoverability anchor for the V0 → V1 cutover. Names individual owners per work item so contributors can pick up threads independently; several follow-up issues and PRs in this history root back to this trackboard.</p>
 </section>
-<section id="pr-385-openai-realtime-websocket-endpoint-v1-feature">
-<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/385">2026-05-04 — PR #385: OpenAI Realtime WebSocket endpoint [V1, Feature]</a><a class="headerlink" href="#pr-385-openai-realtime-websocket-endpoint-v1-feature" title="Link to this heading">#</a></h3>
+<section id="pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature">
+<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/385">PR 385 2026-05-04 OpenAI Realtime WebSocket endpoint V1 Feature</a><a class="headerlink" href="#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature" title="Link to this heading">#</a></h3>
 <p><em>State: MERGED 2026-05-18. Disabled by default; opt in with <code class="docutils literal notranslate"><span class="pre">--enable-realtime</span></code>.</em></p>
 <p>Mounts <code class="docutils literal notranslate"><span class="pre">/v1/realtime</span></code>, an OpenAI-Realtime-compatible WebSocket API on top of V1, enabling streaming audio in and streaming transcript deltas out for low-latency voice agents and live transcription / translation.</p>
 <ul class="simple">
@@ -1919,8 +1931,8 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 </ul>
 <p><strong>Why it matters:</strong> Captures the rationale that drove the launcher consolidation. The diagnosis and bugfix informed #447 and downstream cleanups even though no commits from this branch shipped — kept here to attribute both the design decision and the double-launch bugfix correctly.</p>
 </section>
-<section id="pr-430-colocated-stage-execution-colocation">
-<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/430">2026-05-12 — PR #430: Colocated Stage Execution [Colocation]</a><a class="headerlink" href="#pr-430-colocated-stage-execution-colocation" title="Link to this heading">#</a></h3>
+<section id="pr-430-2026-05-12-colocated-stage-execution-colocation">
+<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/430">PR 430 2026-05-12 Colocated Stage Execution Colocation</a><a class="headerlink" href="#pr-430-2026-05-12-colocated-stage-execution-colocation" title="Link to this heading">#</a></h3>
 <p><em>State: MERGED 2026-05-16. Follows colocation RFC + #329 / #376.</em></p>
 <p>Implements the colocated-stage execution path for Omni V1, making Qwen3-Omni speech runnable as a single colocated v1 server while preserving the V1 architecture boundary.</p>
 <ul class="simple">
@@ -1932,8 +1944,8 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 </ul>
 <p><strong>Why it matters:</strong> The biggest single deployment-shape win in the V1 refactor. Lets a thinker + talker speech model run as one process on one GPU rather than two separate stages, dramatically reducing the resource footprint for inference clusters that don’t need horizontal stage parallelism.</p>
 </section>
-<section id="pr-447-unify-serving-on-multiprocess-runner-rfc">
-<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/447">2026-05-15 — PR #447: Unify serving on multiprocess runner [RFC]</a><a class="headerlink" href="#pr-447-unify-serving-on-multiprocess-runner-rfc" title="Link to this heading">#</a></h3>
+<section id="pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc">
+<h3><a class="reference external" href="https://github.com/sgl-project/sglang-omni/pull/447">PR 447 2026-05-15 Unify serving on multiprocess runner RFC</a><a class="headerlink" href="#pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc" title="Link to this heading">#</a></h3>
 <p><em>State: CLOSED. Compiler delete + endpoint allocation move; ideas referenced inline above.</em></p>
 <p>Proposed unifying pipeline serving on <code class="docutils literal notranslate"><span class="pre">MultiProcessPipelineRunner</span></code> and removing the legacy direct compiler / runtime path that had grown ad-hoc helpers across the codebase.</p>
 <ul class="simple">
@@ -2264,6 +2276,15 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
                 <footer class="prev-next-footer d-print-none">
                   
 <div class="prev-next-area">
+    <a class="left-prev"
+       href="gpu_radix_hash.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Capture-safe GPU radix hash (MOSS-TTS Local generated rows)</p>
+      </div>
+    </a>
 </div>
                 </footer>
               
@@ -2314,7 +2335,7 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#message-types">Message Types</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#model-runner-callbacks">Model Runner + Callbacks</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#model-runner-and-callbacks">Model Runner and Callbacks</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#modelrunner-base"><code class="docutils literal notranslate"><span class="pre">ModelRunner</span></code> (Base)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#thinkermodelrunner"><code class="docutils literal notranslate"><span class="pre">ThinkerModelRunner</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#feedbackarmodelrunner"><code class="docutils literal notranslate"><span class="pre">FeedbackARModelRunner</span></code></a><ul class="nav section-nav flex-column">
@@ -2363,13 +2384,13 @@ Python object references for LOCAL_OBJECT payloads and stream chunks</p></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#design-decision-history">Design Decision History</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-294-alternative-pipeline-added-rfc">2026-04-15 — PR #294: Alternative pipeline added [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-334-v1-pipeline-added-rfc">2026-04-23 — PR #334: V1 pipeline added [RFC]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-385-openai-realtime-websocket-endpoint-v1-feature">2026-05-04 — PR #385: OpenAI Realtime WebSocket endpoint [V1, Feature]</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature">PR 385 2026-05-04 OpenAI Realtime WebSocket endpoint V1 Feature</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-397-v1-unit-test-rewrite-top-down-rfc">2026-05-05 — PR #397: V1 unit test rewrite top-down [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-401-sglang-omni-router-for-v1-router">2026-05-06 — PR #401: SGLang-Omni Router for V1 [Router]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-406-qwen3-omni-v1-real-text-and-audio-streaming-v1-feature">2026-05-07 — PR #406: Qwen3-Omni V1 real text and audio streaming [V1 Feature]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-407-unify-v1-launcher-on-multiprocess-runner-bugfix-rfc">2026-05-07 — PR #407: Unify V1 launcher on multiprocess runner [Bugfix, RFC]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-430-colocated-stage-execution-colocation">2026-05-12 — PR #430: Colocated Stage Execution [Colocation]</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-447-unify-serving-on-multiprocess-runner-rfc">2026-05-15 — PR #447: Unify serving on multiprocess runner [RFC]</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-430-2026-05-12-colocated-stage-execution-colocation">PR 430 2026-05-12 Colocated Stage Execution Colocation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc">PR 447 2026-05-15 Unify serving on multiprocess runner RFC</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-461-stage-gpu-process-topology-rfc">2026-05-17 — PR #461: Stage-GPU-process topology [RFC]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-496-topology-aware-inter-stage-data-transport-optimization-perf-transport">2026-05-20 — PR #496: Topology-aware inter-stage data transport optimization [Perf/Transport]</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-509-remove-tcp-control-plane-endpoints-rfc-feat">2026-05-21 — PR #509: Remove TCP control-plane endpoints [RFC, Feat]</a></li>

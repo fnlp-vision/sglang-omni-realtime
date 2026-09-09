@@ -18,12 +18,9 @@ Install this repository following the [installation guide](../get_started/instal
 Use the [MOSS-VL-Realtime-SGLANG checkpoint](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG),
 which includes Transformers 5.12.1-compatible configuration and processor code:
 
-```bash
-uv pip install -e . -c deployment/moss_vl_realtime/constraints.txt
-hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
-  --local-dir /path/to/MOSS-VL-Realtime-SGLANG
-export MODEL_PATH=/path/to/MOSS-VL-Realtime-SGLANG
-```
+The installation guide is the single source for the hashed dependency lock,
+model revision, and CUDA toolkit setup. Activate that environment and set
+`MODEL_PATH` before running the examples below.
 
 If checkpoint access returns 401/403, use an authorized Hugging Face account
 (`hf auth login`). Keep the full downloaded directory together and pass its

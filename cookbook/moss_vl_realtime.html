@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>MOSS-VL Realtime Video Understanding &#8212; SGLang</title>
+    <title>MOSS-VL Realtime Video Understanding &#8212; MOSS-VL Realtime Backend</title>
   
   
   
@@ -56,8 +56,8 @@
     <link rel="icon" href="../_static/logo.ico"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Whisper ASR" href="whisper_asr.html" />
-    <link rel="prev" title="MOSS-Transcribe-Diarize" href="moss_transcribe_diarize.html" />
+    <link rel="next" title="MOSS-VL Realtime 容量规划" href="moss_vl_realtime_capacity.html" />
+    <link rel="prev" title="安装指南" href="../get_started/installation_zh.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.1" />
@@ -190,8 +190,8 @@
       
     
     
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="SGLang - Home"/>
-    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="SGLang - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-light" alt="MOSS-VL Realtime Backend - Home"/>
+    <img src="../_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="MOSS-VL Realtime Backend - Home"/>
   
   
 </a></div>
@@ -204,14 +204,23 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">MOSS-VL Realtime</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README_zh.html">文档</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/installation_zh.html">安装指南</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">MOSS-VL Realtime Video Understanding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moss_vl_realtime_capacity.html">MOSS-VL Realtime 容量规划</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../get_started/installation.html">安装指南</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../get_started/release_notes.html">Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../get_started/apiserver_quickstart.html">API Server Quickstart</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
-<ul class="current nav bd-sidenav">
+<ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="higgs_tts.html">Higgs TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="voxtral_tts.html">Voxtral TTS</a></li>
 <li class="toctree-l1"><a class="reference internal" href="fishaudio_s2_pro.html">Fish Audio S2-Pro</a></li>
@@ -226,7 +235,6 @@
 <li class="toctree-l1"><a class="reference internal" href="fun_asr.html">Fun-ASR-Nano</a></li>
 <li class="toctree-l1"><a class="reference internal" href="arkasr.html">ARK-ASR-3B</a></li>
 <li class="toctree-l1"><a class="reference internal" href="moss_transcribe_diarize.html">MOSS-Transcribe-Diarize</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">MOSS-VL Realtime Video Understanding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="whisper_asr.html">Whisper ASR</a></li>
 <li class="toctree-l1"><a class="reference internal" href="qwen3_omni.html">Qwen3-Omni</a></li>
 <li class="toctree-l1"><a class="reference internal" href="ming_omni.html">Ming-Omni</a></li>
@@ -256,6 +264,12 @@
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../developer_reference/rl_admin_control.html">RL Admin Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../developer_reference/tts_model_integration.html">TTS Model Integration</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../design/gpu_radix_hash.html">Capture-safe GPU radix hash (MOSS-TTS Local generated rows)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/refactor_rfc.html">SGLang Omni Refactor Tracking</a></li>
 </ul>
 
     </div>
@@ -315,7 +329,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime" target="_blank"
    class="btn btn-sm btn-source-repository-button dropdown-item"
    title="Source repository"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -332,7 +346,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/blob/main/docs/cookbook/moss_vl_realtime.md?plain=1" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/docs/cookbook/moss_vl_realtime.md?plain=1" target="_blank"
    class="btn btn-sm btn-source-file-button dropdown-item"
    title="Show source"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -349,7 +363,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/edit/main/docs/cookbook/moss_vl_realtime.md" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/edit/main/docs/cookbook/moss_vl_realtime.md" target="_blank"
    class="btn btn-sm btn-source-edit-button dropdown-item"
    title="Suggest edit"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -366,7 +380,7 @@
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/issues/new?title=Issue%20on%20page%20%2Fcookbook/moss_vl_realtime.html&body=Your%20issue%20content%20here." target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/issues/new?title=Issue%20on%20page%20%2Fcookbook/moss_vl_realtime.html&body=Your%20issue%20content%20here." target="_blank"
    class="btn btn-sm btn-source-issues-button dropdown-item"
    title="Open an issue"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -530,12 +544,9 @@ The launch examples place all TP ranks on one host.</p>
 <p>Install this repository following the <a class="reference internal" href="../get_started/installation.html"><span class="std std-doc">installation guide</span></a>.
 Use the <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG">MOSS-VL-Realtime-SGLANG checkpoint</a>,
 which includes Transformers 5.12.1-compatible configuration and processor code:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w"> </span>-c<span class="w"> </span>deployment/moss_vl_realtime/constraints.txt
-hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--local-dir<span class="w"> </span>/path/to/MOSS-VL-Realtime-SGLANG
-<span class="nb">export</span><span class="w"> </span><span class="nv">MODEL_PATH</span><span class="o">=</span>/path/to/MOSS-VL-Realtime-SGLANG
-</pre></div>
-</div>
+<p>The installation guide is the single source for the hashed dependency lock,
+model revision, and CUDA toolkit setup. Activate that environment and set
+<code class="docutils literal notranslate"><span class="pre">MODEL_PATH</span></code> before running the examples below.</p>
 <p>If checkpoint access returns 401/403, use an authorized Hugging Face account
 (<code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>). Keep the full downloaded directory together and pass its
 local path with <code class="docutils literal notranslate"><span class="pre">--model-path</span></code>. The original
@@ -901,20 +912,20 @@ guarantee that the session has finished. See the
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="moss_transcribe_diarize.html"
+       href="../get_started/installation_zh.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">MOSS-Transcribe-Diarize</p>
+        <p class="prev-next-title">安装指南</p>
       </div>
     </a>
     <a class="right-next"
-       href="whisper_asr.html"
+       href="moss_vl_realtime_capacity.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Whisper ASR</p>
+        <p class="prev-next-title">MOSS-VL Realtime 容量规划</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

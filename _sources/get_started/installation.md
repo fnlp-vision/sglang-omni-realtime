@@ -1,17 +1,19 @@
-# 安装指南
+# Installation
 
-本页用于独立部署 MOSS-VL Realtime 推理后端。需要完整浏览器、语音和 memory 时，使用 [Demo 安装器](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/deployment/repro/README.md)，无需再执行本页安装步骤。
+**English** | [简体中文](./installation_zh.md)
 
-## 系统准备
+This guide installs the standalone MOSS-VL Realtime backend. For browser interaction, voice, and memory, use the [Demo installer](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/deployment/repro/README.md) instead of installing the backend twice.
 
-| 项目 | 要求 |
+## Prerequisites
+
+| Item | Requirement |
 | --- | --- |
-| 系统 / Python | Linux x86_64 / Python 3.12 |
-| GPU / 驱动 | NVIDIA GPU、CUDA 13 兼容驱动；常规安装要求 R580 或更新版本 |
-| 编译及媒体工具 | Git、C/C++ 编译器、CMake、FFmpeg |
-| 网络 | GitHub、PyPI、Hugging Face；首次 JIT 可能需要下载内核资源 |
+| OS / Python | Linux x86_64 / Python 3.12 |
+| GPU / driver | NVIDIA GPU and a CUDA 13-compatible driver; normally R580 or newer |
+| Build and media tools | Git, C/C++ compiler, CMake, FFmpeg |
+| Network | GitHub, PyPI, Hugging Face; first-time JIT may download kernel assets |
 
-驱动支持能力与 Toolkit 版本不同，见 [NVIDIA 兼容性说明](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)。系统依赖可由管理员安装：
+Driver compatibility is different from the installed Toolkit version; see [NVIDIA compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html). An administrator can install system dependencies:
 
 ```bash
 sudo apt-get update
@@ -19,11 +21,18 @@ sudo apt-get install -y git curl build-essential cmake pkg-config python3-venv \
   ffmpeg libsndfile1 libsox-dev libnuma-dev libibverbs1 librdmacm1 libucx-dev
 ```
 
-确认 Python 3.12 可用，并安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)。驱动由管理员准备，以下命令不会修改系统 CUDA。
+Prepare Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/). The following commands do not modify the system CUDA installation or driver.
 
-## 安装后端
+## Install the Backend
 
-从本仓库源码根目录执行；不要复用 Demo 或其他推理引擎的虚拟环境：
+Clone the repository if you do not already have a checkout:
+
+```bash
+git clone https://github.com/fnlp-vision/sglang-omni-realtime.git
+cd sglang-omni-realtime
+```
+
+From the repository root, create a dedicated environment:
 
 ```bash
 uv venv .venv --python 3.12
@@ -35,16 +44,16 @@ uv pip install --no-deps --no-build-isolation -e .
 uv pip check
 ```
 
-[requirements.lock](../../deployment/repro/requirements.lock) 固定全部依赖版本，与 Demo 推荐路径使用的后端依赖锁一致。`pyproject.toml` 定义开发依赖范围；`constraints.txt` 仅保留版本约束参考，不是另一套推荐安装方法。
+[requirements.lock](../../deployment/repro/requirements.lock) pins package versions and hashes and is shared with the Demo's backend installation path. `pyproject.toml` defines development dependency ranges; `constraints.txt` is a version reference, not a second recommended installation method.
 
-| 依赖 | 固定版本 |
+| Dependency | Pinned version |
 | --- | --- |
 | SGLang / Transformers | 0.5.16 / 5.12.1 |
 | Torch / FlashInfer | 2.11.0 / 0.6.14 |
-| CUDA 编译器、CRT、NVVM | 13.0.88 |
-| CUDA 运行库 | 13.0.96 |
+| CUDA compiler, CRT, NVVM | 13.0.88 |
+| CUDA runtime | 13.0.96 |
 
-## 下载模型
+## Download the Model
 
 ```bash
 export MODEL_PATH="$HOME/models/MOSS-VL-Realtime-SGLANG"
@@ -53,11 +62,11 @@ hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
   --local-dir "$MODEL_PATH"
 ```
 
-该模型仓库公开可访问。出现 401/403 时检查访问策略，并在确有需要时使用自己的 `hf auth login`；不要把 token 放进源码。模型目录应保留配置、自定义代码、tokenizer、processor 和全部权重分片。
+The model is public. For 401/403 errors, check access policy and use your own `hf auth login` when necessary. Never put tokens in source files. Retain configuration, custom Python code, tokenizer, processors, and all weight shards.
 
-## 配置工具链并启动
+## Configure CUDA and Start
 
-在启动终端中执行以下命令。重新打开终端后也需激活环境并设置工具链：
+Activate the environment and configure the toolkit in each new terminal:
 
 ```bash
 source .venv/bin/activate
@@ -68,26 +77,24 @@ python deployment/moss_vl_realtime/check_env.py "$MODEL_PATH"
 bash deployment/moss_vl_realtime/start.sh "$MODEL_PATH"
 ```
 
-工具链来自已安装的 NVIDIA wheel，目录适配仅在仓库 `.repro/cuda-toolkit` 下创建链接，补齐 JIT 所需的 `lib64` 和 `libcudart.so`；不依赖系统 `/usr/local/cuda` 的版本。
+The toolkit comes from the installed NVIDIA wheels. The helper creates an environment-specific link view under `.repro/cuda-toolkit/`, including `lib64` and `libcudart.so` for JIT. It does not depend on the system `/usr/local/cuda` version.
 
-自检不加载模型权重；无 GPU 时可加 `--no-gpu`，但不能据此认定 GPU 部署通过。首次启动需要编译与视觉预热，等待 `/health` 就绪后按[中文 README](../../README_zh.md#调用示例)运行实际请求。
+The check does not load weights. `--no-gpu` checks packages and files only. Startup compiles kernels and warms up vision; wait for `/health`, then run the [client example](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/README.md#client-example).
 
-## 版本与更新
+## Versions and Updates
 
-配套组件与依赖版本见 [Demo 兼容清单](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md)。
+Companion components and dependency versions are listed in the [Demo compatibility matrix](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md). Revalidate after changing code, models, or dependencies. Do not replace isolated custom model files. The Transformers 4.57 reference implementation is not the backend environment.
 
-升级代码、模型或依赖后，需要重新验证；不要只替换模型目录里的个别自定义文件。旧版 Transformers 4.57 参考实现不用于此后端环境。
+## Troubleshooting
 
-## 常见问题
-
-| 现象 | 处理 |
+| Symptom | Action |
 | --- | --- |
-| CUDA 不可用 | 检查驱动、GPU 可见性和 CUDA 版 Torch |
-| 编译器与头文件不匹配 | 使用完整依赖锁，重新设置上述 CUDA_HOME，不混用系统 Toolkit |
-| `cannot find -lcudart` | 检查工具链目录视图是否生成，以及启动终端的 CUDA_HOME |
-| 动态库或 FFmpeg 缺失 | 补齐系统依赖；不复制其他环境的库路径 |
-| KV 容量不足 | 降低 context 或并发，按硬件调整显存比例 |
-| GPU / 端口已占用 | 用 `--gpus` / `--port` 选择空闲资源，不停止其他部署 |
-| 下载超时 | 按所在网络配置代理，不把代理或凭据写入仓库 |
+| CUDA unavailable | Check the driver, visible GPUs, and CUDA-enabled Torch |
+| Compiler/header mismatch | Install the complete lock and configure CUDA_HOME; do not mix Toolkits |
+| `cannot find -lcudart` | Check the generated toolkit view and CUDA_HOME |
+| Missing libraries or FFmpeg | Install system dependencies; do not copy another environment's library paths |
+| Insufficient KV capacity | Lower context/concurrency and adjust the memory fraction |
+| GPU or port occupied | Select idle resources with `--gpus` / `--port`; do not stop other deployments |
+| Download timeout | Check direct connectivity first; configure a trusted package mirror if needed |
 
-Docker 入口见 [容器说明](../../deployment/repro/README.md)。容器构建和 GPU 运行尚未验收，原生路径通过不代表容器通过。
+Container instructions are separate in the [dependency guide](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/repro/README.md). Container build and GPU execution are not covered by native-environment validation.

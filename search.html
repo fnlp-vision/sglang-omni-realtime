@@ -6,7 +6,7 @@
 
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Search - SGLang</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Search - MOSS-VL Realtime Backend</title>
   
   
   
@@ -542,8 +542,8 @@ window.runMermaid = runMermaid;</script>
       
     
     
-    <img src="_static/sgl-omni-logo.svg" class="logo__image only-light" alt="SGLang - Home"/>
-    <img src="_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="SGLang - Home"/>
+    <img src="_static/sgl-omni-logo.svg" class="logo__image only-light" alt="MOSS-VL Realtime Backend - Home"/>
+    <img src="_static/sgl-omni-logo.svg" class="logo__image only-dark pst-js-only" alt="MOSS-VL Realtime Backend - Home"/>
   
   
 </a></div>
@@ -556,11 +556,20 @@ window.runMermaid = runMermaid;</script>
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">MOSS-VL Realtime</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="get_started/installation.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html">Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README_zh.html">文档</a></li>
+<li class="toctree-l1"><a class="reference internal" href="get_started/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="get_started/installation_zh.html">安装指南</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cookbook/moss_vl_realtime_capacity.html">MOSS-VL Realtime 容量规划</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="get_started/installation_xpu.html">🚀 Installation — Intel XPU</a></li>
 <li class="toctree-l1"><a class="reference internal" href="get_started/release_notes.html">Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="get_started/apiserver_quickstart.html">API Server Quickstart</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Cookbook</span></p>
 <ul class="nav bd-sidenav">
@@ -578,7 +587,6 @@ window.runMermaid = runMermaid;</script>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/fun_asr.html">Fun-ASR-Nano</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/arkasr.html">ARK-ASR-3B</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/moss_transcribe_diarize.html">MOSS-Transcribe-Diarize</a></li>
-<li class="toctree-l1"><a class="reference internal" href="cookbook/moss_vl_realtime.html">MOSS-VL Realtime Video Understanding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/whisper_asr.html">Whisper ASR</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/qwen3_omni.html">Qwen3-Omni</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cookbook/ming_omni.html">Ming-Omni</a></li>
@@ -608,6 +616,12 @@ window.runMermaid = runMermaid;</script>
 <li class="toctree-l1"><a class="reference internal" href="developer_reference/profiler.html">Request-level profiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="developer_reference/qwen3_asr_concurrency_profile.html">Qwen3-ASR High-Concurrency Benchmark and Bottleneck Profile</a></li>
 <li class="toctree-l1"><a class="reference internal" href="developer_reference/rl_admin_control.html">RL Admin Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_reference/tts_model_integration.html">TTS Model Integration</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Design</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="design/gpu_radix_hash.html">Capture-safe GPU radix hash (MOSS-TTS Local generated rows)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="design/refactor_rfc.html">SGLang Omni Refactor Tracking</a></li>
 </ul>
 
     </div>
@@ -667,7 +681,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni" target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime" target="_blank"
    class="btn btn-sm btn-source-repository-button dropdown-item"
    title="Source repository"
    data-bs-placement="left" data-bs-toggle="tooltip"
@@ -684,7 +698,7 @@ window.runMermaid = runMermaid;</script>
       
       
       
-      <li><a href="https://github.com/sgl-project/sglang-omni/issues/new?title=Issue%20on%20page%20%2Fsearch.html&body=Your%20issue%20content%20here." target="_blank"
+      <li><a href="https://github.com/fnlp-vision/sglang-omni-realtime/issues/new?title=Issue%20on%20page%20%2Fsearch.html&body=Your%20issue%20content%20here." target="_blank"
    class="btn btn-sm btn-source-issues-button dropdown-item"
    title="Open an issue"
    data-bs-placement="left" data-bs-toggle="tooltip"
