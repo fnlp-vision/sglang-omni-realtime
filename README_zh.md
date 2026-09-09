@@ -15,7 +15,7 @@
 
 ## 安装
 
-按[安装指南](./docs/get_started/installation_zh.md)创建 Python 3.12 环境并安装哈希依赖锁。需要完整应用时，直接使用 [Demo 安装器](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#readme)，不要重复安装后端。
+按[安装指南](./docs/get_started/installation_zh.md)创建 Python 3.12 环境并安装哈希依赖锁。需要完整应用时，直接使用 [Demo 安装器](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md)，不要重复安装后端。
 
 配套版本与验证范围见[兼容清单](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md)。参考设备为 H200，其他硬件需验证显存配置与 JIT。
 
@@ -88,7 +88,7 @@ SGLANG_OMNI_CONTEXT_LENGTH=131072
 MODEL_PATH=/absolute/path/to/MOSS-VL-Realtime-SGLANG
 ```
 
-URL、会话容量与 context 应和后端一致，模型路径须在 Demo 主机可读。Demo 使用独立环境与端口，详见其 [README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#readme)。
+URL、会话容量与 context 应和后端一致，模型路径须在 Demo 主机可读。Demo 使用独立环境与端口，详见其 [README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md)。
 
 视觉滑窗回收旧帧 KV，但历史位置和文本上下文仍会增长。跨 context 的长会话由 Demo memory rollover 管理，见[容量规划](./docs/cookbook/moss_vl_realtime_capacity.md)。
 
