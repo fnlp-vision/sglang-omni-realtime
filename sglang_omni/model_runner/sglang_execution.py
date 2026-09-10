@@ -60,7 +60,11 @@ class SGLangExecutionBridge:
         req_to_token_pool: Any,
         spec_algorithm: Any,
     ) -> None:
-        from sglang.srt.managers.overlap_utils import RelayPayload
+        try:
+            from sglang.srt.managers.overlap_utils import RelayPayload
+        except ImportError:
+            # 0.5.14: FutureMap.stash dispatches directly on the raw token tensor.
+            RelayPayload = None
 
         if not spec_algorithm.is_none():
             raise NotImplementedError(
@@ -109,10 +113,12 @@ class SGLangExecutionBridge:
         if next_token_ids.device != self.device:
             next_token_ids = next_token_ids.to(self.device, non_blocking=True)
         indices = batch.req_pool_indices
-        self.future_map.stash(
-            indices,
-            self._relay_payload_type(bonus_tokens=next_token_ids),
+        payload = (
+            next_token_ids
+            if self._relay_payload_type is None
+            else self._relay_payload_type(bonus_tokens=next_token_ids)
         )
+        self.future_map.stash(indices, payload)
         # No new_seq_lens publish: its only reader (resolve_seq_lens_cpu) is
         # spec_v2-gated and this bridge refuses speculative decoding. Upstream's
         # non-overlap non-spec run_batch likewise stashes without publishing.
