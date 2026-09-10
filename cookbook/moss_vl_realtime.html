@@ -61,7 +61,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.1" />
-    <meta name="docbuild:last-update" content="Sep 09, 2026"/>
+    <meta name="docbuild:last-update" content="Sep 10, 2026"/>
   
     
     <script src="../_static/searchtools.js"></script>
@@ -684,6 +684,12 @@ realtime API. Despite its historical name, this is a generation-rate cap in
 tokens per second, not a per-turn token-count limit. Its default <code class="docutils literal notranslate"><span class="pre">86400</span></code> is
 effectively unlimited. <code class="docutils literal notranslate"><span class="pre">max_new_tokens</span></code> is the decode allowance re-anchored
 after every input extend, rather than a lifetime session budget.</p>
+<p>That allowance is capped by the remaining session context. Reaching the
+generation limit ends the session with a length finish reason. Appends and
+decode allocations also check historical token positions and physical KV
+capacity, including pending/lookahead work, before writing the page table.
+An input that cannot fit is rejected through the existing session-error path;
+other sessions retain their own state and capacity.</p>
 <p>Rate limiting happens in the scheduler before model execution. The request
 keeps its KV allocation while ordinary decode waits, and the event loop
 continues accepting frames and prompt interrupts. Frame/prompt extend always
@@ -824,7 +830,8 @@ session pays its own prefill.</p>
 session context; oversubscribing sessions (<code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">*</span> <span class="pre">context_len</span> <span class="pre">&gt;</span> <span class="pre">pool</span></code>) logs a
 warning, because the runtime then relies on the degradation below.</p></li>
 <li><p><strong>Runtime degradation</strong>: when the KV pool cannot fit the next extend/decode,
-the scheduler aborts the currently heaviest session first (its client
+the scheduler aborts the currently heaviest live session first, including
+silence-parked sessions that retain KV (its client
 receives <code class="docutils literal notranslate"><span class="pre">error(response_failed)</span></code> and a closed connection) until the batch
 fits again. A session aborted this way must reconnect as a new session and
 re-push its stream from scratch.</p></li>
@@ -863,6 +870,8 @@ To configure it explicitly with the lower-level launcher, set:</p>
 <code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_POOLING_ENABLED=1</span></code> allows full groups of aged raw frames to
 become mean-pooled virtual frames. <code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_POOL_RATIO</span></code> controls group
 size, and <code class="docutils literal notranslate"><span class="pre">REALTIME_FRAME_POOL_WINDOW_S</span></code> controls virtual-frame retention.</p>
+<p>Raw/pool window durations and <code class="docutils literal notranslate"><span class="pre">--parked-request-timeout</span></code> must be finite,
+positive numbers. NaN and infinity are rejected at initialization.</p>
 <p>Window behavior:</p>
 <ul class="simple">
 <li><p><strong>Visual context:</strong> The raw-only window removes aged visual context. Pooling additionally averages
@@ -993,7 +1002,7 @@ By SGLang-Omni Team
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Sep 09, 2026.
+  Last updated on Sep 10, 2026.
   <br/>
 </p>
   </div>

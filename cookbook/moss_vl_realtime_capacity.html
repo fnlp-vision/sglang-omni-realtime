@@ -61,7 +61,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="0.1.1" />
-    <meta name="docbuild:last-update" content="Sep 09, 2026"/>
+    <meta name="docbuild:last-update" content="Sep 10, 2026"/>
   
     
     <script src="../_static/searchtools.js"></script>
@@ -565,6 +565,9 @@
 <p>视觉滑窗只回收较早帧的物理视觉 KV，不会清除历史 token 位置；文本 KV 也会持续增长。
 接近 context 上限时，客户端需要创建新会话。跨 context 保留交互记忆由 Demo 的 memory
 rollover 负责，不是本后端自动执行的功能。</p>
+<p>每次输入恢复的生成额度仍受剩余 context 限制，用尽时按长度结束会话。
+追加和 decode 分配前均检查历史 token 与物理 KV 边界，并计入 pending token
+及异步 lookahead；单个会话耗尽容量不会越界写入其他会话的页表。</p>
 <p>接入 Demo 时，还需为其编码、检索、摘要以及可选 ASR/TTS 单独规划资源。
 纯 VLM 的吞吐结果不能直接替代整条应用链路的容量评估。</p>
 </section>
@@ -662,7 +665,7 @@ By SGLang-Omni Team
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Sep 09, 2026.
+  Last updated on Sep 10, 2026.
   <br/>
 </p>
   </div>
