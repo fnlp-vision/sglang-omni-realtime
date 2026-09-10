@@ -13,10 +13,20 @@ from urllib.parse import unquote, urlparse
 import torch
 from sglang_omni.scheduling.messages import IncomingMessage
 from PIL import Image
-from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch
-from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats
-from sglang.srt.observability.metrics_collector import QueueCount
-from sglang.srt.utils import broadcast_pyobj
+
+import sglang_omni.compat as _compat
+
+_compat.apply_all()
+from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch  # noqa: E402
+try:
+    from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats  # noqa: E402
+except ImportError:
+    from sglang.srt.managers.scheduler.metrics_collector import PrefillStats  # noqa: E402
+try:
+    from sglang.srt.observability.metrics_collector import QueueCount  # noqa: E402
+except ImportError:
+    QueueCount = None
+from sglang.srt.utils import broadcast_pyobj  # noqa: E402
 
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     RUNTIME_STATE_ATTR,

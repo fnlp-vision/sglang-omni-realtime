@@ -28,16 +28,20 @@ import torch
 from sglang.srt.environ import envs
 from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
 from sglang.srt.managers.io_struct import AbortReq
-from sglang.srt.managers.schedule_batch import (
+
+import sglang_omni.compat as _compat
+
+_compat.apply_all()
+from sglang.srt.managers.schedule_batch import (  # noqa: E402
     FINISH_ABORT,
     NextBatchPlan,
     ScheduleBatch,
     retract_all,
 )
-from sglang.srt.managers.scheduler import Scheduler as _Upstream
-from sglang.srt.managers.scheduler import validate_input_length
-from sglang.srt.mem_cache.common import release_kv_cache
-from sglang.srt.utils import broadcast_pyobj
+from sglang.srt.managers.scheduler import Scheduler as _Upstream  # noqa: E402
+from sglang.srt.managers.scheduler import validate_input_length  # noqa: E402
+from sglang.srt.mem_cache.common import release_kv_cache  # noqa: E402
+from sglang.srt.utils import broadcast_pyobj  # noqa: E402
 
 from sglang_omni.profiler.event_recorder import emit as _emit_event
 from sglang_omni.profiler.event_recorder import (
@@ -572,9 +576,19 @@ class OmniScheduler:
         # unconditionally, so it must be a real manager, not None. Upstream
         # takes it from the model runner; no Omni model uses ngram embedding
         # (see use_ngram_embedding above), so a disabled passthrough is correct.
-        from sglang.srt.model_executor.model_runner_components.ngram_embedding_manager import (  # noqa: E501
-            NgramEmbeddingManager,
-        )
+        try:
+            from sglang.srt.model_executor.model_runner_components.ngram_embedding_manager import (  # noqa: E501
+                NgramEmbeddingManager,
+            )
+        except ImportError:
+            # 0.5.14 has no ngram embedding manager; a disabled passthrough
+            # with the same call surface is sufficient.
+            class NgramEmbeddingManager:
+                def __init__(self, *, enabled=False, table=None, n=0, k=0):
+                    self.enabled = False
+
+                def prepare_for_forward(self, *args, **kwargs):
+                    return None
 
         self.ngram_embedding_manager = NgramEmbeddingManager(
             enabled=False, table=None, n=0, k=0
