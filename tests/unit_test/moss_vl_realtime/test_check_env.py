@@ -38,6 +38,36 @@ def test_complete_model_does_not_need_processor_config(tmp_path):
     assert "1 weight file(s)" in check.check_model(model(tmp_path))
 
 
+def test_model_accepts_cached_weight_symlink(tmp_path):
+    snapshot = tmp_path / "models--test--model" / "snapshots" / "revision"
+    snapshot.mkdir(parents=True)
+    model(snapshot)
+    blob = snapshot.parent.parent / "blobs" / "weight-hash"
+    blob.parent.mkdir()
+    shard = snapshot / "model-00001.safetensors"
+    shard.rename(blob)
+    shard.symlink_to("../../blobs/weight-hash")
+    assert "1 weight file(s)" in check.check_model(snapshot)
+
+
+@pytest.mark.parametrize("name", ["/tmp/outside.safetensors", "../outside.safetensors"])
+def test_weight_index_rejects_nonlocal_names(tmp_path, name):
+    directory = model(tmp_path)
+    (directory / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": name}}))
+    with pytest.raises(ValueError, match="invalid weight shard"):
+        check.check_model(directory)
+
+
+def test_broken_weight_symlink_is_rejected(tmp_path):
+    directory = model(tmp_path)
+    shard = directory / "model-00001.safetensors"
+    shard.unlink()
+    shard.symlink_to("../missing-weight")
+    with pytest.raises(ValueError, match="invalid weight shard"):
+        check.check_model(directory)
+
+
 @pytest.mark.parametrize("name", ["tokenizer.json", "configuration_moss_vl.py", "model-00001.safetensors"])
 def test_incomplete_model_is_rejected(tmp_path, name):
     directory = model(tmp_path)

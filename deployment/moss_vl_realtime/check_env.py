@@ -51,8 +51,12 @@ def check_model(directory):
     if not shards:
         raise ValueError("Empty model weight index")
     for name in shards:
-        path = (directory / name).resolve()
-        if directory not in path.parents or not path.is_file() or path.stat().st_size == 0:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Missing or invalid weight shard: {name}")
+        # Hub snapshots link shard names to blobs outside the snapshot directory.
+        path = directory / relative
+        if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Missing or invalid weight shard: {name}")
     return f"{directory} ({len(shards)} weight file(s); weights not loaded)"
 

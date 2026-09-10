@@ -235,12 +235,22 @@ class Child:
 
     def _wait_owned_processes(self, timeout, *, kill=False):
         deadline = time.monotonic() + timeout
+        signalled_orphans = set()
         while True:
             alive = self._live_owned_processes()
             if kill and alive:
                 # Catch a descendant forked between the initial snapshot and
                 # the first KILL, rather than leaving it behind on timeout.
                 self._signal_processes(alive, signal.SIGKILL)
+            elif alive and self.process.poll() is not None:
+                for process in alive:
+                    try:
+                        identity = (process.pid, process.create_time())
+                    except psutil.NoSuchProcess:
+                        continue
+                    if identity not in signalled_orphans:
+                        self._signal_processes([process], signal.SIGTERM)
+                        signalled_orphans.add(identity)
             remaining = deadline - time.monotonic()
             if not alive or remaining <= 0:
                 return alive
@@ -261,7 +271,10 @@ class Child:
         if self._stopped:
             return
         try:
-            self._signal_processes(self._live_owned_processes(), signal.SIGTERM)
+            alive = self._live_owned_processes()
+            leaders = [p for p in alive if p.pid == self.process.pid]
+            # Let the parent coordinate worker/IPC cleanup before escalation.
+            self._signal_processes(leaders or alive, signal.SIGTERM)
             alive = self._wait_owned_processes(timeout)
             if alive:
                 self._signal_processes(alive, signal.SIGKILL)

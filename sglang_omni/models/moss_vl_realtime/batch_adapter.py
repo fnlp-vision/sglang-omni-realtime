@@ -21,10 +21,43 @@ KV_TRANSACTION_ATTR = "_moss_vl_realtime_kv_transaction"
 _ALLOCATED_SLOTS_ATTR = "_moss_vl_realtime_allocated_slots"
 _ALLOCATION_RELEASED_ATTR = "_moss_vl_realtime_allocation_released"
 _ALLOCATION_COMMITTED_ATTR = "_moss_vl_realtime_allocation_committed"
+_DECODE_ALLOCATION_ATTR = "_moss_vl_realtime_decode_allocation"
+
+
+@dataclass(slots=True)
+class _DecodeAllocation:
+    reqs: tuple[Any, ...]
+    positions: tuple[int, ...]
+    committed_lengths: tuple[int, ...]
+    pool_indices: tuple[int, ...]
+    slots: torch.Tensor | None = None
+    committed: bool = False
+    released: bool = False
 
 
 class MossVLRealtimeScheduleBatch(ScheduleBatch):
     """ScheduleBatch with request-local incremental vision preparation."""
+
+    @classmethod
+    def from_batch(cls, batch: ScheduleBatch) -> MossVLRealtimeScheduleBatch:
+        if isinstance(batch, cls):
+            return batch
+        # Initial text prefill comes from the upstream planner. Preserve all
+        # its tensors and dynamic metadata when installing realtime hooks.
+        converted = cls(reqs=batch.reqs)
+        converted.__dict__.update(vars(batch))
+        return converted
+
+    def copy(self) -> ScheduleBatch:
+        snapshot = super().copy()
+        snapshot.token_to_kv_pool_allocator = self.token_to_kv_pool_allocator
+        record = getattr(self, _DECODE_ALLOCATION_ATTR, None)
+        if record is not None:
+            setattr(snapshot, _DECODE_ALLOCATION_ATTR, record)
+        for flag in (_ALLOCATION_COMMITTED_ATTR, _ALLOCATION_RELEASED_ATTR):
+            if getattr(self, flag, False):
+                setattr(snapshot, flag, True)
+        return snapshot
 
     def prepare_encoder_info_extend(
         self,
@@ -34,11 +67,96 @@ class MossVLRealtimeScheduleBatch(ScheduleBatch):
         prepare_moss_vl_realtime_encoder_info_extend(self, input_ids, seq_lens)
 
     def prepare_for_extend(self) -> None:
+        _begin_allocation(self)
         try:
             super().prepare_for_extend()
         except Exception:
             rollback_moss_vl_realtime_batch(self)
             raise
+
+    def prepare_for_decode(self) -> None:
+        for req in self.reqs:
+            error = realtime_decode_capacity_error(req, self.req_to_token_pool)
+            if error is not None:
+                raise RuntimeError(error)
+        record = _DecodeAllocation(
+            reqs=tuple(self.reqs),
+            positions=tuple(int(req.kv.kv_allocated_len) for req in self.reqs),
+            committed_lengths=tuple(int(req.kv_committed_len) for req in self.reqs),
+            pool_indices=tuple(int(req.req_pool_idx) for req in self.reqs),
+        )
+        _begin_allocation(self)
+        setattr(self, _DECODE_ALLOCATION_ATTR, record)
+        try:
+            super().prepare_for_decode()
+        except Exception:
+            record.slots = self.out_cache_loc
+            rollback_moss_vl_realtime_batch(self)
+            raise
+        record.slots = self.out_cache_loc
+
+
+def _begin_allocation(batch: Any) -> None:
+    batch.out_cache_loc = None
+    setattr(batch, _ALLOCATED_SLOTS_ATTR, None)
+    setattr(batch, _ALLOCATION_COMMITTED_ATTR, False)
+    setattr(batch, _ALLOCATION_RELEASED_ATTR, False)
+    if hasattr(batch, _DECODE_ALLOCATION_ATTR):
+        delattr(batch, _DECODE_ALLOCATION_ATTR)
+
+
+def realtime_decode_capacity_error(req: Any, pool: Any) -> str | None:
+    state = getattr(req, RUNTIME_STATE_ATTR, None)
+    table = getattr(pool, "req_to_token", None)
+    if not isinstance(state, MossVLRealtimeRuntimeState) or table is None:
+        return None
+    width = int(table.shape[1])
+    limit = state.context_limit or width
+    committed = state.encoder_length + state.decoder_length
+    allocated = max(committed, int(getattr(getattr(req, "kv", None), "kv_allocated_len", committed)))
+    # Allocated but unresolved lookahead tokens count too. The next forward
+    # consumes one pending token and samples one more logical position.
+    logical = state.effective_appended_encoder_length + allocated - state.encoder_length
+    if allocated + 1 > width or logical + 2 > limit:
+        return (
+            "realtime request exhausted the context length before decode: "
+            f"projected token positions {logical + 2}/{limit}, "
+            f"KV positions {allocated + 1}/{width}"
+        )
+    return None
+
+
+def commit_moss_vl_realtime_decode(batch: Any) -> None:
+    record = getattr(batch, _DECODE_ALLOCATION_ATTR, None)
+    if record is not None:
+        record.committed = True
+
+
+def _rollback_decode(batch: Any, record: _DecodeAllocation) -> None:
+    if record.committed or record.released:
+        return
+    if record.slots is None:
+        record.released = True
+        return
+    active = {id(req) for req in batch.reqs}
+    indices = []
+    for i, req in enumerate(record.reqs):
+        if id(req) not in active or req.req_pool_idx != record.pool_indices[i] or req.kv is None:
+            continue
+        state = getattr(req, RUNTIME_STATE_ATTR)
+        if state.encoder_length + state.decoder_length > record.positions[i]:
+            continue
+        if int(req.kv.kv_allocated_len) > record.positions[i] + 1:
+            raise RuntimeError("resolve newer decode allocations before rolling back this step")
+        indices.append(i)
+    if indices:
+        batch.token_to_kv_pool_allocator.free(record.slots[indices])
+        for i in indices:
+            req = record.reqs[i]
+            req.kv.kv_allocated_len = record.positions[i]
+            req.kv_committed_len = record.committed_lengths[i]
+            batch.req_to_token_pool.req_to_token[record.pool_indices[i], record.positions[i]] = 0
+    record.released = True
 
 
 @dataclass(slots=True)
@@ -84,6 +202,9 @@ def prepare_moss_vl_realtime_encoder_info_extend(
 
     setattr(batch, _ALLOCATED_SLOTS_ATTR, batch.out_cache_loc.clone())
     setattr(batch, _ALLOCATION_RELEASED_ATTR, False)
+    setattr(batch, _ALLOCATION_COMMITTED_ATTR, False)
+    if hasattr(batch, _DECODE_ALLOCATION_ATTR):
+        delattr(batch, _DECODE_ALLOCATION_ATTR)
     transactions: list[MossVLRealtimeKVAppendTransaction] = []
     try:
         plans = _build_plans(batch, input_ids, seq_lens)
@@ -148,6 +269,15 @@ def _reconcile_committed_kv_bookkeeping(batch: Any, req: Any) -> None:
 
 
 def rollback_moss_vl_realtime_batch(batch: Any) -> None:
+    record = getattr(batch, _DECODE_ALLOCATION_ATTR, None)
+    if record is not None:
+        _rollback_decode(batch, record)
+        return
+    if getattr(batch, _ALLOCATION_RELEASED_ATTR, False):
+        return
+    if getattr(batch, _ALLOCATION_COMMITTED_ATTR, False):
+        # A late error after commit belongs to request teardown, not rollback.
+        return
     has_active_transaction = False
     for req in reversed(batch.reqs):
         transaction = getattr(req, KV_TRANSACTION_ATTR, None)
@@ -159,13 +289,6 @@ def rollback_moss_vl_realtime_batch(batch: Any) -> None:
     _restore_request_kv_bookkeeping(batch)
     if has_active_transaction:
         _release_allocated_slots(batch)
-        return
-    if getattr(batch, _ALLOCATION_RELEASED_ATTR, False):
-        return
-    if getattr(batch, _ALLOCATION_COMMITTED_ATTR, False):
-        # The extend committed already: these slots are committed KV owned by
-        # the request now. Freeing them here would double-free them when the
-        # request later releases its cache. Nothing left to roll back.
         return
     # No transaction ever staged: a decode-step failure. Restore bookkeeping
     # (done above) and free this step's freshly allocated slots.

@@ -34,6 +34,10 @@
 接近 context 上限时，客户端需要创建新会话。跨 context 保留交互记忆由 Demo 的 memory
 rollover 负责，不是本后端自动执行的功能。
 
+每次输入恢复的生成额度仍受剩余 context 限制，用尽时按长度结束会话。
+追加和 decode 分配前均检查历史 token 与物理 KV 边界，并计入 pending token
+及异步 lookahead；单个会话耗尽容量不会越界写入其他会话的页表。
+
 接入 Demo 时，还需为其编码、检索、摘要以及可选 ASR/TTS 单独规划资源。
 纯 VLM 的吞吐结果不能直接替代整条应用链路的容量评估。
 

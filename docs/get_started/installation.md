@@ -64,6 +64,8 @@ hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
 
 The model is public. For 401/403 errors, check access policy and use your own `hf auth login` when necessary. Never put tokens in source files. Retain configuration, custom Python code, tokenizer, processors, and all weight shards.
 
+`MODEL_PATH` may also point to a complete Hugging Face cache snapshot. Weight symlinks must resolve to nonempty files; shard names in the weight index must be relative and must not contain `..`.
+
 ## Configure CUDA and Start
 
 Activate the environment and configure the toolkit in each new terminal:

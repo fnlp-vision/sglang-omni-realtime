@@ -46,9 +46,10 @@ class MossVLRealtimeRuntimeState:
     # Per-extend decode allowance: the constant gap kept between
     # len(req.output_ids) and sampling_params.max_new_tokens. Decode tokens
     # (silence or text) drain the gap; every extend re-anchors it, so a
-    # session is never length-killed for being long-lived. None means "not
-    # established yet" and is derived once from the first extend.
+    # input refreshes its local allowance; context_limit still bounds the
+    # whole session. None is derived once from the first extend.
     decode_allowance: int | None = None
+    context_limit: int | None = field(default=None, kw_only=True)
     next_decode_not_before: float = 0.0
     pending_token_id: int | None = None
     mrope_positions: torch.Tensor | None = field(default=None, repr=False)
@@ -84,6 +85,12 @@ class MossVLRealtimeRuntimeState:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
+        if self.context_limit is not None and (
+            isinstance(self.context_limit, bool)
+            or not isinstance(self.context_limit, int)
+            or self.context_limit <= 0
+        ):
+            raise ValueError("context_limit must be a positive integer or None")
         if self.decode_allowance is not None and (
             isinstance(self.decode_allowance, bool)
             or not isinstance(self.decode_allowance, int)

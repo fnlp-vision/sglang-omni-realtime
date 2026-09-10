@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from sglang.srt.utils import broadcast_pyobj
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     RUNTIME_STATE_ATTR,
     MossVLRealtimeScheduleBatch,
+    realtime_decode_capacity_error,
 )
 from sglang_omni.models.moss_vl_realtime.frame_store import resolve_shared_memory_frame
 from sglang_omni.models.moss_vl_realtime.frame_window import (
@@ -95,8 +97,8 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if not self.silence_token_ids:
             raise ValueError("silence_token_ids must not be empty")
         self.parked_request_timeout_s = float(parked_request_timeout_s)
-        if self.parked_request_timeout_s <= 0:
-            raise ValueError("parked_request_timeout_s must be positive")
+        if not math.isfinite(self.parked_request_timeout_s) or self.parked_request_timeout_s <= 0:
+            raise ValueError("parked_request_timeout_s must be finite and positive")
         self.parked_reqs: dict[str, Any] = {}
         self.parked_since: dict[str, float] = {}
         kwargs["request_update_handler"] = self._ingest_request_update
@@ -140,6 +142,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
         request_admission_lock_held: bool = False,
     ) -> None:
         state = _runtime_state(req_data)
+        context_limit = getattr(getattr(self, "server_args", None), "context_length", None)
+        if context_limit is not None:
+            state.context_limit = int(context_limit)
         self.realtime_sessions.open(state.request_id, state.session_id)
         try:
             super()._enqueue_built_request(
@@ -356,15 +361,21 @@ class MossVLRealtimeScheduler(OmniScheduler):
         ``_abort_retracted_realtime_requests``). When the KV pool cannot fit
         the next decode round, abort the heaviest session through the
         realtime-aware abort path instead: its rows are released immediately
-        and the client gets an explicit error. The last remaining request is
+        and the client gets an explicit error. Parked sessions retain KV and
+        participate in victim selection. The last remaining live request is
         left to upstream's graceful OOM abort.
         """
         batch = getattr(self, "running_batch", None)
         reqs = getattr(batch, "reqs", None)
         if not reqs:
             return
-        while len(reqs) > 1 and not batch.check_decode_mem():
-            victim = max(reqs, key=self._realtime_kv_cost)
+        while reqs and not batch.check_decode_mem():
+            live = {req.rid: req for req in reqs}
+            for req in getattr(self, "parked_reqs", {}).values():
+                live.setdefault(req.rid, req)
+            if len(live) <= 1:
+                break
+            victim = max(live.values(), key=self._realtime_kv_cost)
             victim_rid = self._tp_consistent_decision(victim.rid)
             logger.warning(
                 "KV pool cannot fit the next decode round; aborting realtime "
@@ -423,12 +434,38 @@ class MossVLRealtimeScheduler(OmniScheduler):
         self.running_batch = plan.running_batch
         if plan.batch_to_run is not None:
             return plan
+        if isinstance(self.running_batch, ScheduleBatch):
+            self.running_batch = MossVLRealtimeScheduleBatch.from_batch(self.running_batch)
+        self._guard_decode_capacity()
         if self._decode_rate_limited():
             # NextBatchPlan has no "idle with a nonempty running batch" flag;
             # stop here, before the upstream planner prepares decode KV.
             raise _RealtimeDecodeDeferred()
         self._preempt_decode_memory_pressure()
         return NextBatchPlan(batch_to_run=None, running_batch=self.running_batch)
+
+    def _guard_decode_capacity(self) -> None:
+        pool = getattr(self, "req_to_token_pool", None)
+        if getattr(pool, "req_to_token", None) is None:
+            return
+
+        def violations():
+            return {
+                req.rid: error
+                for req in tuple(getattr(self.running_batch, "reqs", ()))
+                if not req.finished()
+                and (error := realtime_decode_capacity_error(req, pool)) is not None
+            }
+
+        errors = self._tp_consistent_decision(violations())
+        if errors and self._async_pending is not None:
+            # Near the limit, resolve the outstanding step first: it may
+            # finish the request, and its KV must not be freed while in flight.
+            self._resolve_pending_async()
+            errors = self._tp_consistent_decision(violations())
+        for rid, message in errors.items():
+            self._emit_request_error(rid, RuntimeError(message))
+            self.abort(rid, defer_running_cleanup=False)
 
     def _materialize_realtime_extensions(self) -> ScheduleBatch | None:
         running_batch = self.running_batch
@@ -934,6 +971,7 @@ def _append_segment_to_request(
     req._moss_vl_realtime_previous_extend_range = req.extend_range
     req._moss_vl_realtime_previous_prefix_indices = req.prefix_indices
     req._moss_vl_realtime_previous_skip_radix_cache_insert = req.skip_radix_cache_insert
+    req._moss_vl_realtime_previous_max_new_tokens = req.sampling_params.max_new_tokens
     req.skip_radix_cache_insert = True
     req._moss_vl_realtime_staged_mrope_positions = (
         segment.multimodal_inputs.mrope_positions.clone()
@@ -963,8 +1001,13 @@ def _append_segment_to_request(
     # check kill any session whose cumulative decode count reaches the
     # initial allowance (~128 silences with the default client budget).
     # Re-anchor instead: the remaining allowance stays constant, i.e. the
-    # session may decode up to <allowance> fresh tokens after every extend.
-    req.sampling_params.max_new_tokens = len(req.output_ids) + allowance
+    # session may decode up to <allowance> fresh tokens after every extend,
+    # while the whole-session context remains a separate upper bound.
+    context_limit = state.context_limit or int(req._moss_vl_realtime_page_row.numel())
+    req.sampling_params.max_new_tokens = min(
+        len(req.output_ids) + allowance,
+        max(0, context_limit - len(req.origin_input_ids)),
+    )
     req.multimodal_inputs = segment.multimodal_inputs
     req._refresh_fill_ids()
     # Token-length prefix for the upstream extend invariants; its content is
@@ -1000,10 +1043,9 @@ def _decode_allowance(req: Any) -> int:
 def _undo_appended_segment(req: Any, segment: MossVLRealtimeSegment) -> None:
     count = len(segment.raw_append_ids)
     if count:
-        # Mirror of the re-anchored allowance in _append_segment_to_request.
-        allowance = _decode_allowance(req)
         del req.output_ids[-count:]
-        req.sampling_params.max_new_tokens = len(req.output_ids) + allowance
+    req.sampling_params.max_new_tokens = req._moss_vl_realtime_previous_max_new_tokens
+    del req._moss_vl_realtime_previous_max_new_tokens
     req.multimodal_inputs = req._moss_vl_realtime_previous_mm_inputs
     req.extend_range = req._moss_vl_realtime_previous_extend_range
     req.prefix_indices = req._moss_vl_realtime_previous_prefix_indices
@@ -1041,17 +1083,21 @@ def _guard_realtime_context_capacity(
     Checked before any request mutation, so the request stays coherent and is
     finished through the normal error path.
     """
-    context_length = int(req_to_token_pool.req_to_token.shape[1])
-    # The extend kernel writes token-space positions [token_total, +extend);
-    # the transaction layout needs KV-space [kv_total, +extend). Token space
-    # is the larger of the two once evicted frames drifted them apart.
+    row_width = int(req_to_token_pool.req_to_token.shape[1])
+    context_length = state.context_limit or row_width
+    # Historical token positions and retained physical KV have separate
+    # bounds once window eviction has compacted the page row.
     kv_total = state.encoder_length + state.decoder_length
     token_total = state.effective_appended_encoder_length + state.decoder_length
-    projected_total = max(kv_total, token_total) + len(segment.raw_append_ids)
-    if projected_total + 1 > context_length:
+    # The pending sampled token is part of this forward's input. Reserve
+    # another logical position for the token produced by that forward.
+    projected_kv = kv_total + len(segment.raw_append_ids) + 1
+    projected_total = token_total + len(segment.raw_append_ids) + 2
+    if projected_total > context_length or projected_kv > row_width:
         raise RuntimeError(
             "realtime request exhausted the context length: "
-            f"projected {projected_total + 1} > {context_length} tokens; "
+            f"projected token positions {projected_total}/{context_length}, "
+            f"KV positions {projected_kv}/{row_width}; "
             "the session cannot accept more input and must end"
         )
 

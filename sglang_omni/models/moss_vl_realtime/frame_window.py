@@ -55,6 +55,7 @@ Correctness anchors:
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -119,8 +120,8 @@ class RealtimeFrameWindowConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be a number")
-            if float(value) <= 0:
-                raise ValueError(f"{name} must be positive")
+            if not math.isfinite(value) or float(value) <= 0:
+                raise ValueError(f"{name} must be finite and positive")
         object.__setattr__(self, "raw_window_s", float(self.raw_window_s))
         object.__setattr__(self, "pool_window_s", float(self.pool_window_s))
         if isinstance(self.pool_ratio, bool) or not isinstance(self.pool_ratio, int):

@@ -141,6 +141,13 @@ tokens per second, not a per-turn token-count limit. Its default `86400` is
 effectively unlimited. `max_new_tokens` is the decode allowance re-anchored
 after every input extend, rather than a lifetime session budget.
 
+That allowance is capped by the remaining session context. Reaching the
+generation limit ends the session with a length finish reason. Appends and
+decode allocations also check historical token positions and physical KV
+capacity, including pending/lookahead work, before writing the page table.
+An input that cannot fit is rejected through the existing session-error path;
+other sessions retain their own state and capacity.
+
 Rate limiting happens in the scheduler before model execution. The request
 keeps its KV allocation while ordinary decode waits, and the event loop
 continues accepting frames and prompt interrupts. Frame/prompt extend always
@@ -278,7 +285,8 @@ Capacity ordering is:
   session context; oversubscribing sessions (`N * context_len > pool`) logs a
   warning, because the runtime then relies on the degradation below.
 - **Runtime degradation**: when the KV pool cannot fit the next extend/decode,
-  the scheduler aborts the currently heaviest session first (its client
+  the scheduler aborts the currently heaviest live session first, including
+  silence-parked sessions that retain KV (its client
   receives `error(response_failed)` and a closed connection) until the batch
   fits again. A session aborted this way must reconnect as a new session and
   re-push its stream from scratch.
@@ -322,6 +330,9 @@ Pooling is a separate experimental option, also disabled by default. Setting
 `REALTIME_FRAME_POOLING_ENABLED=1` allows full groups of aged raw frames to
 become mean-pooled virtual frames. `REALTIME_FRAME_POOL_RATIO` controls group
 size, and `REALTIME_FRAME_POOL_WINDOW_S` controls virtual-frame retention.
+
+Raw/pool window durations and `--parked-request-timeout` must be finite,
+positive numbers. NaN and infinity are rejected at initialization.
 
 Window behavior:
 

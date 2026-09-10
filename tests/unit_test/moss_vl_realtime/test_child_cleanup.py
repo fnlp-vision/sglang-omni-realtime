@@ -85,6 +85,63 @@ def test_stop_does_not_signal_unrelated_process(spawn, new_group):
         other.wait(timeout=2)
 
 
+def test_stop_allows_parent_to_coordinate_descendant_exit(spawn):
+    worker = (
+        "import signal,sys; "
+        "signal.signal(signal.SIGTERM, lambda *args: sys.exit(42)); "
+        "print('ready',flush=True); sys.stdin.readline()"
+    )
+    code = f"""
+import signal,subprocess,sys,time
+p = subprocess.Popen([sys.executable, '-u', '-c', {worker!r}],
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+p.stdout.readline()
+def shutdown(*args):
+    time.sleep(0.1)
+    p.stdin.write('stop\\n')
+    p.stdin.flush()
+    code = p.wait(timeout=2)
+    print('worker-exit:' + str(code), flush=True)
+    sys.exit(code)
+signal.signal(signal.SIGTERM, shutdown)
+print('parent-ready', flush=True)
+time.sleep(60)
+"""
+    child, log = spawn(code)
+    deadline = time.monotonic() + 5
+    while "parent-ready" not in log.read_text():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    child.stop(timeout=3, kill_timeout=2)
+    assert child.process.returncode == 0, log.read_text()
+    assert "worker-exit:0" in log.read_text()
+    assert not child._live_owned_processes()
+
+
+def test_stuck_parent_and_descendants_are_force_killed(spawn):
+    worker = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready',flush=True); time.sleep(60)"
+    )
+    code = (
+        "import signal,subprocess,sys,time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        f"p=subprocess.Popen([sys.executable,'-u','-c',{worker!r}],stdout=subprocess.PIPE,text=True); "
+        "p.stdout.readline(); print(p.pid,flush=True); time.sleep(60)"
+    )
+    child, log = spawn(code)
+    deadline = time.monotonic() + 5
+    while not log.read_text().strip():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    descendant = psutil.Process(int(log.read_text().strip()))
+    started = time.monotonic()
+    child.stop(timeout=0.05, kill_timeout=2)
+    assert time.monotonic() - started < 3
+    assert child.process.returncode == -signal.SIGKILL
+    assert not alive(descendant)
+
+
 def test_reused_group_leader_pid_is_not_signalled(monkeypatch):
     child = common.Child.__new__(common.Child)
     child.process = SimpleNamespace(pid=123, poll=lambda: 0)
@@ -102,7 +159,7 @@ def test_reused_group_leader_pid_is_not_signalled(monkeypatch):
 def test_failed_shutdown_keeps_retry_possible(monkeypatch):
     child = common.Child.__new__(common.Child)
     child._stopped = False
-    child.process = SimpleNamespace(wait=lambda timeout: None)
+    child.process = SimpleNamespace(pid=123, wait=lambda timeout: None)
     closed, signals = [], []
     child.log = SimpleNamespace(close=lambda: closed.append(True))
     process = SimpleNamespace(pid=123)

@@ -64,6 +64,8 @@ hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
 
 该模型仓库公开可访问。出现 401/403 时检查访问策略，并在确有需要时使用自己的 `hf auth login`；不要把 token 放进源码。模型目录应保留配置、自定义代码、tokenizer、processor 和全部权重分片。
 
+`MODEL_PATH` 也可以指向完整的 Hugging Face 缓存快照。权重软链接应指向存在且非空的文件；权重索引中的分片名须为相对路径，不能包含 `..`。
+
 ## 配置工具链并启动
 
 在启动终端中执行以下命令。重新打开终端后也需激活环境并设置工具链：

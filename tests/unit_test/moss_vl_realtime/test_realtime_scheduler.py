@@ -96,7 +96,8 @@ def test_append_segment_keeps_pending_token_before_frame_event() -> None:
     assert req.prefix_indices.tolist() == [11, 12]
     assert req.prefix_indices.dtype is torch.int64
     assert req.extend_range == Range(2, 7)
-    assert req.sampling_params.max_new_tokens == 14
+    # The allowance is re-anchored, but cannot exceed this 12-position context.
+    assert req.sampling_params.max_new_tokens == 10
     assert req.multimodal_inputs.name == "new-mm"
     assert req.skip_radix_cache_insert is True
     assert req._moss_vl_realtime_staged_visible_frame_counts.tolist() == [0, 1]
@@ -905,6 +906,59 @@ def test_preempt_decode_memory_pressure_keeps_last_request() -> None:
 
     scheduler._preempt_decode_memory_pressure()
     assert scheduler.running_batch.reqs == [only]
+
+
+@pytest.mark.parametrize("running_count", [1, 2])
+def test_decode_pressure_can_release_heavier_parked_session(running_count):
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    active = [_pressure_req(f"active-{i}", encoder_length=20) for i in range(running_count)]
+    parked = _pressure_req("parked-heavy", encoder_length=900)
+    scheduler.parked_reqs = {parked.rid: parked}
+    scheduler.running_batch = SimpleNamespace(
+        reqs=list(active),
+        check_decode_mem=lambda: not scheduler.parked_reqs,
+    )
+    aborted, errors = [], []
+
+    def abort(rid, *, defer_running_cleanup):
+        assert not defer_running_cleanup
+        aborted.append(rid)
+        scheduler.parked_reqs.pop(rid, None)
+        scheduler.running_batch.reqs = [r for r in scheduler.running_batch.reqs if r.rid != rid]
+
+    scheduler.abort = abort
+    scheduler._emit_request_error = lambda rid, error: errors.append(rid)
+    scheduler._preempt_decode_memory_pressure()
+    assert aborted == errors == [parked.rid]
+    assert scheduler.running_batch.reqs == active
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf")])
+def test_parked_timeout_must_be_finite(timeout):
+    with pytest.raises(ValueError, match="finite"):
+        MossVLRealtimeScheduler(
+            segment_builder=None, silence_token_ids=(77,), parked_request_timeout_s=timeout,
+        )
+
+
+def test_decode_pressure_deduplicates_a_request_in_running_and_parked():
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    only = _pressure_req("only", encoder_length=20)
+    scheduler.running_batch = SimpleNamespace(reqs=[only], check_decode_mem=lambda: False)
+    scheduler.parked_reqs = {only.rid: only}
+    scheduler.abort = lambda *a, **k: pytest.fail("the last live request must be kept")
+    scheduler._preempt_decode_memory_pressure()
+
+
+def test_decode_without_memory_pressure_keeps_parked_sessions():
+    scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
+    active = _pressure_req("active", encoder_length=20)
+    parked = _pressure_req("parked", encoder_length=900)
+    scheduler.running_batch = SimpleNamespace(reqs=[active], check_decode_mem=lambda: True)
+    scheduler.parked_reqs = {parked.rid: parked}
+    scheduler.abort = lambda *a, **k: pytest.fail("no memory pressure")
+    scheduler._preempt_decode_memory_pressure()
+    assert scheduler.parked_reqs == {parked.rid: parked}
 
 
 def test_abort_retracted_realtime_requests() -> None:
