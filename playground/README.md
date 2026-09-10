@@ -1,6 +1,8 @@
 # Playground
 
-Browser playgrounds for the three models served by SGLang-Omni.
+**English** | [简体中文](./README_zh.md)
+
+Browser playgrounds for Qwen3-Omni, S2 Pro, and Higgs Audio v3. For MOSS-VL realtime video, use the separate [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo). Install the corresponding model and UI dependencies first.
 
 | Subdirectory | Model | UI |
 |---|---|---|

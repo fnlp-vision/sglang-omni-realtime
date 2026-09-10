@@ -199,7 +199,7 @@ The table below lists the router command-line arguments.
 | `--router-state-dir` | `$SGLANG_OMNI_ROUTER_STATE_DIR`, else `$XDG_STATE_HOME/sglang-omni-router`, else `~/.local/state/sglang-omni-router` | Directory for [durable router state](#durable-router-state) (the weight-update journal), which must survive a host reboot. Mount it on a persistent volume in a container. |
 | `--log-level` | `info` | Router and Uvicorn log level. |
 | `--strict-limits` | off | Fail startup instead of warning when the `nofile` soft limit is too low for the resolved upstream pool size (`max(--max-connections, --max-inflight)`). |
-| `--router-processes` | `1` | Number of data-plane relay processes. `1` keeps the single-process router below; `N >= 2` enables the [multi-process router](#multi-process-router-controldata-plane-split) (x86-64 Linux only, and rejected at startup together with an explicit `--policy least_request`). |
+| `--router-processes` | `1` | Number of data-plane relay processes. `1` keeps the single-process router below; `N >= 2` enables the [multi-process router](#multi-process-router-control-and-data-plane) (x86-64 Linux only, and rejected at startup together with an explicit `--policy least_request`). |
 | `--shutdown-drain-secs` | `--request-timeout-secs` | Multi-process only: how long a stopping data-plane process waits for in-flight requests before cancelling them. The default matches the request timeout, so a routine shutdown never truncates a request its own timeout would have allowed. |
 
 Routing policies:
@@ -388,7 +388,7 @@ those request classes.
 The complete TTS route set described below is currently supported by the
 single-process router (`--router-processes 1`). Multi-process router data
 planes retain the route surface documented in
-[Multi-Process Router](#multi-process-router-controldata-plane-split).
+[Multi-Process Router](#multi-process-router-control-and-data-plane).
 
 Uploaded TTS voices are mutable worker-local state. The Router sends voice
 list, upload, and delete operations to `--voice-owner-worker-url`, and pins
@@ -579,7 +579,7 @@ What this directory does **not** manage:
 - Logs. The router writes to stdout/stderr; persist them with your container
   runtime, systemd, or log collector.
 
-## Multi-Process Router (Control/Data-Plane Split)
+## Multi-Process Router Control and Data Plane
 
 > x86-64 Linux only: the shared admission seqlock relies on x86-64 store
 > ordering, and any other machine is refused at startup. Enabled with

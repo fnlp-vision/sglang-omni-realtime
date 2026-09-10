@@ -1,5 +1,7 @@
 # Audar-TTS-V1 Turbo
 
+**English** | [简体中文](./README_zh.md)
+
 Install the optional GGUF and codec dependencies:
 
 ```bash
@@ -35,7 +37,7 @@ curl http://localhost:8000/v1/audio/speech \
 The Audar backend infers the output language from `input`; the optional API
 `language` field is accepted as metadata but is not consumed by this model.
 
-## Refactor validation
+## Upstream Validation
 
 PR [#1090](https://github.com/sgl-project/sglang-omni/pull/1090), stacked on
 [#1096](https://github.com/sgl-project/sglang-omni/pull/1096), reduced the

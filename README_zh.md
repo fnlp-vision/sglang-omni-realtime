@@ -1,0 +1,124 @@
+# SGLang-Omni Realtime for MOSS-VL
+
+[English](./README.md) | **简体中文**
+
+基于 [SGLang-Omni](https://github.com/sgl-project/sglang-omni) 开发的 MOSS-VL 实时视频理解后端，使用 [SGLang](https://github.com/sgl-project/sglang) 推理。客户端通过 WebSocket 持续发送视频帧与问题，接收文本、静默和输入处理事件。
+
+[安装指南](./docs/get_started/installation_zh.md) | [启动与测试](./deployment/moss_vl_realtime/README_zh.md) | [WebSocket 协议](./docs/cookbook/moss_vl_realtime.md) | [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo)
+
+- 增量视觉特征与 KV，支持 JPEG、PNG、WebP 帧。
+- 持续会话、新问题打断与静默后唤醒。
+- 动态多会话调度、单卡及 TP 多卡推理。
+- Decode CUDA Graph、视觉 KV 滑窗与有界输入队列。
+
+配套模型为 [OpenMOSS-Team/MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG)。浏览器交互、ASR/TTS、文本 memory 和 REST 网关由独立的 [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo) 提供。
+
+## 安装
+
+按[安装指南](./docs/get_started/installation_zh.md)创建 Python 3.12 环境并安装哈希依赖锁。需要完整应用时，直接使用 [Demo 安装器](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md)，不要重复安装后端。
+
+配套版本与验证范围见[兼容清单](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md)。参考设备为 H200，其他硬件需验证显存配置与 JIT。
+
+## 启动服务
+
+完成安装后，在仓库根目录执行：
+
+```bash
+source .venv/bin/activate
+export MODEL_PATH="$HOME/models/MOSS-VL-Realtime-SGLANG"
+export CUDA_HOME="$(python deployment/repro/cuda_toolkit.py)"
+export CUDA_PATH="$CUDA_HOME"
+export PATH="$CUDA_HOME/bin:$PATH"
+python deployment/moss_vl_realtime/check_env.py "$MODEL_PATH"
+bash deployment/moss_vl_realtime/start.sh "$MODEL_PATH"
+```
+
+启动器自动选择空闲 GPU，加载模型并预热视觉处理。用 `--gpus 0` 指定设备、`--port 18510` 更换端口、`--dry-run` 查看配置。
+
+| 默认配置 | 值 |
+| --- | --- |
+| 服务地址 | `http://127.0.0.1:18500` |
+| 会话容量 / context | 4 / 131072 |
+| 静态显存比例 | 0.5 |
+| 视觉 KV 窗口 | 开启，60 秒 |
+| Pooling / async decode | 关闭 |
+
+这些值来自 [config.json](./deployment/moss_vl_realtime/config.json)，适用于 `start.sh`。底层 Python launcher 和 Demo 托管部署有各自默认值。
+
+```bash
+curl --fail http://127.0.0.1:18500/health
+curl --fail http://127.0.0.1:18500/v1/models
+```
+
+服务模型 ID 为 `moss-vl-realtime`，实际 checkpoint 由模型路径决定。对外部署需配置鉴权、TLS 和访问控制。TP 与高级参数见 [Cookbook](./docs/cookbook/moss_vl_realtime.md#start-the-server)。
+
+## 调用示例
+
+以下使用仓库内置的两张视频帧：
+
+```bash
+python examples/moss_vl_realtime_client.py \
+  --url ws://127.0.0.1:18500/v1/video/realtime \
+  --prompt "Describe the visible scene." \
+  --frame deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122/frame_0000.png --timestamp 0.0 \
+  --frame deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122/frame_0001.png --timestamp 1.0
+```
+
+客户端按时间戳回放，并将最后一帧标为 `final`。持续摄像头输入使用 Demo 或自定义客户端：
+
+```text
+session.created -> session.configure -> session.configured / session.ready
+input.frame -> input.frame.ready -> binary frame -> input.frame.accepted
+input.frame.processed -> response.text.delta / response.turn.silence
+```
+
+帧与 `input.prompt` 共用递增的 `seq_no`。发送图像前等待 `input.frame.ready`。`session.abort` 结束整个会话，即使输入处理正在等待容量也可处理。有效配置的默认等待期限为 180 秒，不包含模型 prefill。
+
+`max_tokens_per_turn` 是每路 tokens/s 的软目标，不是回答长度；`max_new_tokens` 是每次输入后重新锚定的生成余量。字段、错误码和用量事件见[协议](./docs/cookbook/moss_vl_realtime.md#websocket-protocol)。
+
+## 配合 Demo
+
+在 Demo 的 `.env.deploy` 中配置：
+
+```dotenv
+VLM_DEPLOY=sglang_omni
+SGLANG_OMNI_URLS=http://127.0.0.1:18500
+SGLANG_OMNI_SESSIONS_PER_REPLICA=4
+SGLANG_OMNI_CONTEXT_LENGTH=131072
+MODEL_PATH=/absolute/path/to/MOSS-VL-Realtime-SGLANG
+```
+
+URL、会话容量与 context 应和后端一致，模型路径须在 Demo 主机可读。Demo 使用独立环境与端口，详见其 [README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md)。
+
+视觉滑窗回收旧帧 KV，但历史位置和文本上下文仍会增长。跨 context 的长会话由 Demo memory rollover 管理，见[容量规划](./docs/cookbook/moss_vl_realtime_capacity.md)。
+
+## 测试与开发
+
+三项公开测试验证精度对齐、单路性能和实时多路性能。命令、参考表格与折线图见[测试指南](./deployment/moss_vl_realtime/README_zh.md)。
+
+```bash
+bash deployment/moss_vl_realtime/test_accuracy.sh "$MODEL_PATH"
+bash deployment/moss_vl_realtime/test_latency.sh "$MODEL_PATH"
+bash deployment/moss_vl_realtime/test_concurrency.sh "$MODEL_PATH"
+```
+
+不加载权重的回归测试：
+
+```bash
+CUDA_VISIBLE_DEVICES="" python -m pytest -q \
+  tests/unit_test/moss_vl_realtime \
+  tests/unit_test/serve/test_video_realtime*.py
+```
+
+| 路径 | 内容 |
+| --- | --- |
+| [deployment/moss_vl_realtime](./deployment/moss_vl_realtime/) | 环境检查、启动器、测试与样例 |
+| [models/moss_vl_realtime](./sglang_omni/models/moss_vl_realtime/) | 模型接入、增量输入、调度与 KV 管理 |
+| [serve/video_realtime.py](./sglang_omni/serve/video_realtime.py) | WebSocket、背压与会话生命周期 |
+| [Realtime Cookbook](./docs/cookbook/moss_vl_realtime.md) | 高级部署与协议参考 |
+
+## 来源与许可证
+
+本项目基于 [sgl-project/sglang-omni](https://github.com/sgl-project/sglang-omni)，保留其框架、Git 历史和 [Apache License 2.0](./LICENSE)。此前开发使用 [CloudRipple/sglang-omni](https://github.com/CloudRipple/sglang-omni)，当前版本在 [fnlp-vision/sglang-omni-realtime](https://github.com/fnlp-vision/sglang-omni-realtime) 维护。
+
+问题反馈请提交至[本仓库 Issues](https://github.com/fnlp-vision/sglang-omni-realtime/issues)。感谢 SGLang-Omni、SGLang 与 MOSS-VL 团队。

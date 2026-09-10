@@ -1,28 +1,22 @@
 # MiniMax Music 3
 
-Text-to-music: a Qwen3 backbone with an eight-codebook RVQ frame, followed by a
-flow-matching DIT and a DAC decoder. Output is 32 kHz stereo.
+**English** | [简体中文](./README_zh.md)
+
+Text-to-music with a Qwen3 backbone, eight-codebook RVQ frames, a flow-matching DIT, and a DAC decoder. Output is 32 kHz stereo.
+
+## Launch
+
+Install the repository in a dedicated environment. The DIT uses `sglang.multimodal_gen`; its dependencies are declared in [pyproject.toml](../../../pyproject.toml). An incompatible `flashinfer-cubin` package must not override the pinned FlashInfer version.
 
 ```bash
-# Single GPU
+# Choose one layout.
 CUDA_VISIBLE_DEVICES=0 sgl-omni serve --model-path MiniMaxAI/MiniMax-Music3 --port 8000
-
-# Dual GPU
 CUDA_VISIBLE_DEVICES=0,1 sgl-omni serve --model-path MiniMaxAI/MiniMax-Music3 --port 8000
 ```
 
-Install from a checkout with `uv pip uninstall -y flashinfer-cubin && uv pip install -e .`.
-MiniMax Music 3's DIT imports `sglang.multimodal_gen`; those packages are pinned
-in `pyproject.toml`. A leftover `flashinfer-cubin` wheel cannot match
-`flashinfer-python==0.6.14` (no cubin 0.6.14 exists on PyPI) and will fail the
-import. See [the cookbook](../../../docs/cookbook/minimax_music3.md)
-for the full request contract.
+One visible GPU colocates both stages; with two or more, DIT/DAV runs on the second. Both layouts use FP32 for the acoustic stage. Default optimizations include backbone and RVQ-depth decode CUDA Graphs, compiled DIT/DAV, and batched seeded sampling.
 
-One visible device colocates both stages; two or more put DIT/DAV on the
-second. Only the placement differs — both layouts run the acoustic stage
-in FP32. Defaults that are on without further flags: backbone decode
-CUDA graph, RVQ depth CUDA graph, compiled DIT blocks, compiled DAV decoder,
-and batched seeded sampling.
+## Request
 
 ```bash
 curl -X POST http://localhost:8000/v1/audio/speech \
@@ -37,24 +31,14 @@ curl -X POST http://localhost:8000/v1/audio/speech \
   --output song.wav
 ```
 
-`input` carries the lyrics and `instructions` the caption. Structure tags must
-sit on their own line: normalization drops whatever follows a tag on the same
-line. `max_new_tokens` caps the audio frames at 25 per second, up to 9,000, and
-the model may end the song before reaching it.
+`input` carries lyrics; `instructions` carries the caption. Put structure tags on separate lines: normalization discards text after a tag on the same line. `max_new_tokens` caps audio frames at 25 per second, up to 9,000; generation may stop earlier.
 
-See [the cookbook](../../../docs/cookbook/minimax_music3.md) for the full
-request contract, the parameters this model rejects, and worked examples.
+The [cookbook](../../../docs/cookbook/minimax_music3.md) describes supported and rejected parameters and provides more examples.
 
-## Development
-
-Two gates cover this model, and both compare against commit `c03ddd56`:
+## Tests
 
 ```bash
-MINIMAX_MUSIC3_GPUS=<gpu> python test_minimax_music3.py              # AR latents and throughput
-CUDA_VISIBLE_DEVICES=<gpu> python test_minimax_music3_acoustic.py  # DIT/DAV output
+python -m pytest tests/unit_test/minimax_music3 -q
 ```
 
-Read the acoustic gate's module docstring before changing its limits. It
-measures long-term average spectra rather than waveform distance, because the
-DIT solver amplifies any perturbation to a fixed divergence and sample-level
-distance cannot separate a harmless kernel change from a harmful one.
+These tests cover model and request contracts. Acoustic quality and GPU throughput require separate model execution; unit-test results are not audio-quality measurements.

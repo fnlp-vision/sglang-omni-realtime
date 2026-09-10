@@ -120,6 +120,20 @@ def _harness(records, *, allocator_ids=(900, 901, 902, 903, 904, 905)):
 # --- config resolution -----------------------------------------------------
 
 
+@pytest.mark.parametrize("field", ["raw_window_s", "pool_window_s"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_window_thresholds_must_be_finite(field, value):
+    with pytest.raises(ValueError, match="finite"):
+        RealtimeFrameWindowConfig(**{field: value})
+
+
+@pytest.mark.parametrize("key", ["REALTIME_FRAME_WINDOW_RAW_S", "REALTIME_FRAME_POOL_WINDOW_S"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_environment_window_thresholds_must_be_finite(key, value):
+    with pytest.raises(ValueError, match="finite"):
+        RealtimeFrameWindowConfig.resolve(env={key: value})
+
+
 def test_config_defaults_disabled() -> None:
     config = RealtimeFrameWindowConfig.resolve(env={})
     assert config.enabled is False
@@ -886,6 +900,7 @@ def test_undo_appended_segment_clears_staged_frame_records() -> None:
         _moss_vl_realtime_previous_extend_range=(0, 2),
         _moss_vl_realtime_previous_prefix_indices=[5],
         _moss_vl_realtime_previous_skip_radix_cache_insert=False,
+        _moss_vl_realtime_previous_max_new_tokens=7,
         _moss_vl_realtime_staged_mrope_positions=torch.zeros(3, 3),
         _moss_vl_realtime_staged_visible_frame_counts=torch.zeros(3),
         _moss_vl_realtime_staged_full_grid_thw=torch.zeros(1, 3),
@@ -1116,9 +1131,8 @@ def test_build_segment_pending_check_uses_token_space() -> None:
     assert captured["committed_encoder_length"] == 4
     assert captured["committed_decoder_length"] == 2
 
-    # Context guard covers the wider of token/KV spaces: fill ids will reach
-    # 8 tokens committed + 3 appends, so an 11-wide row is too small.
-    pool_ns = SimpleNamespace(req_to_token=torch.zeros((1, 11)))
+    # Eight historical positions + three appends + pending input + sampled output.
+    pool_ns = SimpleNamespace(req_to_token=torch.zeros((1, 12)))
     with pytest.raises(RuntimeError, match="context length"):
         _guard_realtime_context_capacity(
             req,
@@ -1130,7 +1144,7 @@ def test_build_segment_pending_check_uses_token_space() -> None:
         req,
         state,
         SimpleNamespace(raw_append_ids=(-101, -101, 301)),
-        SimpleNamespace(req_to_token=torch.zeros((1, 12))),
+        SimpleNamespace(req_to_token=torch.zeros((1, 13))),
     )
 
 
@@ -1141,12 +1155,12 @@ def test_guard_without_eviction_uses_kv_space_as_before() -> None:
         _guard_realtime_context_capacity,
     )
 
-    # token == KV (no eviction): 4+2+3+1 = 10 needs a 10-wide row.
+    # token == KV: 4+2+3+1 pending input+1 sampled output needs 11 positions.
     segment = SimpleNamespace(raw_append_ids=(-101, -101, 301))
     _guard_realtime_context_capacity(
-        SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 10)))
+        SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 11)))
     )
     with pytest.raises(RuntimeError, match="context length"):
         _guard_realtime_context_capacity(
-            SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 9)))
+            SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 10)))
         )

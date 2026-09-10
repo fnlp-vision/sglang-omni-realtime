@@ -1,93 +1,34 @@
-SGLang-Omni
-=======================
+MOSS-VL Realtime Backend
+==============================
 
-SGLang-Omni is a high-performance serving framework for omni and multimodal models, built on top of `SGLang <https://github.com/sgl-project/sglang>`_. It is designed to orchestrate multi-stage pipelines with low latency and OpenAI-compatible APIs.
+Realtime video understanding with persistent WebSocket sessions, incremental
+visual KV, and dynamic multi-session scheduling. This repository is built on
+`SGLang-Omni <https://github.com/sgl-project/sglang-omni>`_ and uses the
+`MOSS-VL-Realtime-SGLANG checkpoint <https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG>`_.
 
-Modern omni models — such as speech-output LLMs and multimodal generation systems — decompose into heterogeneous stages with fundamentally different computational profiles: a compute-bound thinker, a memory-bound talker, a latency-sensitive codec. SGLang-Omni is built around a **computation-centric design**: each stage runs its own independent scheduler tuned to its bottleneck, communicates through a shared inbox/outbox abstraction, and transfers tensors via zero-copy shared memory. This prevents any single stage from degrading the others and allows new models to plug into the framework by declaring a pipeline topology rather than building an inference system from scratch.
+For browser interaction, voice, and memory, see the companion
+`Demo <https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo>`_.
+The `delivery guide <https://github.com/fnlp-vision/sglang-omni-realtime/tree/main/deployment/moss_vl_realtime>`_
+contains launch commands, three public tests, and reference results.
 
-About
------
+.. toctree::
+   :maxdepth: 1
+   :caption: MOSS-VL Realtime
 
-Core features:
-
-- **Multi-Stage Pipeline**: Flexible framework for orchestrating preprocessing, AR engine, codec, and vocoder stages across processes and GPUs.
-- **Native SGLang Integration**: Leverages SGLang's RadixAttention, continuous batching, and CUDA Graph optimizations for the AR backbone.
-- **OpenAI-Compatible Server**: Drop-in ``/v1/audio/speech``, ``/v1/audio/transcriptions``, ``/v1/audio/translations``, and ``/v1/chat/completions`` endpoints with real-time streaming support.
-- **Broad Model Support**: TTS (Higgs, Fish S2-Pro, Voxtral, Qwen3-TTS, MOSS-TTS / Local, Ming-Omni-TTS, dots.tts, ZONOS2), Music (MiniMax Music 3), ASR (Qwen3-ASR, Fun-ASR, ARK-ASR, Whisper, MOSS-Transcribe-Diarize), Omni (Qwen3-Omni, Ming-Omni), and LLaDA2.0-Uni.
-
-Supported Models
-----------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 15 40
-
-   * - Model
-     - Type
-     - Notes
-   * - `boson-sglang/higgs-audio-v3-tts-4b-base <https://huggingface.co/boson-sglang/higgs-audio-v3-tts-4b-base>`_
-     - TTS
-     - Voice cloning, streaming, 100+ languages
-   * - `fishaudio/s2-pro <https://huggingface.co/fishaudio/s2-pro>`_
-     - TTS
-     - Voice cloning, streaming
-   * - `mistralai/Voxtral-4B-TTS-2603 <https://huggingface.co/mistralai/Voxtral-4B-TTS-2603>`_
-     - TTS
-     - Named voices, streaming, 9 languages
-   * - `Qwen/Qwen3-TTS-12Hz-Base <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>`_
-     - TTS
-     - Voice cloning, streaming, 10 languages, 0.6B / 1.7B
-   * - `OpenMOSS-Team/MOSS-TTS-v1.5 <https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5>`_
-     - TTS
-     - Delay-pattern MOSS-TTS; voice cloning, streaming, 31 languages
-   * - `OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5 <https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5>`_
-     - TTS
-     - Local-transformer MOSS-TTS; 48 kHz stereo, streaming
-   * - `inclusionAI/Ming-omni-tts-16.8B-A3B <https://huggingface.co/inclusionAI/Ming-omni-tts-16.8B-A3B>`_
-     - TTS
-     - Text-to-speech and zero-shot voice cloning
-   * - `dots-studio/dots.tts-mf <https://huggingface.co/dots-studio/dots.tts-mf>`_
-     - TTS
-     - 48 kHz continuous-latent TTS; also ``dots.tts-soar`` / ``dots.tts-base``
-   * - `Zyphra/zonos2 <https://huggingface.co/Zyphra/zonos2>`_
-     - TTS
-     - MoE TTS, 9 DAC codebooks, voice cloning
-   * - `MiniMaxAI/MiniMax-Music3 <https://huggingface.co/MiniMaxAI/MiniMax-Music3>`_
-     - Music
-     - Text-to-music; lyrics + caption → 32 kHz stereo song
-   * - `Qwen/Qwen3-ASR-1.7B <https://huggingface.co/Qwen/Qwen3-ASR-1.7B>`_
-     - ASR
-     - Multilingual transcription with 30 language hints
-   * - `FunAudioLLM/Fun-ASR-Nano-2512-hf <https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512-hf>`_
-     - ASR
-     - Multilingual Fun-ASR-Nano
-   * - `AutoArk-AI/ARK-ASR-3B <https://huggingface.co/AutoArk-AI/ARK-ASR-3B>`_
-     - ASR
-     - Multilingual ARK-ASR
-   * - `OpenMOSS-Team/MOSS-Transcribe-Diarize <https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize>`_
-     - ASR
-     - Multi-speaker transcription + diarization + timestamps
-   * - `openai/whisper-large-v3 <https://huggingface.co/openai/whisper-large-v3>`_
-     - ASR
-     - Experimental transcription and speech-to-English translation routes; see the `audio translation support matrix <basic_usage/audio_translations.html>`_
-   * - `Qwen/Qwen3-Omni-30B-A3B-Instruct <https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct>`_
-     - Omni
-     - Text, image, audio, video → text + audio
-   * - `inclusionAI/Ming-flash-omni-2.0 <https://huggingface.co/inclusionAI/Ming-flash-omni-2.0>`_
-     - Omni
-     - Streaming TTS
-   * - `inclusionAI/LLaDA2.0-Uni <https://huggingface.co/inclusionAI/LLaDA2.0-Uni>`_
-     - Multimodal
-     - Text + image understanding and generation
-
+   README.md
+   README_zh.md
+   get_started/installation.md
+   get_started/installation_zh.md
+   cookbook/moss_vl_realtime.md
+   cookbook/moss_vl_realtime_capacity.md
 
 .. toctree::
    :maxdepth: 1
    :caption: Get Started
 
-   get_started/installation.md
    get_started/installation_xpu.md
    get_started/release_notes.md
+   get_started/apiserver_quickstart.md
 
 
 .. toctree::
@@ -108,7 +49,6 @@ Supported Models
    cookbook/fun_asr.md
    cookbook/arkasr.md
    cookbook/moss_transcribe_diarize.md
-   cookbook/moss_vl_realtime.md
    cookbook/whisper_asr.md
    cookbook/qwen3_omni.md
    cookbook/ming_omni.md
@@ -146,3 +86,11 @@ Supported Models
    developer_reference/profiler.md
    developer_reference/qwen3_asr_concurrency_profile.md
    developer_reference/rl_admin_control.md
+   developer_reference/tts_model_integration.md
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Design
+
+   design/gpu_radix_hash.md
+   design/refactor_rfc.md

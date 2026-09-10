@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT_PATH))
 
 from sglang_omni import __version__  # noqa: E402
 
-project = "SGLang"
+project = "MOSS-VL Realtime Backend"
 copyright = f"2025-{datetime.now().year}, SGLang-Omni"
 author = "SGLang-Omni Team"
 
@@ -21,7 +21,6 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.autosectionlabel",
-    "sphinx.ext.intersphinx",
     "sphinx_tabs.tabs",
     "myst_parser",
     "sphinx_copybutton",
@@ -98,8 +97,9 @@ html_copy_source = True
 html_last_updated_fmt = ""
 
 html_theme_options = {
-    "repository_url": "https://github.com/sgl-project/sglang-omni",
-    "repository_branch": "main/docs",
+    "repository_url": "https://github.com/fnlp-vision/sglang-omni-realtime",
+    "repository_branch": "main",
+    "path_to_docs": "docs",
     "show_navbar_depth": 3,
     "max_navbar_depth": 4,
     "collapse_navbar": True,
@@ -114,8 +114,8 @@ html_theme_options = {
 
 html_context = {
     "display_github": True,
-    "github_user": "sgl-project",
-    "github_repo": "sgl-project.github.io",
+    "github_user": "fnlp-vision",
+    "github_repo": "sglang-omni-realtime",
     "github_version": "main",
     "conf_py_path": "/docs/",
 }
@@ -129,6 +129,9 @@ html_js_files = [
 
 
 def setup(app):
+    from pygments.lexers.data import JsonLexer
+
+    app.add_lexer("jsonc", JsonLexer)
     app.add_css_file("css/custom_log.css")
 
 
@@ -169,15 +172,6 @@ autodoc_mock_imports = [
     "transformers",
     "triton",
 ]
-
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3.12", None),
-    "typing_extensions": ("https://typing-extensions.readthedocs.io/en/latest", None),
-    "pillow": ("https://pillow.readthedocs.io/en/stable", None),
-    "numpy": ("https://numpy.org/doc/stable", None),
-    "torch": ("https://pytorch.org/docs/stable", None),
-}
-
 
 nbsphinx_prolog = """
 .. raw:: html

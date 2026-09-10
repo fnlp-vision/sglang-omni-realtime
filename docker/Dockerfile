@@ -28,14 +28,21 @@ RUN git clone --filter=blob:none https://github.com/openucx/ucx.git /tmp/ucx \
     && ldconfig \
     && rm -rf /tmp/ucx
 
-# Install only project dependencies. The repository itself is fetched when the
-# container starts, so the image never contains a stale sglang-omni checkout.
-COPY pyproject.toml /tmp/pyproject.toml
-RUN uv pip install --system --break-system-packages --no-build-isolation \
-        -r /tmp/pyproject.toml \
-    && uv pip install --system --break-system-packages --no-deps --reinstall flashinfer-python==0.6.14 \
+# Install the release lock and the source from this build context. Runtime
+# startup must not clone/pull a mutable branch or replace the MOSS fork.
+COPY deployment/repro/requirements.lock /tmp/requirements.lock
+COPY deployment/repro/build-constraints.txt /tmp/build-constraints.txt
+RUN uv pip install --system --break-system-packages --require-hashes \
+        --index-url https://pypi.org/simple --build-constraint /tmp/build-constraints.txt -r /tmp/requirements.lock \
     && python3 -m pip uninstall -y flashinfer-cubin flashinfer-jit-cache \
-    && rm /tmp/pyproject.toml
+    && rm /tmp/requirements.lock
+
+COPY pyproject.toml README.md LICENSE /opt/sglang-omni/
+COPY sglang_omni /opt/sglang-omni/sglang_omni
+COPY sglang_omni_router /opt/sglang-omni/sglang_omni_router
+COPY examples /opt/sglang-omni/examples
+COPY deployment /opt/sglang-omni/deployment
+RUN uv pip install --system --break-system-packages --no-deps --no-build-isolation -e /opt/sglang-omni
 
 # Docker builds do not have a GPU to regenerate architecture-specific JIT
 # artifacts. Reuse the Python 3.12 cache validated on Ada (SM89) and Hopper
@@ -50,27 +57,16 @@ cat >/usr/local/bin/sglang-omni-entrypoint <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir="${SGLANG_OMNI_REPO_DIR:-/workspace/sglang-omni}"
-
-if [ "${SGLANG_OMNI_AUTO_CLONE:-1}" = "1" ]; then
-    if [ -d "${repo_dir}/.git" ]; then
-        git -C "${repo_dir}" pull --ff-only origin main
-    elif [ -e "${repo_dir}" ]; then
-        echo "Repository path exists but is not a git checkout: ${repo_dir}" >&2
-        exit 1
-    else
-        git clone --depth 1 --branch main \
-            https://github.com/sgl-project/sglang-omni.git "${repo_dir}"
-    fi
-    python3 -m pip install --no-deps --no-build-isolation -e "${repo_dir}"
-    cd "${repo_dir}"
-fi
-
+cd /opt/sglang-omni
+cuda_home="$(python3 deployment/repro/cuda_toolkit.py)"
+test -x "$cuda_home/bin/nvcc"
+export CUDA_HOME="$cuda_home" CUDA_PATH="$cuda_home"
+export PATH="$cuda_home/bin:$PATH"
 exec /opt/nvidia/nvidia_entrypoint.sh "$@"
 SCRIPT
 chmod 0755 /usr/local/bin/sglang-omni-entrypoint
 EOF
 
-WORKDIR /workspace
+WORKDIR /opt/sglang-omni
 ENTRYPOINT ["/usr/local/bin/sglang-omni-entrypoint"]
 CMD ["/bin/zsh"]

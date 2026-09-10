@@ -403,6 +403,8 @@ def stage_process_main(
         if startup_error_channel is not None:
             startup_error_channel.put(traceback_text)
         sys.exit(1)
+    else:
+        _destroy_torch_distributed_process_group(log)
 
 
 def _run_process(
@@ -510,11 +512,11 @@ def _destroy_torch_distributed_process_group(log: logging.Logger) -> None:
         import torch.distributed as dist
 
         if dist.is_available() and dist.is_initialized():
-            log.warning("Destroying torch.distributed process group after failure")
+            log.info("Destroying torch.distributed process group during shutdown")
             dist.destroy_process_group()
     except Exception as exc:
         log.warning(
-            "torch.distributed cleanup failed after stage process failure: %s",
+            "torch.distributed cleanup failed during stage process shutdown: %s",
             exc,
             exc_info=True,
         )

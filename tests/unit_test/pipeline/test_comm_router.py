@@ -57,6 +57,17 @@ def test_comm_router_uses_mooncake_only_for_remote_edges() -> None:
     )
 
 
+def test_cpu_platform_routes_local_stream_tensors_through_shm(monkeypatch) -> None:
+    monkeypatch.setattr(platforms.current_platform, "device_type", "cpu")
+    router = CommRouter(
+        stage_name="preprocessing",
+        gpu_id=None,
+        same_process_targets=set(),
+        gpu_stage_names=set(),
+    )
+    assert router.outbound_stream("decode", torch.empty(1)) is TransportKind.SHM
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_comm_router_uses_cuda_ipc_for_mixed_gpu_payloads() -> None:
     router = CommRouter(

@@ -1,7 +1,5 @@
 # SGLang Omni Refactor Tracking
 
----
-
 Follows from [sglang#16546](https://github.com/sgl-project/sglang/issues/16546). Addresses problems in [#188](https://github.com/sgl-project/sglang-omni/issues/188).
 
 ## Table of contents
@@ -9,7 +7,7 @@ Follows from [sglang#16546](https://github.com/sgl-project/sglang/issues/16546).
 1. [Architecture](#architecture)
 2. [Pipeline Layer](#pipeline-layer)
 3. [Scheduling Layer](#scheduling-layer)
-4. [Model Runner + Callbacks](#model-runner--callbacks)
+4. [Model Runner and Callbacks](#model-runner-and-callbacks)
 5. [Model Directory Convention](#model-directory-convention)
 6. [Declarative Config](#declarative-config)
 7. [Multi-Process Runner](#multi-process-runner)
@@ -180,7 +178,7 @@ HTTP and WebSocket are SGLang-Omni's externally exposed request endpoints.
 - **WebSocket:**
   - `WS /v1/realtime`
 
-HTTP covers the request/response endpoints; the WebSocket endpoint (`/v1/realtime`, see [Design Decision History § PR #385](#2026-05-04--pr-385-openai-realtime-websocket-endpoint-v1-feature)) is full-duplex for streaming audio in and server events out. There is no application-level HTTPS/TLS layer: the server binds plain HTTP via uvicorn, and TLS is expected to terminate at a reverse proxy or load balancer in front of it.
+HTTP covers the request/response endpoints; the WebSocket endpoint (`/v1/realtime`, see [Design Decision History § PR #385](#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature)) is full-duplex for streaming audio in and server events out. There is no application-level HTTPS/TLS layer: the server binds plain HTTP via uvicorn, and TLS is expected to terminate at a reverse proxy or load balancer in front of it.
 
 ### Client
 
@@ -349,7 +347,7 @@ class OutgoingMessage:
 
 ---
 
-## Model Runner + Callbacks
+## Model Runner and Callbacks
 
 ```
 ForwardBatch → before_*() → custom_*_forward() or standard forward → post_*() → sample/output
@@ -638,7 +636,7 @@ The refactor should consolidate this into one canonical mechanism: a typed, stag
 
 #### Stage placement — same-GPU co-location
 
-Stages may share GPUs. Earlier topologies hard-rejected same-GPU speech-stage placement, which left Talker on H200 at <2% utilization long-term. Informed by Ratish's vLLM-Omni investigation (vLLM co-locates thinker + talker on a single device via per-stage memory budgeting + NVML accounting), the placement model now treats "any stage on any GPU" as first-class, with budgeting that accounts for co-tenants rather than rejecting the topology. See [Design Decision History § PR #430](#2026-05-12--pr-430-colocated-stage-execution-colocation) for the typed runtime config + placement planner that shipped this.
+Stages may share GPUs. Earlier topologies hard-rejected same-GPU speech-stage placement, which left Talker on H200 at <2% utilization long-term. Informed by Ratish's vLLM-Omni investigation (vLLM co-locates thinker + talker on a single device via per-stage memory budgeting + NVML accounting), the placement model now treats "any stage on any GPU" as first-class, with budgeting that accounts for co-tenants rather than rejecting the topology. See [Design Decision History § PR #430](#pr-430-2026-05-12-colocated-stage-execution-colocation) for the typed runtime config + placement planner that shipped this.
 
 Memory-fraction semantics have also been pinned down: vLLM's `gpu_memory_utilization` is a fraction of total VRAM, while SGLang's `mem_fraction_static` is a fraction of remaining VRAM after weights load — more principled for single-stage LLM, but ambiguous for omni where stages load sequentially and "remaining" depends on load order. The placement model now uses one explicit semantics rather than inheriting the ambiguity.
 
@@ -648,7 +646,7 @@ Whether `factory` and `factory_args` should collapse into a single field is trac
 
 Derived (computed from stages, not set manually): `terminal_stages`, `gpu_placement`.
 
-There is no compiler class. An earlier proposal threaded pipeline construction through a `compiler_pipeline()` entry point, but the multi-process path (`mp_runner._build_stage_groups`) re-implemented most of the same logic independently, with two near-duplicate `_resolve_factory_args` helpers. The compiler class was removed in [#447](#2026-05-15--pr-447-unify-serving-on-multiprocess-runner-rfc) — pipeline construction now happens through a plain init function per model, which is sufficient given how few pipelines we maintain.
+There is no compiler class. An earlier proposal threaded pipeline construction through a `compiler_pipeline()` entry point, but the multi-process path (`mp_runner._build_stage_groups`) re-implemented most of the same logic independently, with two near-duplicate `_resolve_factory_args` helpers. The compiler class was removed in [#447](#pr-447-2026-05-15-unify-serving-on-multiprocess-runner-rfc) — pipeline construction now happens through a plain init function per model, which is sufficient given how few pipelines we maintain.
 
 The `Pipeline` vs `Stages` distinction in code still needs to be sharper: both names appear in different places without a crisp mental model. This should be pinned down before the field set grows further.
 
@@ -800,7 +798,7 @@ Everything else (`Stage`, `Coordinator`, `OmniScheduler`, `ModelRunner`, relay, 
 
 Following the suggestion in [#188 (comment)](https://github.com/sgl-project/sglang-omni/issues/188#issuecomment-4161198732), we should also track how many files need to be touched and the upper bound of the cost of integrating a new model. Boson's upcoming model will serve as the first concrete data point.
 
-[^q-realtime-streaming]: **Realtime streaming-input semantics.** The `/realtime` endpoint shipped in PR [#385](#2026-05-04--pr-385-openai-realtime-websocket-endpoint-v1-feature) (merged 2026-05-18) — WebSocket-backed streaming-in audio with SSE-style server events, aligned with OpenAI's realtime interface. Detailed protocol — chunk framing, partial-result emission, cancellation semantics — is documented in #385's session-state-machine implementation rather than mirrored here.
+[^q-realtime-streaming]: **Realtime streaming-input semantics.** The `/realtime` endpoint shipped in PR [#385](#pr-385-2026-05-04-openai-realtime-websocket-endpoint-v1-feature) (merged 2026-05-18) — WebSocket-backed streaming-in audio with SSE-style server events, aligned with OpenAI's realtime interface. Detailed protocol — chunk framing, partial-result emission, cancellation semantics — is documented in #385's session-state-machine implementation rather than mirrored here.
 
 ---
 
@@ -834,7 +832,7 @@ Introduced the V1 pipeline as an opt-in path via `--version v1`, and published t
 
 **Why it matters:** The discoverability anchor for the V0 → V1 cutover. Names individual owners per work item so contributors can pick up threads independently; several follow-up issues and PRs in this history root back to this trackboard.
 
-### [2026-05-04 — PR #385: OpenAI Realtime WebSocket endpoint [V1, Feature]](https://github.com/sgl-project/sglang-omni/pull/385)
+### [PR 385 2026-05-04 OpenAI Realtime WebSocket endpoint V1 Feature](https://github.com/sgl-project/sglang-omni/pull/385)
 
 _State: MERGED 2026-05-18. Disabled by default; opt in with `--enable-realtime`._
 
@@ -901,7 +899,7 @@ Argued that the V1 single-process launcher is just the multi-process launcher wi
 
 **Why it matters:** Captures the rationale that drove the launcher consolidation. The diagnosis and bugfix informed #447 and downstream cleanups even though no commits from this branch shipped — kept here to attribute both the design decision and the double-launch bugfix correctly.
 
-### [2026-05-12 — PR #430: Colocated Stage Execution [Colocation]](https://github.com/sgl-project/sglang-omni/pull/430)
+### [PR 430 2026-05-12 Colocated Stage Execution Colocation](https://github.com/sgl-project/sglang-omni/pull/430)
 
 _State: MERGED 2026-05-16. Follows colocation RFC + #329 / #376._
 
@@ -915,7 +913,7 @@ Implements the colocated-stage execution path for Omni V1, making Qwen3-Omni spe
 
 **Why it matters:** The biggest single deployment-shape win in the V1 refactor. Lets a thinker + talker speech model run as one process on one GPU rather than two separate stages, dramatically reducing the resource footprint for inference clusters that don't need horizontal stage parallelism.
 
-### [2026-05-15 — PR #447: Unify serving on multiprocess runner [RFC]](https://github.com/sgl-project/sglang-omni/pull/447)
+### [PR 447 2026-05-15 Unify serving on multiprocess runner RFC](https://github.com/sgl-project/sglang-omni/pull/447)
 
 _State: CLOSED. Compiler delete + endpoint allocation move; ideas referenced inline above._
 

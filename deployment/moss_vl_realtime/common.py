@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import signal
 import socket
@@ -11,6 +12,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+import psutil
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -164,6 +167,7 @@ class Child:
     def __init__(self, command, env, log, *, new_group=True):
         self.log = Path(log).open("w")
         self.new_group = new_group
+        self._stopped = False
         try:
             self.process = subprocess.Popen(
                 command,
@@ -173,8 +177,22 @@ class Child:
                 stderr=subprocess.STDOUT,
                 start_new_session=new_group,
             )
+            self._owner = psutil.Process(self.process.pid)
+            self._owner_started = self._owner.create_time()
         except BaseException:
-            self.log.close()
+            try:
+                process = getattr(self, "process", None)
+                if process is not None:
+                    try:
+                        if self.new_group:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        else:
+                            process.kill()
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=10)
+            finally:
+                self.log.close()
             raise
 
     def wait(self, timeout):
@@ -185,21 +203,85 @@ class Child:
             time.sleep(0.2)
         return self.process.returncode
 
-    def stop(self):
-        def send(sig):
+    def _live_owned_processes(self):
+        self.process.poll()
+        if not self.new_group:
+            candidates = [self._owner]
+        else:
+            # A recycled group-leader PID belongs to a different run. Never
+            # signal it, even if stop() is called long after our leader exited.
             try:
-                if self.new_group:
-                    os.killpg(self.process.pid, sig)
-                elif self.process.poll() is None:
-                    self.process.send_signal(sig)
-            except ProcessLookupError:
+                if psutil.Process(self.process.pid).create_time() != self._owner_started:
+                    return []
+            except psutil.NoSuchProcess:
+                pass
+            candidates = []
+            for process in psutil.process_iter():
+                try:
+                    if os.getpgid(process.pid) == self.process.pid:
+                        candidates.append(process)
+                except (ProcessLookupError, PermissionError):
+                    continue
+        alive = []
+        for process in candidates:
+            try:
+                if (process.is_running()
+                        and process.create_time() >= self._owner_started
+                        and process.status() != psutil.STATUS_ZOMBIE):
+                    alive.append(process)
+            except psutil.NoSuchProcess:
+                pass
+        return alive
+
+    def _wait_owned_processes(self, timeout, *, kill=False):
+        deadline = time.monotonic() + timeout
+        signalled_orphans = set()
+        while True:
+            alive = self._live_owned_processes()
+            if kill and alive:
+                # Catch a descendant forked between the initial snapshot and
+                # the first KILL, rather than leaving it behind on timeout.
+                self._signal_processes(alive, signal.SIGKILL)
+            elif alive and self.process.poll() is not None:
+                for process in alive:
+                    try:
+                        identity = (process.pid, process.create_time())
+                    except psutil.NoSuchProcess:
+                        continue
+                    if identity not in signalled_orphans:
+                        self._signal_processes([process], signal.SIGTERM)
+                        signalled_orphans.add(identity)
+            remaining = deadline - time.monotonic()
+            if not alive or remaining <= 0:
+                return alive
+            time.sleep(min(0.05, remaining))
+
+    @staticmethod
+    def _signal_processes(processes, sig):
+        for process in processes:
+            try:
+                # psutil checks PID identity before delivering the signal.
+                process.send_signal(sig)
+            except psutil.NoSuchProcess:
                 pass
 
-        send(signal.SIGTERM)
+    def stop(self, timeout=30.0, kill_timeout=10.0):
+        if any(not math.isfinite(value) or value < 0 for value in (timeout, kill_timeout)):
+            raise ValueError("shutdown timeouts must be finite and non-negative")
+        if self._stopped:
+            return
         try:
-            self.process.wait(30)
-        except subprocess.TimeoutExpired:
-            send(signal.SIGKILL)
-            self.process.wait(10)
+            alive = self._live_owned_processes()
+            leaders = [p for p in alive if p.pid == self.process.pid]
+            # Let the parent coordinate worker/IPC cleanup before escalation.
+            self._signal_processes(leaders or alive, signal.SIGTERM)
+            alive = self._wait_owned_processes(timeout)
+            if alive:
+                self._signal_processes(alive, signal.SIGKILL)
+                alive = self._wait_owned_processes(kill_timeout, kill=True)
+            if alive:
+                raise TimeoutError(f"Child processes did not exit: {[p.pid for p in alive]}")
+            self.process.wait(timeout=kill_timeout)
+            self._stopped = True
         finally:
             self.log.close()

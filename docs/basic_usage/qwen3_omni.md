@@ -160,7 +160,7 @@ print(result["choices"][0]["message"]["content"])
 Speech mode runs the full eight-stage pipeline on one or more GPUs. It produces
 both text (from the thinker) and audio (from the talker) output.
 
-### Launch the Server
+### Launch the Speech Server
 
 Speech mode can run as a colocated one-GPU worker using the colocated config:
 
@@ -451,7 +451,7 @@ AutoRound quantization provides:
 - **~25% memory reduction** compared to FP8 (from ~40GB to ~30GB)
 - **Accuracy at ultra-low bit widths**: maintains high accuracy even at 2–4 bits, requiring minimal tuning effort thanks to its sign-gradient descent optimization.
 
-### Image and Text Input
+### INT4 Image and Text Input
 
 Send an image with a text question to get both text and audio responses. Set `"modalities": ["text", "audio"]` to enable audio output.
 
@@ -496,7 +496,7 @@ with open("output.wav", "wb") as f:
     f.write(audio_data)
 ```
 
-### Audio and Image Input
+### INT4 Audio and Image Input
 
 Send an audio file with an image. The model hears the spoken question and sees the image, then responds with both text and audio.
 
@@ -543,7 +543,7 @@ with open("output.wav", "wb") as f:
     f.write(audio_data)
 ```
 
-### Video and Audio Input
+### INT4 Video and Audio Input
 
 Send a video with a spoken audio question. The model watches the video, hears the question, and responds with both text and audio.
 

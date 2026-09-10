@@ -1,5 +1,7 @@
 # Wire Service — /v1/realtime web demo
 
+**English** | [简体中文](./README_zh.md)
+
 ![preview](preview.png)
 
 Editorial-broadsheet single-page client for `/v1/realtime`. Captures
@@ -45,8 +47,7 @@ build step.
      --enable-realtime
    ```
 
-2. **Serve this directory** over HTTP (browsers won't grant
-   `getUserMedia` to `file://`):
+2. **Serve this directory** on localhost. Remote microphone access requires HTTPS or an SSH tunnel to localhost:
 
    ```bash
    cd playground/qwen-omni/realtime
@@ -125,6 +126,4 @@ node --test playground/qwen-omni/realtime/playback.test.js
   `prefix_padding_ms`, and `silence_duration_ms` do not reconfigure it.
 - The standalone `/v1/audio/speech` TTS API is unchanged because it does not
   have a live microphone/VAD session to trigger barge-in.
-- The page does no error handling beyond updating the status line —
-  matching the project's house style. If the WS drops mid-session,
-  reconnect.
+- If the WebSocket drops mid-session, inspect the status line and reconnect.

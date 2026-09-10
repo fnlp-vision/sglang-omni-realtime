@@ -8,6 +8,7 @@ from sglang_omni.model_runner.base import ModelRunner
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     RUNTIME_STATE_ATTR,
     commit_moss_vl_realtime_batch,
+    commit_moss_vl_realtime_decode,
     is_moss_vl_realtime_batch,
     rollback_moss_vl_realtime_batch,
 )
@@ -27,7 +28,33 @@ class MossVLRealtimeModelRunner(ModelRunner):
             return super().execute(scheduler_output)
         except Exception:
             if batch is not None and is_moss_vl_realtime_batch(batch):
+                self._wait_failed_forward()
                 rollback_moss_vl_realtime_batch(batch)
+            raise
+
+    def _wait_failed_forward(self) -> None:
+        bridge = getattr(self, "_execution_bridge", None)
+        if bridge is not None:
+            bridge.record_completion().synchronize()
+
+    def execute_launch(self, scheduler_output):
+        try:
+            return super().execute_launch(scheduler_output)
+        except Exception:
+            self._wait_failed_forward()
+            batch = scheduler_output.batch_data
+            if batch is not None and is_moss_vl_realtime_batch(batch):
+                rollback_moss_vl_realtime_batch(batch)
+            raise
+
+    def execute_resolve(self, pending):
+        try:
+            return super().execute_resolve(pending)
+        except Exception:
+            # A newer lookahead step may already reference this step's KV.
+            # Keep all request-owned slots intact for scheduler abort, which
+            # drains the newer pending step and then releases the whole row.
+            self._wait_failed_forward()
             raise
 
     def post_prefill(
@@ -107,6 +134,7 @@ class MossVLRealtimeModelRunner(ModelRunner):
                     "_moss_vl_realtime_previous_extend_range",
                     "_moss_vl_realtime_previous_prefix_indices",
                     "_moss_vl_realtime_previous_skip_radix_cache_insert",
+                    "_moss_vl_realtime_previous_max_new_tokens",
                 ):
                     if hasattr(req, name):
                         delattr(req, name)
@@ -131,6 +159,8 @@ class MossVLRealtimeModelRunner(ModelRunner):
             state.decoder_length += 1
             state.next_mrope_position += 1
             state.phase = MossVLRealtimePhase.DECODING
+
+        commit_moss_vl_realtime_decode(schedule_batch)
 
     def finalize_skip_rids(self, scheduler_output: Any) -> set[str]:
         """Keep the silence-park overrun row from counting as a generation step.
@@ -191,3 +221,5 @@ class MossVLRealtimeModelRunner(ModelRunner):
             state.decoder_length += 1
             state.next_mrope_position += 1
             state.phase = MossVLRealtimePhase.DECODING
+
+        commit_moss_vl_realtime_decode(schedule_batch)

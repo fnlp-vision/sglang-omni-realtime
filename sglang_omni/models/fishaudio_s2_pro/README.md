@@ -1,10 +1,12 @@
-# SGLang Day-0 Support for FishAudio S2 Text-to-Speech
+# FishAudio S2 Text-to-Speech
 
-## TL;DR
+**English** | [简体中文](./README_zh.md)
 
-We are excited to announce SGLang's day-0 support for FishAudio S2, a frontier text-to-speech (TTS) model with high-quality voice cloning capabilities. By integrating S2's backbone into SGLang, we achieve an RTF of 0.34 and 63.3 tok/s on single H200 GPU at single batch size.
+## Overview
 
-This work is a collaboration between the SGLang Omni Team and [FishAudio Team](https://fish.audio). We thank the FishAudio team for their support in model architecture and implementation detais.
+SGLang-Omni integrates FishAudio S2's Dual-AR backbone for voice cloning and streaming speech. The upstream single-H200, batch-size-1 reference reports an RTF of 0.34 and 63.3 tokens/s.
+
+This work is a collaboration between the SGLang Omni Team and [FishAudio Team](https://fish.audio). We thank the FishAudio team for their support in model architecture and implementation details.
 
 Acknowledgments: Jingwen Gu, Yitong Guan, Xiaole Guo, Shidong Li, Shuai Shi, Junrong Lin, Fan Yin, Leng Yue, Shenggui Li, Chenyang Zhao
 
@@ -14,7 +16,7 @@ Text-to-speech has converged on LLM-style autoregressive architectures: a transf
 
 FishAudio S2 is a leading example of this trend. Built on a Dual-autoregressive (Dual-AR) architecture, S2 achieves state-of-the-art quality across multiple benchmarks while supporting fine-grained inline control of prosody and emotion through natural-language tags. Trained on over 10 million hours of audio across approximately 100 languages and aligned with GRPO-based reinforcement learning, S2 tops the Audio Turing Test (0.515 posterior mean) and EmergentTTS-Eval (81.88% win rate against gpt-4o-mini-tts) while achieving the lowest word error rate (WER) on Seed-TTS Eval among all evaluated models including closed-source systems. For more details on S2's model design and training, see FishAudio's S2 release blog post.
 
- S2's Dual-AR architecture is structurally isomorphic to standard autoregressive LLMs, so it can directly inherit LLM-native serving optimizations with minimal modification, perfectly matching the strenghth of SGLang.
+ S2's Dual-AR architecture is structurally isomorphic to standard autoregressive LLMs, so it can directly inherit LLM-native serving optimizations with minimal modification, perfectly matching the strength of SGLang.
 
 The integration challenge is that TTS models aren't pure text-in, text-out transformers. S2 interleaves VQ codebook embeddings into the token stream during decoding, runs multiple Fast AR decoder steps after each Slow AR step, and requires constrained decoding to enforce codebook structure. Integrating this into SGLang's runtime while preserving prefix caching required careful adaptation of the Model Runner and scheduling.
 
@@ -36,7 +38,7 @@ Text input ──► Preprocessing ──► SGLang AR Engine ──► DAC Voco
 
 ## Usage
 
-Please refer to [TTS Model Usage](https://github.com/sgl-project/sglang-omni/blob/main/docs/basic_usage/tts.md) for more details.
+Please refer to [TTS Model Usage](../../../docs/basic_usage/tts.md) for more details.
 
 ## Optimizations with SGLang Omni
 

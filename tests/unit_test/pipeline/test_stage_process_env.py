@@ -21,6 +21,20 @@ from tests.unit_test.fixtures.pipeline_fakes import FakeScheduler, fake_factory_
 cuda_platform = CUDAOmniPlatform()
 
 
+def test_normal_stage_process_exit_destroys_distributed_group(monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(stage_workers, "_prepare_accelerator_environment", lambda *a: None)
+    monkeypatch.setattr(stage_workers, "apply_gpu_compat_env_defaults", lambda: None)
+    monkeypatch.setattr(stage_workers, "_run_process", lambda *a: calls.append("run"))
+    monkeypatch.setattr(stage_workers, "_destroy_torch_distributed_process_group", lambda *a: calls.append("destroy"))
+    stage_workers.stage_process_main(
+        SimpleNamespace(process_name="test", stage_specs=[SimpleNamespace()]), None,
+    )
+    assert calls == ["run", "destroy"]
+
+
 @pytest.fixture(autouse=True)
 def _force_cuda_device(monkeypatch):
     """These tests assert the CUDA TP env/device contract (CUDA_VISIBLE_DEVICES,
@@ -157,6 +171,7 @@ def test_xpu_tp_rank_keeps_its_card_despite_an_inherited_cuda_marker(
     monkeypatch.setattr(stage_workers, "current_platform", XPUOmniPlatform())
     monkeypatch.setenv("SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS", "true")
     monkeypatch.delenv("ZE_AFFINITY_MASK", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     spec = StageLaunchConfig(
         stage_name="thinker",
         role="follower",
