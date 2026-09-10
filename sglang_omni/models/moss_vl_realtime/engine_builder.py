@@ -9,6 +9,10 @@ from transformers import AutoConfig, AutoProcessor
 from sglang_omni.models.moss_vl_realtime import request_builders
 from sglang_omni.models.moss_vl_realtime.model_runner import MossVLRealtimeModelRunner
 from sglang_omni.models.moss_vl_realtime.payload_types import SILENCE_TOKEN
+from sglang_omni.models.moss_vl_realtime.platform_compat import (
+    preferred_attention_backend,
+    relax_mossvl_flashinfer_guard,
+)
 from sglang_omni.models.moss_vl_realtime.scheduler import MossVLRealtimeScheduler
 from sglang_omni.models.moss_vl_realtime.segment import MossVLRealtimeSegmentBuilder
 from sglang_omni.scheduling.engine_factory import SGLangGenerationEngineBuilder
@@ -61,6 +65,10 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
         self.silence_token_ids: tuple[int, ...] = ()
 
     def pre_infra_setup(self, checkpoint_dir: str) -> None:
+        # Upstream pins Moss-VL to the FlashInfer prefill backend in
+        # ServerArgs validation; on NPU the ascend backend takes over, so
+        # relax that guard before any ServerArgs is constructed.
+        relax_mossvl_flashinfer_guard()
         self.processor = AutoProcessor.from_pretrained(
             checkpoint_dir,
             trust_remote_code=True,
@@ -116,17 +124,19 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             # allocation. Do not patch SGLang's process-global paged allocator.
             "page_size": self.page_size,
             "dtype": dtype,
-            # FlashInfer is the project's decode backend. (It is also required
-            # for decode CUDA graphs: fa3 decode-graph replay indexes
-            # req_to_token rows with encoder_lens + arange(max_context_len)
-            # when seq_lens_cpu is unavailable, which overflows the row for
-            # our encoder-prefix KV layout; FlashInfer re-plans from device
-            # buffers each replay and has no such issue.)
-            "decode_attention_backend": "flashinfer",
-            # Setting any single backend dimension stops the upstream MossVL
-            # override from injecting its prefill default; pin it explicitly.
-            "prefill_attention_backend": "flashinfer",
         }
+        attention_backend = preferred_attention_backend()
+        # FlashInfer is the project's decode backend on CUDA. (It is also
+        # required for decode CUDA graphs: fa3 decode-graph replay indexes
+        # req_to_token rows with encoder_lens + arange(max_context_len)
+        # when seq_lens_cpu is unavailable, which overflows the row for
+        # our encoder-prefix KV layout; FlashInfer re-plans from device
+        # buffers each replay and has no such issue.) NPU serves both
+        # dimensions through the ascend backend instead.
+        defaults["decode_attention_backend"] = attention_backend
+        # Setting any single backend dimension stops the upstream MossVL
+        # override from injecting its prefill default; pin it explicitly.
+        defaults["prefill_attention_backend"] = attention_backend
         if not self.disable_cuda_graph:
             # Only stable-shape decode steps enter the graph; the dynamic
             # multimodal frame extend stays on the eager path.
