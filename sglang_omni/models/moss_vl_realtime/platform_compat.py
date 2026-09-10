@@ -50,6 +50,20 @@ def preferred_attention_backend() -> str:
     return NPU_ATTENTION_BACKEND if is_npu_platform() else CUDA_ATTENTION_BACKEND
 
 
+def recommended_deploy_params(tp_size: int) -> dict[str, Any]:
+    """Recommended serving defaults for one instance of this topology.
+
+    The deployment script consumes this instead of embedding per-platform
+    numbers. CUDA keeps the historical defaults (32768 context, 0.60 static
+    memory share); NPU TP>=2 needs a smaller context — moss_vl's KV is
+    ~3.4 MB/token and a TP=2 pair cannot hold 32K sessions — plus a higher
+    static-memory share for the doubled per-card weights.
+    """
+    if is_npu_platform() and int(tp_size) >= 2:
+        return {"context_length": 8192, "mem_fraction": 0.80}
+    return {"context_length": 32768, "mem_fraction": 0.60}
+
+
 def relax_mossvl_flashinfer_guard() -> None:
     """Allow non-FlashInfer attention backends for Moss-VL on NPU.
 
@@ -96,5 +110,6 @@ __all__ = [
     "is_npu_platform",
     "platform_device_type",
     "preferred_attention_backend",
+    "recommended_deploy_params",
     "relax_mossvl_flashinfer_guard",
 ]
