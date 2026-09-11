@@ -81,6 +81,18 @@ _ABORTED_REQUEST_ID_RETAINED = 5000
 _COMPLETED_REQUEST_ID_LIMIT = 10000
 _PENDING_STREAM_REQUEST_LIMIT = 10000
 _PENDING_STREAM_REQUEST_RETAINED = 5000
+
+
+def _is_fatal_resource_error(exc: BaseException) -> bool:
+    """True for device-OOM failures that leave the engine unservable.
+
+    torch.OutOfMemoryError covers CUDA/NPU allocators; the substring catch
+    keeps vendor-specific runtime errors (e.g. "NPU out of memory" raised as
+    RuntimeError) in the same class.
+    """
+    if isinstance(exc, getattr(torch, "OutOfMemoryError", ())):
+        return True
+    return "out of memory" in f"{type(exc).__name__}: {exc}".lower()
 _PENDING_REQUEST_UPDATE_LIMIT = 10000
 _PENDING_REQUEST_UPDATE_RETAINED = 5000
 
@@ -1503,6 +1515,14 @@ class OmniScheduler:
             self._emit_request_error(req.rid, error)
             self._emit_model_path_end_once(req.rid, status="error")
             self.abort(req.rid, defer_running_cleanup=False)
+        if _is_fatal_resource_error(error):
+            # Device OOM leaves the engine unable to serve any further batch:
+            # every subsequent attempt would fail the same way while /health
+            # keeps reporting healthy. Exit this stage worker so mp_runner's
+            # death watch fails the pipeline (health -> 503, pending requests
+            # receive explicit failures) instead of a live-but-aborting state.
+            logger.error("Fatal resource error in scheduler; exiting: %s", error)
+            os._exit(1)
 
     def _emit_prefill_start_for_batch(self, batch: ScheduleBatch) -> None:
         """Emit once when a request's first executable batch is selected."""
