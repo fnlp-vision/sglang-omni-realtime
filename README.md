@@ -21,7 +21,7 @@ Companion revisions and validation scope are in the [compatibility matrix](https
 
 ## Start the Server
 
-An opt-in [VL API v2 listener](./deployment/vl_api_v2/README.md) adds per-response settlement on a separate port. Existing clients retain the native endpoint and semantics.
+An opt-in [VL API v2 listener](./vl_api_adapter/README.md) adds per-response settlement on a separate port. Existing clients retain the native endpoint and semantics.
 
 After installation, run from the repository root:
 

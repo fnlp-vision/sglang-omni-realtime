@@ -497,7 +497,7 @@ async def _run_server(
         if vl_api_v2_port is None:
             await _serve_with_failure_watch(server, [mp_runner.wait_failed()])
         else:
-            from sglang_omni.serve.vl_api_adapter.server import (
+            from vl_api_adapter.adapter.server import (
                 SecondaryServer, create_v2_app, serve_pair,
             )
 

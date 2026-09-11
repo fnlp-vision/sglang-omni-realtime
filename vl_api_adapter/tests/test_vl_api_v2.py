@@ -8,9 +8,9 @@ from starlette.websockets import WebSocketState
 
 from sglang_omni.models.moss_vl_realtime.accounting import RealtimeAccounting
 from sglang_omni.serve.video_realtime import VideoRealtimeSession, VideoRealtimeSessionManager
-from sglang_omni.serve.vl_api_adapter.schemas import Configure, Frame
-from sglang_omni.serve.vl_api_adapter.session import V2Session
-from sglang_omni.serve.vl_api_adapter.usage import UsageLedger, empty_usage
+from vl_api_adapter.adapter.schemas import Configure, Frame
+from vl_api_adapter.adapter.session import V2Session
+from vl_api_adapter.adapter.usage import UsageLedger, empty_usage
 
 
 def counts(vision=0, inputs=0, outputs=0):

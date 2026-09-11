@@ -63,7 +63,7 @@ bash deployment/moss_vl_realtime/test_accuracy.sh /path/to/model --strict-tokens
 
 ```bash
 python -m pytest tests/unit_test/moss_vl_realtime \
-  tests/unit_test/serve/test_vl_api_v2.py \
+  vl_api_adapter/tests/test_vl_api_v2.py \
   tests/unit_test/serve/test_video_realtime.py \
   tests/unit_test/serve/test_video_realtime_lifecycle.py \
   vl_legacy_adapter/tests -q

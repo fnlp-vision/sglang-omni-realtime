@@ -63,7 +63,7 @@ No cross-session output, missing terminal events or usage arithmetic errors were
 
 ```bash
 python -m pytest tests/unit_test/moss_vl_realtime \
-  tests/unit_test/serve/test_vl_api_v2.py \
+  vl_api_adapter/tests/test_vl_api_v2.py \
   tests/unit_test/serve/test_video_realtime.py \
   tests/unit_test/serve/test_video_realtime_lifecycle.py \
   vl_legacy_adapter/tests -q

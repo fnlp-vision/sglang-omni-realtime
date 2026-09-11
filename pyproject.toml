@@ -126,7 +126,7 @@ markers = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["sglang_omni*"]
+include = ["sglang_omni*", "vl_api_adapter", "vl_api_adapter.adapter"]
 
 [tool.setuptools.dynamic]
 version = {attr = "sglang_omni.__version__"}

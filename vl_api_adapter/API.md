@@ -2,7 +2,7 @@
 
 **English** | [简体中文](./API_zh.md)
 
-This document defines the complete external interface provided by this repository's `vl_api_adapter`. The model is MOSS-VL Realtime and the protocol identifier is `vl-api-v2`. See the [README](./README.md) for deployment and client examples and the [validation record](../../../deployment/vl_api_v2/VALIDATION.md) for test results.
+This document defines the complete external interface provided by this repository's `vl_api_adapter`. The model is MOSS-VL Realtime and the protocol identifier is `vl-api-v2`. See the [README](./README.md) for deployment and client examples and the [validation record](./VALIDATION.md) for test results.
 
 **Normative terms:** **MUST** indicates a requirement; **MUST NOT** a prohibition; **SHOULD** a recommendation requiring justification when departing from it; **MAY** an option. Other text is explanatory.
 

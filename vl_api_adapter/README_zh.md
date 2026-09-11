@@ -2,18 +2,33 @@
 
 [English](./README.md) | **简体中文**
 
-[完整 API 接口文档](./API_zh.md) | [验证结果](../../../deployment/vl_api_v2/VALIDATION_zh.md)
+[完整 API 接口文档](./API_zh.md) | [验证结果](./VALIDATION_zh.md)
 
 面向 MOSS-VL realtime 的显式启用协议层。有可见文字后收到**模型发出的 silence 事件**，返回一次 `response.done`；没有新文字的连续静默不生成空回答。后端请求继续运行，直到 final、abort、容量限制或故障使其结束。
 
 原生 v1 和 `vl_legacy_adapter` 保持原语义。现有 Demo／薄网关将 `response.done` 视为请求终态，不能直接改连 v2。`turn_id` 仍由新问题推进，`response_id`、`response_seq` 区分同一轮内的多段回答。不通过网络静默计时、修改生成额度、重载模型或重建 KV 切分回答。
+
+## 目录
+
+```text
+vl_api_adapter/
+  adapter/          协议实现（vl_api_adapter.adapter）
+  tests/            CPU 协议回归测试
+  start.sh          启用 v2 监听的后端启动入口
+  client.py         WebSocket 示例客户端
+  API*.md           完整 API 文档
+  VALIDATION*.md    验证结果
+  README*.md        安装与使用说明
+```
+
+以下命令均在仓库根目录执行，使用已安装的后端环境。适配层随后端 Python 包安装，不需要单独安装依赖。模型计量钩子仍位于 `sglang_omni/models/moss_vl_realtime/`。
 
 ## 启动
 
 准备仓库的后端环境，在仓库根目录执行：
 
 ```bash
-bash deployment/vl_api_v2/start.sh /path/to/MOSS-VL-Realtime-SGLANG
+bash vl_api_adapter/start.sh /path/to/MOSS-VL-Realtime-SGLANG
 ```
 
 复用原有单卡生产配置和空闲卡选择。原生 v1 默认在 18500，v2 默认在 18610，路径为 `/v1/video/realtime`，共享模型和总会话容量。`--gpus`、`--host`、`--port` 配置原有启动器，`VL_API_V2_PORT` 修改 v2 端口。原启动脚本默认不启用 v2。
@@ -21,7 +36,7 @@ bash deployment/vl_api_v2/start.sh /path/to/MOSS-VL-Realtime-SGLANG
 自定义或 TP 部署可给 `examples/run_moss_vl_realtime_server.py` 增加 `--vl-api-v2-port 18610`。`VL_API_V2_MODEL_VERSION` 可提供部署版本，缺失时返回 null/unknown。设置 `VL_API_V2_API_KEY` 后，v2 WS 要求 `Authorization: Bearer ...`；未设置时应仅用于可信网络或有鉴权的网关之后。v2 不暴露管理操作路由。
 
 ```bash
-python examples/vl_api_v2_client.py \
+python vl_api_adapter/client.py \
   --frame deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122/frame_0003.png
 ```
 
@@ -29,7 +44,7 @@ python examples/vl_api_v2_client.py \
 
 ## 输入与限制
 
-字段定义及三阶段帧握手沿用[原生输入参考](../../../docs/cookbook/moss_vl_realtime.md)，v2 的输出差异见下文。
+字段定义及三阶段帧握手沿用[原生输入参考](../docs/cookbook/moss_vl_realtime.md)，v2 的输出差异见下文。
 
 保留原生 configure/frame/prompt 字段：初始用户 `prompt`、独立 `system_prompt`、每次 extend 的 `max_new_tokens` 余量、tokens/s 的 `max_tokens_per_turn`、输入队列和 `include_usage`。图像支持 JPEG/PNG/WebP，保留帧附带 prompt/final。拒绝未知字段、非有限数值、非法序号和编码与 MIME 不匹配的图像。帧／问题共用连续 `seq_no`；只有明确拒绝且未 accepted 的输入可以复用序号。
 
@@ -66,10 +81,10 @@ python examples/vl_api_v2_client.py \
 
 ## 验收交接
 
-原版精度测试在 1/2/4 会话下全部通过，同一 manifest 的新旧协议逐事件文本也全部一致。另完成 CPU 回归、同轮多段回答、打断、滑窗、计量和异常清理检查。验证范围及开放描述补充实验见[验证结果](../../../deployment/vl_api_v2/VALIDATION_zh.md)；固定样例通过不代表任意并发输入都保证逐字一致。
+原版精度测试在 1/2/4 会话下全部通过，同一 manifest 的新旧协议逐事件文本也全部一致。另完成 CPU 回归、同轮多段回答、打断、滑窗、计量和异常清理检查。验证范围及开放描述补充实验见[验证结果](./VALIDATION_zh.md)；固定样例通过不代表任意并发输入都保证逐字一致。
 
 ```bash
-python -m pytest tests/unit_test/serve/test_vl_api_v2.py \
+python -m pytest vl_api_adapter/tests/test_vl_api_v2.py \
   tests/unit_test/serve/test_video_realtime.py \
   tests/unit_test/serve/test_video_realtime_lifecycle.py \
   vl_legacy_adapter/tests/test_lifecycle.py -q

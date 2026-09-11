@@ -2,7 +2,7 @@
 
 [English](./API.md) | **简体中文**
 
-本文定义本仓库 `vl_api_adapter` 对外提供的完整接口。适用模型为 MOSS-VL Realtime，协议标识为 `vl-api-v2`。部署与客户端示例见 [README](./README_zh.md)，测试结果见[验证记录](../../../deployment/vl_api_v2/VALIDATION_zh.md)。
+本文定义本仓库 `vl_api_adapter` 对外提供的完整接口。适用模型为 MOSS-VL Realtime，协议标识为 `vl-api-v2`。部署与客户端示例见 [README](./README_zh.md)，测试结果见[验证记录](./VALIDATION_zh.md)。
 
 **规范性用词**：**必须**（MUST）表示强制；**不得**（MUST NOT）表示禁止；**应**（SHOULD）表示推荐，偏离需有理由；**可**（MAY）表示可选。其余为说明性文字。
 

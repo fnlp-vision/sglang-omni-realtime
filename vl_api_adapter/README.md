@@ -2,18 +2,33 @@
 
 **English** | [简体中文](./README_zh.md)
 
-[Complete API Reference](./API.md) | [Validation Results](../../../deployment/vl_api_v2/VALIDATION.md)
+[Complete API Reference](./API.md) | [Validation Results](./VALIDATION.md)
 
 An opt-in protocol adapter for MOSS-VL realtime. A visible text segment followed by a **model-origin silence event** produces one `response.done`. Silence without new visible text does not create an empty response. The backend request continues until `final`, abort, a limit or a failure ends it.
 
 Native v1 and `vl_legacy_adapter` retain their existing semantics. Do not point the current Demo or thin gateway at v2: they treat `response.done` as request-terminal. `turn_id` still advances on new questions; `response_id` and `response_seq` distinguish segments within a turn. No network-silence timer, generation-budget change, model reload or KV reset is used to split responses.
+
+## Layout
+
+```text
+vl_api_adapter/
+  adapter/          Protocol implementation (vl_api_adapter.adapter)
+  tests/            CPU protocol regressions
+  start.sh          Backend launcher with the v2 listener
+  client.py         WebSocket example client
+  API*.md           Complete API reference
+  VALIDATION*.md    Validation results
+  README*.md        Setup and usage
+```
+
+Commands below run from the repository root using the installed backend environment. The adapter is included in the backend Python package; it has no separate dependency installation. Model accounting hooks remain in `sglang_omni/models/moss_vl_realtime/`.
 
 ## Start
 
 Install the repository's backend environment, then run from the repository root:
 
 ```bash
-bash deployment/vl_api_v2/start.sh /path/to/MOSS-VL-Realtime-SGLANG
+bash vl_api_adapter/start.sh /path/to/MOSS-VL-Realtime-SGLANG
 ```
 
 This uses the existing single-GPU production profile and idle-device selection. Native v1 remains on port 18500; v2 uses port 18610 and `/v1/video/realtime`, sharing the loaded model and total session capacity. `--gpus`, `--host` and `--port` configure the original launcher; `VL_API_V2_PORT` selects the v2 port. Defaults do not enable v2 when using the original start script.
@@ -21,7 +36,7 @@ This uses the existing single-GPU production profile and idle-device selection. 
 For custom/TP settings, add `--vl-api-v2-port 18610` to `examples/run_moss_vl_realtime_server.py`. `VL_API_V2_MODEL_VERSION` optionally supplies deployment revision metadata; absent values are null/unknown. `VL_API_V2_API_KEY` optionally requires `Authorization: Bearer ...` on the v2 WebSocket. With no key, use a trusted network/authenticated gateway. The v2 app exposes no administrative routes.
 
 ```bash
-python examples/vl_api_v2_client.py \
+python vl_api_adapter/client.py \
   --frame deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122/frame_0003.png
 ```
 
@@ -29,7 +44,7 @@ python examples/vl_api_v2_client.py \
 
 ## Inputs and Limits
 
-Field definitions and the three-phase frame handshake follow the [native input reference](../../../docs/cookbook/moss_vl_realtime.md), with the v2 output differences described below.
+Field definitions and the three-phase frame handshake follow the [native input reference](../docs/cookbook/moss_vl_realtime.md), with the v2 output differences described below.
 
 The native configure/frame/prompt field set is retained: initial-user `prompt`, separate `system_prompt`, per-extend `max_new_tokens`, tokens/s `max_tokens_per_turn`, input queue capacity and optional `include_usage`. Images may be JPEG, PNG or WebP; frame-attached prompt/final remain supported. Unknown fields, non-finite values, invalid sequences and mismatched image MIME are rejected. Frame/prompt events share continuous `seq_no`; only a clearly rejected, unaccepted input can reuse its sequence.
 
@@ -66,10 +81,10 @@ Transport/process failure cannot guarantee a terminal event. If authoritative fi
 
 ## Validation Handoff
 
-The original accuracy suite passes with 1/2/4 sessions, and per-event native/v2 text matches when replaying the same manifest. Additional checks cover CPU regressions, same-turn responses, interruption, sliding windows, accounting and failure cleanup. See [validation results](../../../deployment/vl_api_v2/VALIDATION.md) for scope and supplemental open-description experiments. Passing fixed fixtures does not guarantee exact concurrent output for arbitrary inputs.
+The original accuracy suite passes with 1/2/4 sessions, and per-event native/v2 text matches when replaying the same manifest. Additional checks cover CPU regressions, same-turn responses, interruption, sliding windows, accounting and failure cleanup. See [validation results](./VALIDATION.md) for scope and supplemental open-description experiments. Passing fixed fixtures does not guarantee exact concurrent output for arbitrary inputs.
 
 ```bash
-python -m pytest tests/unit_test/serve/test_vl_api_v2.py \
+python -m pytest vl_api_adapter/tests/test_vl_api_v2.py \
   tests/unit_test/serve/test_video_realtime.py \
   tests/unit_test/serve/test_video_realtime_lifecycle.py \
   vl_legacy_adapter/tests/test_lifecycle.py -q
