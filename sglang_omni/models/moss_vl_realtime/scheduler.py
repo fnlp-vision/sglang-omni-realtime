@@ -33,6 +33,9 @@ from sglang_omni.models.moss_vl_realtime.frame_window import (
     stage_segment_frame_records,
 )
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
+from sglang_omni.models.moss_vl_realtime.accounting import (
+    ContextExhaustedError, FINALIZE_ACTION, RealtimeAccounting, error_code,
+)
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimePhase,
     MossVLRealtimeRuntimeState,
@@ -101,6 +104,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
             raise ValueError("parked_request_timeout_s must be finite and positive")
         self.parked_reqs: dict[str, Any] = {}
         self.parked_since: dict[str, float] = {}
+        self._accounting_records: dict[str, RealtimeAccounting] = {}
         kwargs["request_update_handler"] = self._ingest_request_update
         super().__init__(*args, **kwargs)
 
@@ -142,9 +146,21 @@ class MossVLRealtimeScheduler(OmniScheduler):
         request_admission_lock_held: bool = False,
     ) -> None:
         state = _runtime_state(req_data)
+        if state.accounting is not None:
+            self._prune_accounting_records()
+            self._accounting_records[state.request_id] = state.accounting
         context_limit = getattr(getattr(self, "server_args", None), "context_length", None)
         if context_limit is not None:
             state.context_limit = int(context_limit)
+        if (state.accounting is not None and state.context_limit is not None
+                and len(req_data.req.origin_input_ids) + 1 > state.context_limit):
+            state.accounting.failure_code = "context_exhausted"
+            state.accounting.freeze()
+            self._emit_request_error(
+                state.request_id, ContextExhaustedError("initial prompt exceeds the realtime context limit")
+            )
+            self.abort(state.request_id, defer_running_cleanup=False)
+            return
         self.realtime_sessions.open(state.request_id, state.session_id)
         try:
             super()._enqueue_built_request(
@@ -153,9 +169,68 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 req_data,
                 request_admission_lock_held=request_admission_lock_held,
             )
+            if state.accounting is not None and state.request_id in self._aborted_request_ids:
+                state.accounting.freeze()
+                self.realtime_sessions.close(state.request_id)
         except Exception:
             self.realtime_sessions.close(state.request_id)
+            record = self._accounting_records.get(state.request_id)
+            if record is not None:
+                record.freeze()
             raise
+
+    def _prune_accounting_records(self) -> None:
+        records = self._accounting_records
+        now = time.monotonic()
+        retired = sorted(
+            (record.retired_at, rid) for rid, record in records.items()
+            if record.retired_at is not None
+        )
+        for retired_at, rid in retired:
+            if now - retired_at > 300 or len(records) >= 4096:
+                records.pop(rid, None)
+
+    def _emit_request_error(self, request_id: str, error: Exception) -> None:
+        record = getattr(self, "_accounting_records", {}).get(request_id)
+        if record is not None and record.failure_code is None:
+            record.failure_code = error_code(error)
+            record.failure_seq = getattr(error, "seq_no", record.failure_seq)
+        super()._emit_request_error(request_id, error)
+
+    def _run_admin_action(self, action, payload=None):
+        if action == "realtime_v2_info":
+            return {"success": True, "message": "ok", "data": {
+                "realtime_v2": True, "context_limit": int(self.server_args.context_length),
+            }}
+        if action != FINALIZE_ACTION:
+            return super()._run_admin_action(action, payload)
+        payload = dict(payload or {})
+        rid, sid = payload.get("request_id"), payload.get("session_id")
+        if not isinstance(rid, str) or not isinstance(sid, str):
+            raise ValueError("request_id and session_id are required")
+        # Admin operations execute on the scheduler owner, on all TP ranks.
+        # Resolve any launched step before abort/freezing its logical counters.
+        pending = getattr(self, "_async_pending", None)
+        if pending is not None and any(req.rid == rid for req in pending[0].reqs):
+            self._resolve_pending_async()
+        record = self._accounting_records.get(rid)
+        data = self._find_request_data(rid)
+        if record is None and data is not None:
+            raise ValueError("request does not have v2 accounting")
+        if record is not None and record.session_id != sid:
+            raise ValueError("accounting session ownership mismatch")
+        if record is None:
+            # Cancelling a not-yet-admitted build cannot have model positions.
+            self.abort(rid, defer_running_cleanup=False)
+            record = RealtimeAccounting(sid)
+        elif not record.frozen:
+            self.abort(rid, defer_running_cleanup=False)
+        snapshot = record.freeze()
+        return {"success": True, "message": "ok", "data": {
+            "request_id": rid, "session_id": sid, "usage": snapshot,
+            "watermark": record.step, "final": True,
+            "failure_code": record.failure_code, "seq_no": record.failure_seq,
+        }}
 
     def _ingest_request_update(self, req_data: Any, data: Any) -> None:
         state = _runtime_state(req_data)
@@ -464,7 +539,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
             self._resolve_pending_async()
             errors = self._tp_consistent_decision(violations())
         for rid, message in errors.items():
-            self._emit_request_error(rid, RuntimeError(message))
+            self._emit_request_error(rid, ContextExhaustedError(message))
             self.abort(rid, defer_running_cleanup=False)
 
     def _materialize_realtime_extensions(self) -> ScheduleBatch | None:
@@ -520,6 +595,8 @@ class MossVLRealtimeScheduler(OmniScheduler):
                         setattr(req, FRAME_RECORDS_STAGED_ATTR, frame_records)
             except Exception as exc:
                 logger.exception("Failed to materialize realtime event for %s", req.rid)
+                if state.accounting is not None and events:
+                    state.accounting.failure_seq = events[-1].seq_no
                 self._emit_request_error(req.rid, exc)
                 self.abort(req.rid, defer_running_cleanup=False)
                 continue
@@ -735,6 +812,15 @@ class MossVLRealtimeScheduler(OmniScheduler):
         super().process_batch_result(batch, result)
         for req in tuple(batch.reqs):
             if req.finished():
+                record = getattr(self, "_accounting_records", {}).get(req.rid)
+                if record is not None:
+                    state = getattr(req, RUNTIME_STATE_ATTR)
+                    finish = req.finished_reason.to_json()
+                    if (finish.get("type") == "length" and state.context_limit is not None
+                            and record.snapshot()["total_tokens"] >= state.context_limit
+                            and record.failure_code is None):
+                        record.failure_code = "context_exhausted"
+                    record.freeze()
                 self.realtime_sessions.close(req.rid)
                 self.parked_reqs.pop(req.rid, None)
                 self.parked_since.pop(req.rid, None)
@@ -932,6 +1018,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if parked_req is not None:
             self._release_request_kv_cache(parked_req)
             parked_req._omni_data = None
+        record = getattr(self, "_accounting_records", {}).get(request_id)
+        if record is not None:
+            record.freeze()
 
     def stop(self) -> None:
         for request_id in tuple(self.parked_reqs):
@@ -1094,7 +1183,7 @@ def _guard_realtime_context_capacity(
     projected_kv = kv_total + len(segment.raw_append_ids) + 1
     projected_total = token_total + len(segment.raw_append_ids) + 2
     if projected_total > context_length or projected_kv > row_width:
-        raise RuntimeError(
+        raise ContextExhaustedError(
             "realtime request exhausted the context length: "
             f"projected token positions {projected_total}/{context_length}, "
             f"KV positions {projected_kv}/{row_width}; "

@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Self
+from typing import Any, Self
 
 import torch
 
@@ -70,6 +70,7 @@ class MossVLRealtimeRuntimeState:
     appended_encoder_length: int | None = None
     phase: MossVLRealtimePhase = MossVLRealtimePhase.WAITING_FOR_EVENT
     _append_inflight: bool = field(default=False, init=False, repr=False)
+    accounting: Any = field(default=None, repr=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.request_id or not self.session_id:

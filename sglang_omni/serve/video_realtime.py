@@ -826,13 +826,13 @@ class VideoRealtimeSessionManager:
         self.frame_store = SharedMemoryFrameStore()
         self.sessions: dict[str, VideoRealtimeSession] = {}
 
-    def open(self, websocket: WebSocket) -> VideoRealtimeSession:
+    def open(self, websocket: WebSocket, *, session_factory=None) -> VideoRealtimeSession:
         if len(self.sessions) >= self.max_sessions:
             raise RuntimeError(
                 "video realtime service has no free session slot "
                 f"(capacity {self.max_sessions})"
             )
-        session = VideoRealtimeSession(
+        session = (session_factory or VideoRealtimeSession)(
             websocket,
             client=self.client,
             model_name=self.model_name,

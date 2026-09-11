@@ -379,6 +379,7 @@ async def _run_server(
     enable_realtime: bool = False,
     video_realtime_warmup: bool = True,
     video_realtime_benchmark_mode: bool = False,
+    vl_api_v2_port: int | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -389,6 +390,13 @@ async def _run_server(
     """
     # 0. Check port availability before loading models
     port = _find_available_port(host, port)
+    if vl_api_v2_port is not None:
+        if not type(pipeline_config).supports_video_realtime:
+            raise ValueError("VL API v2 requires a realtime video pipeline")
+        if not 1 <= vl_api_v2_port <= 65535 or vl_api_v2_port == port:
+            raise ValueError("VL API v2 requires a distinct valid port")
+        if _find_available_port(host, vl_api_v2_port) != vl_api_v2_port:
+            raise ValueError("VL API v2 port is occupied")
 
     mp_runner = MultiProcessPipelineRunner(pipeline_config)
     startup_timeout = float(os.environ.get("SGLANG_OMNI_STARTUP_TIMEOUT", "600"))
@@ -486,7 +494,22 @@ async def _run_server(
             **uvicorn_kwargs,
         )
         server = _PipelineUvicornServer(config)
-        await _serve_with_failure_watch(server, [mp_runner.wait_failed()])
+        if vl_api_v2_port is None:
+            await _serve_with_failure_watch(server, [mp_runner.wait_failed()])
+        else:
+            from vl_api_adapter.adapter.server import (
+                SecondaryServer, create_v2_app, serve_pair,
+            )
+
+            v2_app = await create_v2_app(
+                app.state.video_realtime_manager,
+                model_version=os.environ.get("VL_API_V2_MODEL_VERSION"),
+            )
+            secondary = SecondaryServer(uvicorn.Config(
+                v2_app, host=host, port=vl_api_v2_port, log_level=log_level,
+                timeout_graceful_shutdown=30, **uvicorn_kwargs,
+            ))
+            await serve_pair(server, secondary, mp_runner.wait_failed())
     finally:
         logger.info("Shutting down pipeline …")
         await mp_runner.stop()
@@ -577,6 +600,7 @@ def launch_server(
     enable_realtime: bool = False,
     video_realtime_warmup: bool = True,
     video_realtime_benchmark_mode: bool = False,
+    vl_api_v2_port: int | None = None,
     allowed_local_media_path: str | None = None,
     allowed_media_domains: list[str] | None = None,
     tts_batch_max_items: int = DEFAULT_TTS_BATCH_MAX_ITEMS,
@@ -598,6 +622,8 @@ def launch_server(
             accepting MOSS-VL realtime traffic.
         video_realtime_benchmark_mode: Allow benchmark-only MOSS-VL realtime
             session options. Keep False for production traffic.
+        vl_api_v2_port: Optional second listener for per-response VL API v2;
+            shares native admission capacity and the loaded model.
         allowed_local_media_path: Directory allowed for ``file://`` media
             references in TTS requests.
         allowed_media_domains: Domains allowed for remote TTS reference audio.
@@ -616,6 +642,7 @@ def launch_server(
             enable_realtime=enable_realtime,
             video_realtime_warmup=video_realtime_warmup,
             video_realtime_benchmark_mode=video_realtime_benchmark_mode,
+            vl_api_v2_port=vl_api_v2_port,
             allowed_local_media_path=allowed_local_media_path,
             allowed_media_domains=allowed_media_domains,
             tts_batch_max_items=tts_batch_max_items,

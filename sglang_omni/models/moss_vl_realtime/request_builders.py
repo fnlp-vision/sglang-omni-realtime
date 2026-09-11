@@ -130,6 +130,10 @@ def make_moss_vl_realtime_scheduler_adapters(
             max_tokens_per_turn=max_tokens_per_turn,
             decode_allowance=request_max_new_tokens,
         )
+        if params.get("realtime_accounting_v2"):
+            from sglang_omni.models.moss_vl_realtime.accounting import RealtimeAccounting
+
+            state.accounting = RealtimeAccounting(session_id)
         setattr(req, RUNTIME_STATE_ATTR, state)
         # Realtime sessions must never share radix-cached KV: a matched prefix
         # lands at the head of the *decoder* region of the realtime page row
@@ -192,6 +196,17 @@ def make_moss_vl_realtime_stream_output_builder(
         req_output: Any,
     ) -> list[OutgoingMessage]:
         messages: list[OutgoingMessage] = []
+        accounting = data.runtime_state.accounting
+        if accounting is not None:
+            if req_output.data is not None:
+                accounting.sampled()
+            messages.append(OutgoingMessage(
+                request_id=request_id, type="stream",
+                data={"event": "realtime.accounting", "modality": "control",
+                      "usage": accounting.snapshot(), "watermark": accounting.step,
+                      "context_limit": int(data.runtime_state.context_limit or context_length)},
+                metadata={"modality": "control"},
+            ))
         if (data.stage_payload.request.params or {}).get("include_usage"):
             state = data.runtime_state
             # Include the sampled pending token; it still needs its next forward.
