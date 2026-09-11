@@ -78,7 +78,9 @@ class MossVLRealtimeScheduleBatch(ScheduleBatch):
         for req in self.reqs:
             error = realtime_decode_capacity_error(req, self.req_to_token_pool)
             if error is not None:
-                raise RuntimeError(error)
+                from sglang_omni.models.moss_vl_realtime.accounting import ContextExhaustedError
+
+                raise ContextExhaustedError(error)
         record = _DecodeAllocation(
             reqs=tuple(self.reqs),
             positions=tuple(int(req.kv.kv_allocated_len) for req in self.reqs),

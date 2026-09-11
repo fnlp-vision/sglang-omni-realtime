@@ -66,6 +66,14 @@ class MossVLRealtimeModelRunner(ModelRunner):
     ) -> None:
         del result, forward_batch, requests
         if is_moss_vl_realtime_batch(schedule_batch):
+            accounting_before = {}
+            for req in schedule_batch.reqs:
+                state = getattr(req, RUNTIME_STATE_ATTR)
+                if state.accounting is not None:
+                    accounting_before[req.rid] = (
+                        state.effective_appended_encoder_length, state.decoder_length,
+                        int(state.pending_token_id is not None),
+                    )
             commit_moss_vl_realtime_batch(schedule_batch)
             for index, req in enumerate(schedule_batch.reqs):
                 state = getattr(req, RUNTIME_STATE_ATTR)
@@ -138,6 +146,12 @@ class MossVLRealtimeModelRunner(ModelRunner):
                 ):
                     if hasattr(req, name):
                         delattr(req, name)
+                if state.accounting is not None:
+                    vision, decoder, pending = accounting_before[req.rid]
+                    state.accounting.commit(
+                        vision=state.effective_appended_encoder_length - vision,
+                        text_input=state.decoder_length - decoder - pending,
+                    )
 
     def post_decode(
         self,
@@ -159,6 +173,8 @@ class MossVLRealtimeModelRunner(ModelRunner):
             state.decoder_length += 1
             state.next_mrope_position += 1
             state.phase = MossVLRealtimePhase.DECODING
+            if state.accounting is not None and not state.accounting.frozen:
+                state.accounting.commit()
 
         commit_moss_vl_realtime_decode(schedule_batch)
 
@@ -221,5 +237,7 @@ class MossVLRealtimeModelRunner(ModelRunner):
             state.decoder_length += 1
             state.next_mrope_position += 1
             state.phase = MossVLRealtimePhase.DECODING
+            if state.accounting is not None and not state.accounting.frozen:
+                state.accounting.commit()
 
         commit_moss_vl_realtime_decode(schedule_batch)

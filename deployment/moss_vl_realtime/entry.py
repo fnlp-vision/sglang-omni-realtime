@@ -31,6 +31,7 @@ def parse_args(argv=None):
     serve.add_argument("--dry-run", action="store_true")
     serve.add_argument("--host", default=CONFIG["host"])
     serve.add_argument("--port", type=int, default=CONFIG["port"])
+    serve.add_argument("--vl-api-v2-port", type=int, default=None)
     return parser.parse_args(argv)
 
 
@@ -39,16 +40,20 @@ def main(argv=None):
     args.model_path = validate_model(args.model_path)
     if not 1 <= args.port <= 65535:
         raise ValueError("--port must be between 1 and 65535")
+    if args.vl_api_v2_port is not None and (
+        not 1 <= args.vl_api_v2_port <= 65535 or args.vl_api_v2_port == args.port
+    ):
+        raise ValueError("--vl-api-v2-port must be valid and distinct from --port")
     if args.dry_run:
+        details = dict(
+            model_path=str(args.model_path), config=CONFIG, host=args.host,
+            port=args.port, gpus=args.gpus or "one idle GPU",
+        )
+        if args.vl_api_v2_port is not None:
+            details["vl_api_v2_port"] = args.vl_api_v2_port
         print(
             json.dumps(
-                dict(
-                    model_path=str(args.model_path),
-                    config=CONFIG,
-                    host=args.host,
-                    port=args.port,
-                    gpus=args.gpus or "one idle GPU",
-                ),
+                details,
                 indent=2,
             )
         )
@@ -65,7 +70,11 @@ def main(argv=None):
             "start.sh launches a single-GPU instance; provide at most one --gpus value"
         )
     free_port(args.host, args.port)
+    if args.vl_api_v2_port is not None:
+        free_port(args.host, args.vl_api_v2_port)
     command = server_command(args.model_path, args.port, args.host)
+    if args.vl_api_v2_port is not None:
+        command.extend(["--vl-api-v2-port", str(args.vl_api_v2_port)])
     print(
         f'GPU {gpus[0]["index"]}; {CONFIG["max_sessions"]} sessions; '
         f"http://{args.host}:{args.port}/health",
