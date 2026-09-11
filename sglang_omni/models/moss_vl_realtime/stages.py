@@ -8,7 +8,7 @@ from typing import Any
 def create_sglang_moss_vl_realtime_executor(
     model_path: str,
     *,
-    device: str = "cuda:0",
+    device: str | None = None,
     gpu_id: int = 0,
     tp_rank: int = 0,
     tp_size: int = 1,

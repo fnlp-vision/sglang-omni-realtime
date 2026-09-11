@@ -182,6 +182,11 @@ class SGLModelRunner(ModelRunner):
         self._register_omni_model()
 
         port_args = PortArgs.init_new(server_args)
+        if nccl_port is not None:
+            # Keep every TP rank on the shared rendezvous port assigned by the
+            # placement layer; PortArgs.init_new would otherwise pick a fresh
+            # random port per rank and the ranks would never rendezvous.
+            port_args.nccl_port = nccl_port
         tp_size = server_args.tp_size
         self.nccl_port = port_args.nccl_port
 
@@ -222,6 +227,29 @@ class SGLModelRunner(ModelRunner):
             moe_dp_size=server_args.moe_dp_size,
             gpu_id=gpu_id,
         )
+
+        import sglang_omni.compat as _compat
+
+        if _compat.needs_bridge():
+            # 0.5.14 takes flat rank arguments; the attn_* world info is
+            # computed inside the base constructor.
+            super().__init__(
+                model_config=model_config,
+                mem_fraction_static=server_args.mem_fraction_static,
+                gpu_id=gpu_id,
+                tp_rank=tp_rank,
+                tp_size=tp_size,
+                moe_ep_rank=moe_ep_rank,
+                moe_ep_size=moe_ep_size,
+                pp_rank=pp_rank,
+                pp_size=pp_size,
+                nccl_port=nccl_port,
+                server_args=server_args,
+                dp_rank=None,
+                attn_cp_rank=0,
+                moe_dp_rank=None,
+            )
+            return
 
         super().__init__(
             model_config=model_config,

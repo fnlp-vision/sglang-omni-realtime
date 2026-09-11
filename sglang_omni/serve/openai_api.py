@@ -307,6 +307,18 @@ def create_app(
             configure_timeout_s=video_realtime_configure_timeout_s,
         )
 
+        # Caller-compatible one-round vision analysis protocol on the same
+        # path the integration contract names (/v1/realtime); the OpenAI
+        # audio realtime route is not mounted in VL-only deployments.
+        from sglang_omni.serve.vision_realtime_compat import (
+            register_vision_realtime,
+        )
+
+        register_vision_realtime(
+            app,
+            max_sessions=video_realtime_max_sessions,
+        )
+
     return app
 
 

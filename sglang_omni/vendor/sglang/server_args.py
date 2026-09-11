@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def get_global_server_args():
@@ -29,18 +32,29 @@ def override_server_args(server_args: Any, source: str, **fields: Any) -> None:
     from sglang.srt.runtime_context import get_context
 
     context = get_context()
-    try:
-        published_server_args = context.server_args
-    except ValueError:
-        published_server_args = None
+    published_server_args = getattr(context, "server_args", None)
 
-    if published_server_args is server_args:
+    if published_server_args is server_args and callable(
+        getattr(context, "override", None)
+    ):
         context.override(source, **fields)
         return
 
-    from sglang.srt.arg_groups.overrides import declare_late_resolution
+    try:
+        from sglang.srt.arg_groups.overrides import declare_late_resolution
 
-    declare_late_resolution(server_args, source, **fields)
+        declare_late_resolution(server_args, source, **fields)
+        return
+    except ImportError:
+        pass
+
+    # 0.5.14 has no override machinery; apply the audited fields directly.
+    logger.debug(
+        "override_server_args(%s): applying fields directly (pre-0.5.15 sglang)",
+        source,
+    )
+    for name, value in fields.items():
+        setattr(server_args, name, value)
 
 
 __all__ = ["get_global_server_args", "override_server_args"]
