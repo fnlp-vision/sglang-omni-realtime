@@ -111,6 +111,12 @@ async def warmup_video_realtime(
         frame_store.cleanup(request_id)
 
 
+class VideoPrefillMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal['system', 'user', 'assistant']
+    content: str = Field(max_length=131072)
+
+
 class VideoSessionConfigure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -119,6 +125,14 @@ class VideoSessionConfigure(BaseModel):
     # prompt is empty; production callers pass the SFT prompt explicitly.
     prompt: str = ""
     system_prompt: str | None = None
+    prefill_messages: list[VideoPrefillMessage] | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator('prefill_messages')
+    @classmethod
+    def bound_prefill_text(cls, messages):
+        if messages is not None and sum(len(m.content) for m in messages) > 131072:
+            raise ValueError('prefill_messages text exceeds 131072 characters')
+        return messages
     max_new_tokens: int = Field(default=4096, gt=0)
     max_tokens_per_turn: float = Field(
         default=86400.0,
@@ -371,6 +385,8 @@ class VideoRealtimeSession:
                 "initial_prompt": config.prompt,
                 "system_prompt": config.system_prompt,
                 "session_id": self.session_id,
+                **({'prefill_messages': [m.model_dump() for m in config.prefill_messages]}
+                   if config.prefill_messages is not None else {}),
             },
             sampling=SamplingParams(
                 temperature=config.temperature,
@@ -851,6 +867,10 @@ def register_video_realtime(
         configure_timeout_s=configure_timeout_s,
     )
     app.state.video_realtime_manager = manager
+
+    @app.get('/v1/video/realtime/capabilities')
+    async def video_realtime_capabilities():
+        return {'prefill_messages': True}
 
     @app.websocket("/v1/video/realtime")
     async def video_realtime(websocket: WebSocket) -> None:

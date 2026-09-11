@@ -74,6 +74,10 @@ input.frame.processed -> response.text.delta / response.turn.silence
 
 Frames and `input.prompt` share an increasing `seq_no`. Wait for `input.frame.ready` before sending an image. `session.abort` ends the session even while input processing waits for capacity. The configuration deadline defaults to 180 seconds, excluding model prefill.
 
+`input.prompt` also works before any frame is sent. The server consumes the
+trained assistant opener before generation, so it is not mistaken for an idle
+decision. Generated silence remains valid, including an explicit request to stay quiet.
+
 `max_tokens_per_turn` is a soft per-session tokens/s target, not an answer-length limit. `max_new_tokens` is a generation allowance re-anchored after each input. See the [protocol](./docs/cookbook/moss_vl_realtime.md#websocket-protocol) for fields, errors, and usage events.
 
 ## Demo Integration
@@ -116,6 +120,16 @@ CUDA_VISIBLE_DEVICES="" python -m pytest -q \
 | [models/moss_vl_realtime](./sglang_omni/models/moss_vl_realtime/) | Model integration, incremental input, scheduling, and KV management |
 | [serve/video_realtime.py](./sglang_omni/serve/video_realtime.py) | WebSocket, backpressure, and session lifecycle |
 | [Realtime cookbook](./docs/cookbook/moss_vl_realtime.md) | Advanced deployment and protocol reference |
+
+### Restoring Text History
+
+`GET /v1/video/realtime/capabilities` advertises `prefill_messages: true`.
+Clients may pass `prefill_messages` in `session.configure` to restore text history
+as `{role, content}` messages (`system`, `user`, or `assistant`). The limit is
+64 messages and 131072 total text characters; the model context limit still applies.
+Assistant openers are restored automatically. This reconstructs text context,
+not cached KV or past image/video tensors. Clients must probe support before
+sending this field to older backends.
 
 ## Upstream and License
 

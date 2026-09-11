@@ -134,13 +134,13 @@ def build_realtime_append_text(
     prompts: Iterable[str] = (),
     frame_timestamps: Iterable[float] = (),
 ) -> str:
-    """Build one drain-cycle append segment matching the Transformers reference.
+    """Build a drain-cycle segment with the trained assistant opener consumed.
 
     Mirrors the reference ``_realtime_update_context`` drain semantics: prompts
     come first in arrival order (each closes the current assistant turn and
-    opens the next user/assistant turn); whenever the same cycle also appends
-    frames, every prompt is followed by ``<|silence|>`` so the assistant turn
-    keeps its trained opener token. Frame wrappers come last, in the
+    opens the next user/assistant turn). Every prompt is followed by
+    ``<|silence|>``; prompt-only turns must not sample that mandatory opener
+    as an idle decision. Frame wrappers come last, in the
     caller-provided (timestamp-sorted) order.
     """
     timestamps = tuple(frame_timestamps)
@@ -155,6 +155,7 @@ def build_realtime_append_text(
             f"{prompt}"
             "<|im_end|>\n<|im_start|>assistant\n"
         )
-        if timestamps:
-            text += SILENCE_TOKEN
+        # This is the trained assistant opener, not a generated idle decision.
+        # Letting a prompt-only turn generate it would immediately park the turn.
+        text += SILENCE_TOKEN
     return text + "".join(build_realtime_frame_text(ts) for ts in timestamps)

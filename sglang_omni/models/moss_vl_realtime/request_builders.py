@@ -70,6 +70,24 @@ def make_moss_vl_realtime_scheduler_adapters(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": initial_prompt},
         ]
+        prefill = source.get('prefill_messages')
+        if prefill is not None:
+            if not isinstance(prefill, list) or not 1 <= len(prefill) <= 64 or any(
+                not isinstance(m, dict) or m.get('role') not in ('system', 'user', 'assistant')
+                or not isinstance(m.get('content'), str) for m in prefill
+            ):
+                raise ValueError('invalid prefill_messages')
+            messages = [{'role': m['role'], 'content': m['content']} for m in prefill]
+            # UI transcripts omit the trained opener consumed by the runtime.
+            for message in messages:
+                if message['role'] == 'assistant' and not message['content'].startswith('<|silence|>'):
+                    message['content'] = '<|silence|>' + message['content']
+            if sum(len(m['content']) for m in messages) > 131072:
+                raise ValueError('prefill_messages text exceeds 131072 characters')
+            if messages[0]['role'] != 'system':
+                messages.insert(0, {'role': 'system', 'content': system_prompt})
+            if messages[-1]['role'] != 'user':
+                messages.append({'role': 'user', 'content': ''})
         encoded = tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,

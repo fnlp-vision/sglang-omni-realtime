@@ -74,6 +74,9 @@ input.frame.processed -> response.text.delta / response.turn.silence
 
 帧与 `input.prompt` 共用递增的 `seq_no`。发送图像前等待 `input.frame.ready`。`session.abort` 结束整个会话，即使输入处理正在等待容量也可处理。有效配置的默认等待期限为 180 秒，不包含模型 prefill。
 
+尚未发送画面时也可通过 `input.prompt` 提问。服务端会预先补齐训练格式中的 assistant 开头，
+避免将这个开头误当成静默结束信号；模型实际生成的静默仍然有效，包括用户明确要求保持安静的情况。
+
 `max_tokens_per_turn` 是每路 tokens/s 的软目标，不是回答长度；`max_new_tokens` 是每次输入后重新锚定的生成余量。字段、错误码和用量事件见[协议](./docs/cookbook/moss_vl_realtime.md#websocket-protocol)。
 
 ## 配合 Demo
@@ -116,6 +119,15 @@ CUDA_VISIBLE_DEVICES="" python -m pytest -q \
 | [models/moss_vl_realtime](./sglang_omni/models/moss_vl_realtime/) | 模型接入、增量输入、调度与 KV 管理 |
 | [serve/video_realtime.py](./sglang_omni/serve/video_realtime.py) | WebSocket、背压与会话生命周期 |
 | [Realtime Cookbook](./docs/cookbook/moss_vl_realtime.md) | 高级部署与协议参考 |
+
+### 恢复文本历史
+
+`GET /v1/video/realtime/capabilities` 通过 `prefill_messages: true` 声明支持。
+客户端可在 `session.configure` 中传入 `prefill_messages`，以 `{role, content}`
+保留文本历史的角色（`system`、`user` 或 `assistant`）。最多 64 条消息，
+文本总计最多 131072 字符，同时受模型上下文长度限制。服务自动补齐 assistant
+起始标记。该接口重建文本上下文，不恢复旧 KV 或历史图片、视频张量。
+连接旧后端时，客户端应先探测支持情况再发送此字段。
 
 ## 来源与许可证
 
