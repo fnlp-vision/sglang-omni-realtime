@@ -32,7 +32,10 @@ def override_server_args(server_args: Any, source: str, **fields: Any) -> None:
     from sglang.srt.runtime_context import get_context
 
     context = get_context()
-    published_server_args = getattr(context, "server_args", None)
+    try:
+        published_server_args = context.server_args
+    except (AttributeError, ValueError):
+        published_server_args = None
 
     if published_server_args is server_args and callable(
         getattr(context, "override", None)

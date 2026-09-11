@@ -15,6 +15,8 @@ Use [OpenMOSS-Team/MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team
 
 ## Installation
 
+For Ascend integration, use the separate [NPU setup and validation guide](./deployment/npu/README.md). The instructions below target CUDA.
+
 Follow the [installation guide](./docs/get_started/installation.md) to create a Python 3.12 environment and install the hashed dependency lock. For the complete application, use the [Demo installer](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#readme) without installing the backend twice.
 
 Companion revisions and validation scope are in the [compatibility matrix](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md). H200 is the reference device; validate memory settings and JIT on other hardware.

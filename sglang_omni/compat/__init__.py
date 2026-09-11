@@ -356,6 +356,8 @@ def install_req_extend_range_shim() -> None:
 
 
 def apply_all() -> None:
+    if not needs_bridge():
+        return
     export_next_batch_plan()
     apply_scheduler_bridge()
     install_kv_cache_configurator_shim()

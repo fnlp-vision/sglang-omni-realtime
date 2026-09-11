@@ -9,7 +9,9 @@ by default, and the upstream Moss-VL FlashInfer guard is relaxed.
 from __future__ import annotations
 
 import functools
+import inspect
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -53,16 +55,34 @@ def preferred_attention_backend() -> str:
 def relax_mossvl_flashinfer_guard() -> None:
     """Allow non-FlashInfer attention backends for Moss-VL on NPU.
 
-    Upstream pins ``MossVLForConditionalGeneration`` to the FlashInfer
-    prefill backend because only that backend consumes the packed
-    cross-attention custom mask. On NPU the ascend backend serves
-    cross-attention through native SDPA without the frame-level mask (a
-    known behavioral difference), so the CUDA-only guard is relaxed there
-    and left untouched on CUDA. Idempotent.
+    Ascend must consume the same per-query frame visibility as FlashInfer.
+    Only relax the CUDA-specific backend assertion after verifying the
+    installed Ascend patches. CUDA validation is left untouched.
     """
     if not is_npu_platform():
         return
+    for name in ("ASCEND_USE_FA", "ASCEND_USE_FIA"):
+        if os.environ.get(name, "false").lower() not in ("", "0", "false", "no", "off"):
+            raise RuntimeError(f"MOSS-VL frame visibility requires {name}=false")
+    from sglang.srt.hardware_backend.npu.attention.ascend_backend import (
+        AscendAttnBackend,
+    )
+    from sglang.srt.hardware_backend.npu.attention.ascend_torch_native_backend import (
+        AscendTorchNativeAttnBackend,
+    )
     from sglang.srt.server_args import ServerArgs
+
+    parameters = inspect.signature(
+        AscendTorchNativeAttnBackend.run_sdpa_forward_extend
+    ).parameters
+    if (
+        not getattr(AscendAttnBackend, "_moss_vl_visibility_mask_supported", False)
+        or "cross_attention_custom_mask" not in parameters
+    ):
+        raise RuntimeError(
+            "MOSS-VL on Ascend requires frame-visibility attention support. "
+            "Apply patches/npu/apply_npu_patches.sh in the serving environment."
+        )
 
     for method_name in (
         "_handle_model_specific_adjustments",
@@ -79,10 +99,8 @@ def relax_mossvl_flashinfer_guard() -> None:
             except AssertionError as exc:
                 if _FLASHINFER_GUARD_MESSAGE not in str(exc):
                     raise
-                logger.warning(
-                    "NPU: relaxed the Moss-VL FlashInfer attention guard; the "
-                    "ascend backend serves cross-attention without the "
-                    "frame-level visibility mask."
+                logger.info(
+                    "NPU: using Ascend cross-attention with frame visibility support"
                 )
 
         wrapper._moss_npu_relaxed = True

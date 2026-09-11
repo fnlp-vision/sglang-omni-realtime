@@ -1,0 +1,133 @@
+--- a/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
++++ b/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
+@@ -74,6 +74,7 @@
+         full_to_swa_mapping: Optional[torch.Tensor] = None,
+         logit_cap: float = 0.0,
+         logit_capping_method: str = "tanh",
++        cross_attention_custom_mask: Optional[torch.Tensor] = None,
+     ):
+         """Run the extend forward by using torch native sdpa op.
+ 
+@@ -92,6 +93,8 @@
+             scaling: float or None
+             enable_gqa: bool
+             causal: bool
++            cross_attention_custom_mask: flattened per-request [Q, encoder KV]
++                visibility entries; True/1 means visible, extend cross-attention only
+             sliding_window_size: int, -1 means no sliding window
+             full_to_swa_mapping: mapping from full pool index to SWA pool index,
+                 required for SWA layers to translate req_to_token indices
+@@ -102,6 +105,23 @@
+ 
+         assert seq_lens.shape[0] == extend_prefix_lens.shape[0]
+         assert seq_lens.shape[0] == extend_seq_lens.shape[0]
++
++        if cross_attention_custom_mask is not None:
++            if not is_cross_attention or encoder_lens is None:
++                raise ValueError("frame visibility mask requires cross-attention encoder lengths")
++            expected = int(
++                (extend_seq_lens.to(torch.int64) * encoder_lens.to(torch.int64)).sum().item()
++            )
++            if (
++                cross_attention_custom_mask.ndim != 1
++                or cross_attention_custom_mask.numel() != expected
++            ):
++                raise ValueError("cross-attention mask does not match request Q/KV lengths")
++            # MOSS-VL supplies flattened row-major uint8 entries, not bit-packed bytes.
++            cross_attention_custom_mask = cross_attention_custom_mask.to(
++                device=query.device, dtype=torch.bool
++            )
++        mask_offset = 0
+ 
+         # [num_tokens, num_heads, head_size] -> [num_heads, num_tokens, head_size]
+         query = query.movedim(0, query.dim() - 2)
+@@ -141,6 +161,19 @@
+                 )
+ 
+             per_req_query = query[:, start_q:end_q, :]
++
++            per_req_mask = None
++            if cross_attention_custom_mask is not None:
++                mask_size = extend_seq_len_q * (atten_end_kv - atten_start_kv)
++                per_req_mask = cross_attention_custom_mask[
++                    mask_offset : mask_offset + mask_size
++                ].reshape(extend_seq_len_q, atten_end_kv - atten_start_kv)
++                mask_offset += mask_size
++
++            if is_cross_attention and atten_end_kv == atten_start_kv:
++                output[start_q:end_q].zero_()
++                start_q, start_kv = end_q, end_kv
++                continue
+ 
+             # SWA crops the front of the KV window, so the redundant query
+             # tensor must match the cropped window to keep Q.len == K.len for
+@@ -192,6 +225,7 @@
+                         per_req_query_redundant.unsqueeze(0),
+                         per_req_key.unsqueeze(0),
+                         per_req_value.unsqueeze(0),
++                        attn_mask=per_req_mask,
+                         enable_gqa=enable_gqa,
+                         scale=scaling,
+                         is_causal=causal,
+@@ -207,12 +241,19 @@
+                         per_req_query_redundant.unsqueeze(0),
+                         per_req_key.unsqueeze(0),
+                         per_req_value.unsqueeze(0),
++                        attn_mask=per_req_mask,
+                         enable_gqa=enable_gqa,
+                         scale=scaling,
+                         is_causal=causal,
+                     )
+                     .squeeze(0)
+                     .movedim(query.dim() - 2, 0)
++                )
++            if per_req_mask is not None:
++                # Native kernels and the softcapping path may differ on fully
++                # masked rows. Neither may contribute vision to those tokens.
++                per_req_out_redundant = per_req_out_redundant.masked_fill(
++                    ~per_req_mask.any(dim=-1)[:, None, None], 0.0
+                 )
+             output[start_q:end_q, :, :] = per_req_out_redundant[
+                 query_start_idx : query_start_idx + extend_seq_len_q, :, :
+--- a/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
++++ b/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
+@@ -285,6 +285,7 @@
+ 
+ 
+ class AscendAttnBackend(AttentionBackend):
++    _moss_vl_visibility_mask_supported = True
+ 
+     def __init__(self, model_runner: ModelRunner, speculative_step_id: int = 0):
+         super().__init__()
+@@ -1101,6 +1102,19 @@
+         sinks: Optional[torch.Tensor] = None,
+         slopes: Optional[torch.Tensor] = None,
+     ):
++        if layer.is_cross_attention and getattr(
++            forward_batch, "cross_attention_custom_mask", None
++        ) is not None:
++            if (
++                self.use_fia or self.use_fa or self.use_mla or self.is_dllm_model
++                or topk_indices is not None or sinks is not None
++                or forward_batch.forward_mode.is_target_verify()
++                or forward_batch.forward_mode.is_draft_extend_v2()
++                or forward_batch.forward_mode.is_context_parallel_extend()
++            ):
++                raise NotImplementedError(
++                    "MOSS-VL frame visibility requires the native Ascend SDPA extend path"
++                )
+         if is_mla_preprocess_enabled() and self.use_mla:
+             # MLAPO and MLAPROLOG do save kv_cache
+             save_kv_cache = False
+@@ -1531,6 +1545,11 @@
+                         scaling=layer.scaling,
+                         enable_gqa=use_gqa,
+                         causal=causal,
++                        cross_attention_custom_mask=(
++                            getattr(forward_batch, "cross_attention_custom_mask", None)
++                            if layer.is_cross_attention
++                            else None
++                        ),
+                         sliding_window_size=layer.sliding_window_size,
+                         full_to_swa_mapping=(
+                             self.full_to_swa_index_mapping

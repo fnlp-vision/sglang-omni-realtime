@@ -6,6 +6,8 @@
 
 ## 启动
 
+Ascend 请使用 [NPU 部署指南](../deployment/npu/README_zh.md)，启动器会在原生后端旁启动同一个适配层。
+
 按照[安装指南](../docs/get_started/installation_zh.md)准备后端环境。在仓库根目录分别打开终端运行：
 
 ```bash
@@ -86,4 +88,4 @@ start -> ready -> frame 元信息 + JPEG 二进制（批量发送）
 | VL-02，第二轮 | 0.065 | 0.077 | 0.388 | 0.468 | 2.078 |
 | VL-03，恢复轮 | 0.057 | 0.069 | 0.381 | 0.454 | 0.756 |
 
-每个新会话仍会执行初始 prefill。外部 `model-api-protocol-asr-tts-vl.md` 和 `vision.go` 未包含在仓库中，完整契约验收需要结合这两份来源。
+每个新会话仍会执行初始 prefill。接口适配目标为 `model-api-protocol-asr-tts-vl.md` 第 5 章。该外部文档和 `vision.go` 调用端未随仓库分发，最终对接验收需要使用实际调用端。
