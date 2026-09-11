@@ -47,11 +47,13 @@ def main() -> None:
     native = 'sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py'
     backend = 'sglang/srt/hardware_backend/npu/attention/ascend_backend.py'
     moss = 'sglang/srt/models/moss_vl.py'
+    # 0007 supersedes 0002/0003-preserve/0004 (integrated attention fixes:
+    # redundant-padding alignment, bool2d mask folding, frame-visibility
+    # mask consumption on the native SDPA extend path, KV-window fix, and
+    # the misleading context_parallel_extend guard exclusion).
     operations = [
         ('0001-fix-vision-rope-for-transformers-5-and-npu-inv-freq.patch', moss),
-        ('0002-fix-cross-attention-extend-sdpa-alignment.patch', native),
-        ('0003-preserve-frame-visibility.patch', None),
-        ('0004-fix-self-attention-extend-kv-window-on-vision-requests.patch', native),
+        ('0007-ascend-npu-attention-integrated-fixes.patch', None),
         ('0005-chunk-vision-encoder-for-multi-frame-rounds.patch', moss),
         ('0006-ascend-vision-flash-attention-backend.patch', moss),
     ]
