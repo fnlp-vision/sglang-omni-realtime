@@ -204,8 +204,15 @@ def run_worker(args, cases):
     else:
         from semantic_engine import Engine
 
+        # NPU: allow pinning the eval engine to a spare card and a context
+        # that fits one card's KV pool; CUDA keeps the historical defaults.
+        eval_device = os.environ.get("MOSS_EVAL_DEVICE")
+        eval_context = int(os.environ.get("MOSS_EVAL_CONTEXT", "131072"))
         model = Engine(
             args.model_path,
+            device=eval_device,
+            context_length=eval_context,
+            disable_cuda_graph=bool(os.environ.get("MOSS_EVAL_DISABLE_GRAPH")),
             max_running_requests=max(8, max(args.sessions)) if args.suite == "concurrency" else 4,
             server_args_overrides={
                 "prefill_attention_backend": "flashinfer",
