@@ -2,17 +2,21 @@
 
 **English** | [简体中文](./API_zh.md)
 
-This document defines the complete external interface provided by this repository's `vl_api_adapter`. The model is MOSS-VL Realtime and the protocol identifier is `vl-api-v2`. See the [README](./README.md) for deployment and client examples and the [validation record](./VALIDATION.md) for test results.
+Reference for the MOSS-VL Realtime `vl-api-v2` interface. [Deployment and usage](./README.md) | [Validation](./VALIDATION.md)
 
-**Normative terms:** **MUST** indicates a requirement; **MUST NOT** a prohibition; **SHOULD** a recommendation requiring justification when departing from it; **MAY** an option. Other text is explanatory.
+**Contents:** [Connection](#1-transport-and-connection) · [Lifecycle](#2-session-state-machine) · [Client events](#3-client-events) · [Server events](#4-server-events) · [Accounting](#5-usage-and-accounting) · [Limits](#6-limits-and-capacity) · [Errors](#7-termination-and-errors) · [Sequence](#8-complete-sequence-and-client-rules)
 
 ## 1. Transport and Connection
 
-WebSocket text messages carry control events (UTF-8 JSON, one object per message). Binary messages carry image data.
+| Item | Definition |
+| --- | --- |
+| Default endpoint | `ws://127.0.0.1:18610/v1/video/realtime` |
+| Text message | UTF-8 JSON; one control-event object per message |
+| Binary message | Complete image file bytes |
+| Session | One per admitted connection; no separate creation request |
+| Protocol detection | `protocol_version` and `capabilities`, not the URL path |
 
-One connection represents one session. No separate session-creation request is required. Connections rejected for authentication or capacity do not establish a model session; see section 7.
-
-The backend path is `/v1/video/realtime`. v2 runs on a separate listener; the repository launcher defaults to `ws://127.0.0.1:18610/v1/video/realtime`. Native v1 defaults to port 18500. Both share the model and session capacity. The URL path alone does not identify the protocol.
+Native v1 defaults to port 18500 and shares the model and capacity with v2. Admission failures are defined in section 7.4.
 
 Every control event MUST contain `type`. Client events use strict validation (`extra="forbid"`): unknown fields reject the entire event. Values must have the correct types; NaN/Infinity are rejected, and strings cannot substitute for integers or booleans. The server may add output fields; clients should ignore unknown output fields.
 
@@ -22,18 +26,12 @@ This interface does not provide REST session creation, `task_id` allocation, res
 
 ## 2. Session State Machine
 
-```text
-Connection admitted
-  -> session.created
-  <- session.configure
-  -> session.configured
-  -> session.ready
-  <-> Frames / prompts, acknowledgements, text and silence
-  -> response.done (one response settled; session continues)
-  <-> Further input and responses
-  -> session.done (session terminal)
-  -> WebSocket Close
-```
+| Phase | Events / Behavior |
+| --- | --- |
+| Configure | `session.created` → client `session.configure` → `session.configured` |
+| Ready | Inputs are accepted after `session.ready` |
+| Inference | Input acknowledgements, text and silence; `response.done` settles one response |
+| Terminal | Connection closes after `session.done`; exceptions in section 7.2 |
 
 Do not send frames or prompts until `session.ready`. Text and telemetry may interleave with input acknowledgements. Clients MUST keep receiving all events, not wait exclusively for a particular ACK. Each input's accepted event precedes its processed event.
 
@@ -49,11 +47,11 @@ Send exactly once after connection, within `session.created.configure_timeout_s`
 
 ```json
 {
-  "type":"session.configure",
-  "prompt":"Observe the video and answer my questions.",
-  "max_new_tokens":128,
-  "max_tokens_per_turn":10,
-  "include_usage":true
+  "type": "session.configure",
+  "prompt": "Observe the video and answer my questions.",
+  "max_new_tokens": 128,
+  "max_tokens_per_turn": 10,
+  "include_usage": true
 }
 ```
 
@@ -72,16 +70,21 @@ Send exactly once after connection, within `session.created.configure_timeout_s`
 
 `include_usage` does not affect `response.done.usage` or `session.done.usage`. Settlement usage is intrinsic to the protocol, regardless of telemetry preference.
 
-**Generation allowance:** after initial input processing, the model has `max_new_tokens` available. Each extend that processes new frames or prompts re-anchors the remaining allowance to that value, subject to context capacity. With 128 configured, generating 30 tokens and then processing another frame permits up to 128 further tokens from that position, not 98 or 226. Generated silence and other control tokens count toward the allowance, not just visible text.
+**Generation allowance:** initial input processing and each extend processing new frames or prompts set the remaining allowance to `max_new_tokens`, subject to context capacity. A value of 128 permits up to 128 further generated tokens after each extend, including silence and control tokens.
 
-This is neither a fixed per-response cap nor a session-wide output cap. Continued input can allow one response or the entire session to exceed that number. `response.done` does not replenish it; model processing of new input does. The model may choose silence first; exhausting the allowance or satisfying model stop conditions can end the request.
+This is not a per-response or session-total cap: continued input may allow larger cumulative output. `response.done` does not replenish the allowance. The model may choose silence or end the request when the allowance is exhausted or stop conditions are met.
 
 ### 3.2 `input.frame`
 
 Send metadata, wait for `input.frame.ready`, then send the binary image.
 
 ```json
-{"type":"input.frame","seq_no":0,"timestamp":0.0,"mime_type":"image/jpeg"}
+{
+  "type": "input.frame",
+  "seq_no": 0,
+  "timestamp": 0,
+  "mime_type": "image/jpeg"
+}
 ```
 
 | Field | Type | Required | Meaning |
@@ -102,7 +105,12 @@ Only one frame handshake may be awaiting binary on a connection. Clients should 
 ### 3.3 `input.prompt`
 
 ```json
-{"type":"input.prompt","seq_no":1,"prompt":"What is in the image?","final":false}
+{
+  "type": "input.prompt",
+  "seq_no": 1,
+  "prompt": "What is in the image?",
+  "final": false
+}
 ```
 
 | Field | Type | Required | Meaning |
@@ -125,7 +133,9 @@ Only explicitly rejected, unaccepted input may retry the same sequence number af
 ### 3.5 `session.abort`
 
 ```json
-{"type":"session.abort"}
+{
+  "type": "session.abort"
+}
 ```
 
 Requests termination. It consumes no sequence number, accepts no additional fields, and does not wait for frame handshakes or input credit. When final accounting succeeds, the server responds with `session.done`, reason `aborted`. An existing fatal cause is preserved rather than overwritten with aborted. Stopping and final accounting have bounded waits, not a zero-latency guarantee; see section 7.2.
@@ -136,16 +146,25 @@ Requests termination. It consumes no sequence number, accepts no additional fiel
 
 ```json
 {
-  "type":"session.created",
-  "session_id":"video_sess_...",
-  "request_id":"video_req_...",
-  "model":"moss-vl-realtime",
-  "turn_id":0,
-  "configure_timeout_s":180.0,
-  "protocol_version":"vl-api-v2",
-  "model_version":null,
-  "model_version_source":"unknown",
-  "capabilities":["session.usage","response.done.usage","session.done.usage","error.seq_no","input.frame.rejected","response.done.per_response","response.id","usage.text_input_output"]
+  "type": "session.created",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "model": "moss-vl-realtime",
+  "turn_id": 0,
+  "configure_timeout_s": 180,
+  "protocol_version": "vl-api-v2",
+  "model_version": null,
+  "model_version_source": "unknown",
+  "capabilities": [
+    "session.usage",
+    "response.done.usage",
+    "session.done.usage",
+    "error.seq_no",
+    "input.frame.rejected",
+    "response.done.per_response",
+    "response.id",
+    "usage.text_input_output"
+  ]
 }
 ```
 
@@ -158,7 +177,16 @@ Clients MUST check capabilities. Per-response accounting requires `response.done
 ### 4.2 `session.configured`
 
 ```json
-{"type":"session.configured","session_id":"video_sess_...","request_id":"video_req_...","max_frame_bytes":33554432,"input_queue_capacity":4,"max_tokens_per_turn":10.0,"parked_request_timeout_s":3600.0,"context_limit":131072}
+{
+  "type": "session.configured",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "max_frame_bytes": 33554432,
+  "input_queue_capacity": 4,
+  "max_tokens_per_turn": 10,
+  "parked_request_timeout_s": 3600,
+  "context_limit": 131072
+}
 ```
 
 Returns effective input credit, generation rate, frame byte limit, parked timeout and actual backend context capacity. This example uses repository deployment settings, not universal constants.
@@ -166,7 +194,12 @@ Returns effective input credit, generation rate, frame byte limit, parked timeou
 ### 4.3 `session.ready`
 
 ```json
-{"type":"session.ready","session_id":"video_sess_...","request_id":"video_req_...","turn_id":0}
+{
+  "type": "session.ready",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "turn_id": 0
+}
 ```
 
 The model session is ready to receive input.
@@ -189,7 +222,13 @@ Recoverable frame rejection sends both error and input.frame.rejected. The clien
 ### 4.5 `response.text.delta`
 
 ```json
-{"type":"response.text.delta","delta":"The image shows","turn_id":1,"response_id":"response_...","response_seq":1}
+{
+  "type": "response.text.delta",
+  "delta": "The image shows",
+  "turn_id": 1,
+  "response_id": "response_...",
+  "response_seq": 1
+}
 ```
 
 Append delta text in receive order. The first non-whitespace visible text creates the response ID. Earlier whitespace-only deltas may have null response_id/response_seq and MUST NOT establish a settled response.
@@ -197,7 +236,13 @@ Append delta text in receive order. The first non-whitespace visible text create
 ### 4.6 `response.turn.silence`
 
 ```json
-{"type":"response.turn.silence","turn_id":1,"seq_no":0,"timestamp":0.0,"silence_seq":1}
+{
+  "type": "response.turn.silence",
+  "turn_id": 1,
+  "seq_no": 0,
+  "timestamp": 0,
+  "silence_seq": 1
+}
 ```
 
 The model enters silence. `seq_no`/`timestamp` can be null when no input is associated yet. `silence_seq` is the backend silence sequence, not the response sequence.
@@ -207,7 +252,13 @@ An active visible response is closed by silence, followed by its response.done. 
 ### 4.7 `response.turn.interrupted`
 
 ```json
-{"type":"response.turn.interrupted","turn_id":1,"next_turn_id":2,"seq_no":1,"response_id":"response_..."}
+{
+  "type": "response.turn.interrupted",
+  "turn_id": 1,
+  "next_turn_id": 2,
+  "seq_no": 1,
+  "response_id": "response_..."
+}
 ```
 
 A new question advances the turn and interrupts the old turn. response_id identifies the interrupted active segment, or is null if none exists. Interrupted segments do not receive a normal response.done. Repeatedly interrupted sessions may have no response.done at all; final session usage is the fallback.
@@ -218,16 +269,25 @@ Completes one response, not the session.
 
 ```json
 {
-  "type":"response.done",
-  "response_id":"response_...",
-  "response_seq":1,
-  "turn_id":1,
-  "finish_reason":"stop",
-  "boundary":"silence",
-  "usage":{
-    "vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,
-    "text_tokens":88,"total_tokens":233,
-    "cumulative":{"vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,"text_tokens":88,"total_tokens":233}
+  "type": "response.done",
+  "response_id": "response_...",
+  "response_seq": 1,
+  "turn_id": 1,
+  "finish_reason": "stop",
+  "boundary": "silence",
+  "usage": {
+    "vision_tokens": 145,
+    "text_input_tokens": 78,
+    "text_output_tokens": 10,
+    "text_tokens": 88,
+    "total_tokens": 233,
+    "cumulative": {
+      "vision_tokens": 145,
+      "text_input_tokens": 78,
+      "text_output_tokens": 10,
+      "text_tokens": 88,
+      "total_tokens": 233
+    }
   }
 }
 ```
@@ -239,7 +299,15 @@ A model-silence boundary uses `boundary=silence`, `finish_reason=stop`. If the b
 Optional runtime telemetry, at most 1 Hz when `include_usage=true`. It is neither a periodic heartbeat nor a guarantee that the final snapshot will be sent. It is not the accounting source.
 
 ```json
-{"type":"session.usage","encoder_tokens":3536,"decoder_tokens":329,"encoder_kv_tokens":1547,"token_space_used":3865,"context_limit":131072,"context_remaining":127207}
+{
+  "type": "session.usage",
+  "encoder_tokens": 3536,
+  "decoder_tokens": 329,
+  "encoder_kv_tokens": 1547,
+  "token_space_used": 3865,
+  "context_limit": 131072,
+  "context_remaining": 127207
+}
 ```
 
 | Field | Meaning |
@@ -256,7 +324,20 @@ Telemetry may lag settlement watermarks and MUST NOT replace accurate response/s
 ### 4.10 `session.done`
 
 ```json
-{"type":"session.done","session_id":"video_sess_...","request_id":"video_req_...","reason":"completed","aborted":false,"usage":{"vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,"text_tokens":88,"total_tokens":233}}
+{
+  "type": "session.done",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "reason": "completed",
+  "aborted": false,
+  "usage": {
+    "vision_tokens": 145,
+    "text_input_tokens": 78,
+    "text_output_tokens": 10,
+    "text_tokens": 88,
+    "total_tokens": 233
+  }
+}
 ```
 
 usage is the cumulative final session total on the same basis as response.done.usage.cumulative, including consumption after the last response.done.
@@ -273,7 +354,12 @@ aborted is true only when reason is aborted. Capacity rejection precedes session
 ### 4.11 `error`
 
 ```json
-{"type":"error","code":"invalid_request","seq_no":12,"message":"expected seq_no 1, received 12"}
+{
+  "type": "error",
+  "code": "invalid_request",
+  "seq_no": 12,
+  "message": "expected seq_no 1, received 12"
+}
 ```
 
 code and message are required. An input-triggered error includes seq_no when an integer sequence number is identifiable. Connection-level errors, configuration errors and missing/unparseable sequence numbers omit it. Clients MUST NOT drive behavior by matching message strings.
@@ -302,13 +388,12 @@ Accounting uses actual logical model positions, not tokenizing user strings alon
 
 ### 5.2 Response Increment
 
-**Increment = current cumulative - previous response.done cumulative; the first response.done subtracts zero.** This applies independently to all five usage fields.
+```text
+Increment = current cumulative - previous response.done cumulative
+Sum of increments = last response.done cumulative
+```
 
-- Initial configuration and template overhead belong to the first response.done.
-- Frames between answers, silent tokens and interrupted segments carry into the next increment.
-- Tokens are not assigned to multiple increments; consumption after the last answer is covered by the final residual.
-
-Both increment and cumulative are supplied. **The sum of all response.done increments equals the last response.done cumulative.** Consumers can check this identity; a mismatch warrants investigating missing or duplicate events.
+Calculate each of the five fields independently; the first settlement subtracts zero. Initial templates, intervening frames, silence and interrupted segments enter the next settlement. Consumption after the last response becomes the final residual. Both increment and cumulative are returned; clients should verify the identity to detect missing or duplicate events.
 
 ### 5.3 Cumulative Usage and Residual
 
@@ -357,11 +442,11 @@ Clients MUST treat unknown codes as terminal to support future additions without
 
 ### 7.2 Terminal Guarantee and Exceptions
 
-On normal completion or orderly abort, the backend freezes committed usage before sending one session.done and closing normally. Fatal errors follow error -> session.done -> close; session_timeout maps to reason=error. Submission of an abort request is not assumed to mean GPU work and accounting have finished.
+On normal completion or orderly abort, the backend resolves in-flight work and freezes usage before sending one `session.done`. Fatal errors follow `error -> session.done -> close`; `session_timeout` maps to `reason=error`.
 
 Final-accounting acknowledgement waits up to 20 seconds by default; network sends and cleanup have additional bounded waits. Twenty seconds is not a total shutdown SLA. Clients should stop sending input immediately but continue receiving the terminal event.
 
-**Exception:** if trustworthy final accounting is unavailable, including an internal management-channel timeout, the adapter sends a best-effort response_failed and closes with WebSocket 1011. It does not send session.done with invented zero or incomplete final usage. Disconnection/process failure also cannot guarantee terminal delivery. Clients MUST handle abnormal closure without session.done and mark final usage unknown, not zero or fully settled.
+> **Final usage unavailable:** if the backend cannot confirm its final snapshot, it sends a best-effort `response_failed` and closes with 1011 without `session.done`. Network or process failure may also prevent terminal delivery. Clients MUST mark final usage unknown, not zero or fully settled.
 
 ### 7.3 Recoverable Rejection
 
@@ -374,11 +459,25 @@ Rejecting another metadata message does not clear a different valid pending fram
 When capacity is exhausted, the server accepts the WebSocket, sends the following events and closes with 1013. There is no session.created, no model consumption and no allocated session identifiers:
 
 ```json
-{"type":"error","code":"session_capacity_exceeded","message":"video realtime service has no free session slot (capacity 4)"}
+{
+  "type": "error",
+  "code": "session_capacity_exceeded",
+  "message": "video realtime service has no free session slot (capacity 4)"
+}
 ```
 
 ```json
-{"type":"session.done","reason":"error","usage":{"vision_tokens":0,"text_input_tokens":0,"text_output_tokens":0,"text_tokens":0,"total_tokens":0}}
+{
+  "type": "session.done",
+  "reason": "error",
+  "usage": {
+    "vision_tokens": 0,
+    "text_input_tokens": 0,
+    "text_output_tokens": 0,
+    "text_tokens": 0,
+    "total_tokens": 0
+  }
+}
 ```
 
 Authentication failure rejects before WebSocket acceptance, normally as handshake HTTP 403. WebSocket error/session.done delivery is not guaranteed in that case.

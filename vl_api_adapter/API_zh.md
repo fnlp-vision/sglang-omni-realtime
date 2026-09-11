@@ -2,16 +2,21 @@
 
 [English](./API.md) | **简体中文**
 
-本文定义本仓库 `vl_api_adapter` 对外提供的完整接口。适用模型为 MOSS-VL Realtime，协议标识为 `vl-api-v2`。部署与客户端示例见 [README](./README_zh.md)，测试结果见[验证记录](./VALIDATION_zh.md)。
+适用于 MOSS-VL Realtime 的 `vl-api-v2` 接口。[部署与调用](./README_zh.md) | [验证结果](./VALIDATION_zh.md)
 
+**目录**：[连接](#1-传输与连接) · [生命周期](#2-会话状态机) · [客户端事件](#3-客户端事件) · [服务端事件](#4-服务端事件) · [计量](#5-用量与计量) · [限制](#6-限制与容量) · [错误](#7-终止与错误) · [时序](#8-完整时序与客户端约定)
 
 ## 1. 传输与连接
 
-WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进制帧承载图像数据。
+| 项目 | 定义 |
+| --- | --- |
+| 默认地址 | `ws://127.0.0.1:18610/v1/video/realtime` |
+| 文本消息 | UTF-8 JSON，每条消息一个控制事件对象 |
+| 二进制消息 | 完整图像文件字节 |
+| 会话 | 每个被接纳的连接对应一个会话，无需额外创建请求 |
+| 协议识别 | `protocol_version` 与 `capabilities`，不以 URL 路径区分 |
 
-一条连接 = 一个会话。连接建立即会话开始，无需额外的会话创建请求。容量不足或鉴权不通过的连接不建立模型会话，见 §7。
-
-服务端后端路径：`/v1/video/realtime`。v2 在独立监听端口提供，仓库启动脚本默认地址为 `ws://127.0.0.1:18610/v1/video/realtime`。原生 v1 默认端口为 18500，两者共享模型与会话容量。仅靠 URL 路径不能区分协议。
+原生 v1 默认端口为 18500，与 v2 共享模型和容量。接纳失败见 §7.4。
 
 所有控制事件**必须**含 `type` 字段。服务端对客户端控制事件采取严格校验（`extra="forbid"`），**多传字段会导致整条事件被拒**。字段类型必须正确，不接受 NaN/Infinity；整数和布尔值不能用字符串代替。服务端可增加输出字段，客户端应忽略不认识的输出字段。
 
@@ -21,18 +26,12 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 
 ## 2. 会话状态机
 
-```text
-连接被接纳
-  -> session.created
-  <- session.configure
-  -> session.configured
-  -> session.ready
-  <-> 输入帧 / 问题、处理确认、文本与静默事件
-  -> response.done（每段回答结算；会话继续）
-  <-> 后续输入与回答
-  -> session.done（会话终点）
-  -> WebSocket Close
-```
+| 阶段 | 事件 / 行为 |
+| --- | --- |
+| 配置 | `session.created` → 客户端 `session.configure` → `session.configured` |
+| 就绪 | 收到 `session.ready` 后可提交输入 |
+| 推理 | 输入确认、文本和静默事件；`response.done` 仅结算一段回答 |
+| 结束 | `session.done` 后关闭连接；异常例外见 §7.2 |
 
 收到 `session.ready` 后才可推帧或提问。文字与观测事件可穿插于输入确认之间，客户端必须持续接收所有事件，不能只等待单一 ACK。每条输入保证 accepted 在对应 processed 之前。
 
@@ -71,16 +70,21 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 
 `include_usage` **不影响** `response.done.usage` / `session.done.usage`。用量为协议固有部分，无论该字段取值如何都下发。
 
-**`max_new_tokens` 的生成额度**：模型处理初始输入后有该额度；每次处理新帧或新问题的 extend 后，剩余额度重新设为该值，同时受上下文容量约束。例如设为 128，生成 30 个 token 后处理一张新帧，从该位置起最多再生成 128 个 token，而不是 98 或 226。额度包含生成的 silence 等控制 token，不只是可见文字。
+**生成额度**：初始输入处理后，以及每次 extend 处理新帧或问题后，剩余生成额度设为 `max_new_tokens`，同时受上下文容量约束。设为 128 时，每次 extend 后最多再生成 128 个 token，包括 silence 等控制 token。
 
-因此它不是单段回答的固定上限，也不是整个会话的总输出上限。输入持续到来时，同段或整场累计输出可超过该值。`response.done` 本身不补充额度；新输入被模型处理才会补充。模型可先选择静默；额度耗尽或模型停止条件满足时，请求可结束。
+该值不是单段或整场的总输出上限；持续输入可使累计输出超过它。`response.done` 不补充额度。模型可提前静默，或在额度耗尽/满足停止条件时结束请求。
 
 ### 3.2 `input.frame`
 
 图像帧的第一阶段：先发元数据，等 `input.frame.ready`，再发二进制。
 
 ```json
-{"type":"input.frame","seq_no":0,"timestamp":0.0,"mime_type":"image/jpeg"}
+{
+  "type": "input.frame",
+  "seq_no": 0,
+  "timestamp": 0,
+  "mime_type": "image/jpeg"
+}
 ```
 
 | 字段 | 类型 | 必填 | 含义 |
@@ -101,7 +105,12 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 3.3 `input.prompt`
 
 ```json
-{"type":"input.prompt","seq_no":1,"prompt":"画面里有什么？","final":false}
+{
+  "type": "input.prompt",
+  "seq_no": 1,
+  "prompt": "画面里有什么？",
+  "final": false
+}
 ```
 
 | 字段 | 类型 | 必填 | 含义 |
@@ -124,7 +133,9 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 3.5 `session.abort`
 
 ```json
-{"type":"session.abort"}
+{
+  "type": "session.abort"
+}
 ```
 
 请求结束会话。不占用 `seq_no`，不接受其他字段，不等待帧握手或输入额度。正常取得最终计量后，服务端以 `session.done`（`reason: "aborted"`）响应。已有致命错误时保留其错误原因，不改写为 aborted。停止与最终计量有有界等待，不保证零延迟，见 §7.2。
@@ -135,16 +146,25 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 
 ```json
 {
-  "type":"session.created",
-  "session_id":"video_sess_...",
-  "request_id":"video_req_...",
-  "model":"moss-vl-realtime",
-  "turn_id":0,
-  "configure_timeout_s":180.0,
-  "protocol_version":"vl-api-v2",
-  "model_version":null,
-  "model_version_source":"unknown",
-  "capabilities":["session.usage","response.done.usage","session.done.usage","error.seq_no","input.frame.rejected","response.done.per_response","response.id","usage.text_input_output"]
+  "type": "session.created",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "model": "moss-vl-realtime",
+  "turn_id": 0,
+  "configure_timeout_s": 180,
+  "protocol_version": "vl-api-v2",
+  "model_version": null,
+  "model_version_source": "unknown",
+  "capabilities": [
+    "session.usage",
+    "response.done.usage",
+    "session.done.usage",
+    "error.seq_no",
+    "input.frame.rejected",
+    "response.done.per_response",
+    "response.id",
+    "usage.text_input_output"
+  ]
 }
 ```
 
@@ -157,7 +177,16 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.2 `session.configured`
 
 ```json
-{"type":"session.configured","session_id":"video_sess_...","request_id":"video_req_...","max_frame_bytes":33554432,"input_queue_capacity":4,"max_tokens_per_turn":10.0,"parked_request_timeout_s":3600.0,"context_limit":131072}
+{
+  "type": "session.configured",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "max_frame_bytes": 33554432,
+  "input_queue_capacity": 4,
+  "max_tokens_per_turn": 10,
+  "parked_request_timeout_s": 3600,
+  "context_limit": 131072
+}
 ```
 
 返回生效的队列、生成速率、帧字节上限、parked 超时和实际后端上下文容量。示例采用仓库启动配置，不应硬编码为所有部署的固定值。
@@ -165,7 +194,12 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.3 `session.ready`
 
 ```json
-{"type":"session.ready","session_id":"video_sess_...","request_id":"video_req_...","turn_id":0}
+{
+  "type": "session.ready",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "turn_id": 0
+}
 ```
 
 表示模型会话已就绪，可以开始推帧。
@@ -188,7 +222,13 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.5 `response.text.delta`
 
 ```json
-{"type":"response.text.delta","delta":"画面中是","turn_id":1,"response_id":"response_...","response_seq":1}
+{
+  "type": "response.text.delta",
+  "delta": "画面中是",
+  "turn_id": 1,
+  "response_id": "response_...",
+  "response_seq": 1
+}
 ```
 
 `delta` 是增量文本；客户端按接收顺序拼接。首次非空白可见文字创建回答 ID。此前的纯空白增量可携带 null 的 `response_id`/`response_seq`，不得据此建立已结算回答。
@@ -196,7 +236,13 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.6 `response.turn.silence`
 
 ```json
-{"type":"response.turn.silence","turn_id":1,"seq_no":0,"timestamp":0.0,"silence_seq":1}
+{
+  "type": "response.turn.silence",
+  "turn_id": 1,
+  "seq_no": 0,
+  "timestamp": 0,
+  "silence_seq": 1
+}
 ```
 
 模型选择进入静默。`seq_no`/`timestamp` 在尚无关联输入时可为 null，`silence_seq` 为后端静默序号，不是回答序号。
@@ -206,7 +252,13 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.7 `response.turn.interrupted`
 
 ```json
-{"type":"response.turn.interrupted","turn_id":1,"next_turn_id":2,"seq_no":1,"response_id":"response_..."}
+{
+  "type": "response.turn.interrupted",
+  "turn_id": 1,
+  "next_turn_id": 2,
+  "seq_no": 1,
+  "response_id": "response_..."
+}
 ```
 
 新问题推进轮次并打断旧轮。`response_id` 标识被打断的活跃段，没有活跃段时为 null。被打断的段落**不补发正常 `response.done`**。一场持续被打断的会话可能没有任何 response.done，因此最终用量必须以 session.done 兜底。
@@ -217,16 +269,25 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 
 ```json
 {
-  "type":"response.done",
-  "response_id":"response_...",
-  "response_seq":1,
-  "turn_id":1,
-  "finish_reason":"stop",
-  "boundary":"silence",
-  "usage":{
-    "vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,
-    "text_tokens":88,"total_tokens":233,
-    "cumulative":{"vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,"text_tokens":88,"total_tokens":233}
+  "type": "response.done",
+  "response_id": "response_...",
+  "response_seq": 1,
+  "turn_id": 1,
+  "finish_reason": "stop",
+  "boundary": "silence",
+  "usage": {
+    "vision_tokens": 145,
+    "text_input_tokens": 78,
+    "text_output_tokens": 10,
+    "text_tokens": 88,
+    "total_tokens": 233,
+    "cumulative": {
+      "vision_tokens": 145,
+      "text_input_tokens": 78,
+      "text_output_tokens": 10,
+      "text_tokens": 88,
+      "total_tokens": 233
+    }
   }
 }
 ```
@@ -238,7 +299,15 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 可选运行时观测通道，`include_usage=true` 时最多 1 Hz，不保证周期心跳或发送最后一份快照。它不是计量数据源。
 
 ```json
-{"type":"session.usage","encoder_tokens":3536,"decoder_tokens":329,"encoder_kv_tokens":1547,"token_space_used":3865,"context_limit":131072,"context_remaining":127207}
+{
+  "type": "session.usage",
+  "encoder_tokens": 3536,
+  "decoder_tokens": 329,
+  "encoder_kv_tokens": 1547,
+  "token_space_used": 3865,
+  "context_limit": 131072,
+  "context_remaining": 127207
+}
 ```
 
 | 字段 | 含义 |
@@ -255,7 +324,20 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.10 `session.done`
 
 ```json
-{"type":"session.done","session_id":"video_sess_...","request_id":"video_req_...","reason":"completed","aborted":false,"usage":{"vision_tokens":145,"text_input_tokens":78,"text_output_tokens":10,"text_tokens":88,"total_tokens":233}}
+{
+  "type": "session.done",
+  "session_id": "video_sess_...",
+  "request_id": "video_req_...",
+  "reason": "completed",
+  "aborted": false,
+  "usage": {
+    "vision_tokens": 145,
+    "text_input_tokens": 78,
+    "text_output_tokens": 10,
+    "text_tokens": 88,
+    "total_tokens": 233
+  }
+}
 ```
 
 `usage` 为整场会话的**累计终值**，口径与 `response.done.usage.cumulative` 完全一致。它包含最后一次 response.done 后的消耗。
@@ -272,7 +354,12 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 ### 4.11 `error`
 
 ```json
-{"type":"error","code":"invalid_request","seq_no":12,"message":"expected seq_no 1, received 12"}
+{
+  "type": "error",
+  "code": "invalid_request",
+  "seq_no": 12,
+  "message": "expected seq_no 1, received 12"
+}
 ```
 
 `code` 和 `message` 必填。错误由某条输入触发且其整数序号可识别时携带 `seq_no`；连接级错误、配置错误或缺失/不可解析序号时省略。不以字符串匹配 message 驱动客户端逻辑。
@@ -301,15 +388,12 @@ WebSocket。文本帧承载控制事件（UTF-8 JSON，单个对象），二进�
 
 ### 5.2 本段增量
 
-**本段增量 = 本次 `cumulative` − 上一条 `response.done` 的 `cumulative`；会话的第一条 `response.done` 取减数为零。** 对全部五个计量字段分别成立。
+```text
+本段增量 = 本次 cumulative - 上次 response.done 的 cumulative
+所有增量之和 = 最后一次 response.done 的 cumulative
+```
 
-它自动保证：
-
-- `session.configure.prompt` 及其模板开销计入第一条 response.done。
-- 两次回答之间推入的帧、静默 token、被打断段的消耗计入下一条增量。
-- 每个 token 不重复归属到多个增量；最后一次回答之后的消耗由最终残差覆盖。
-
-增量与 cumulative 同时下发，恒有：**所有 `response.done` 增量之和 == 最后一条 `response.done` 的 `cumulative`**。消费方可据此自校验；不成立时应检查丢失或重复事件。
+对五个计量字段分别计算，首次结算减数为零。初始模板、回答间的帧、静默及被打断段的消耗归入下一次结算；末次回答后的消耗归入最终残差。增量和累计值同时返回，客户端应检查等式以发现丢失或重复事件。
 
 ### 5.3 累计与最终残差
 
@@ -358,11 +442,11 @@ parked 超时针对模型进入静默并等待新输入的空闲请求，不是�
 
 ### 7.2 终止保证与例外
 
-正常完成或有序中止时，后端先冻结已提交用量，再发送唯一 session.done，随后正常关闭。致命错误按 `error -> session.done -> close` 收尾；`session_timeout` 对应 `reason=error`。不把“已提交 abort 请求”当作“GPU 已停止并完成计量”。
+正常完成或有序中止时，后端先确认在途步骤并冻结用量，再发送唯一 `session.done`。致命错误按 `error -> session.done -> close` 收尾；`session_timeout` 对应 `reason=error`。
 
 最终计量确认默认最多等待 20 秒，网络发送和清理另有有界等待；20 秒不是整个关闭流程的总 SLA。客户端应立即停止推流，但必须继续接收终态。
 
-**例外**：若后端无法提供可信的最终快照（包括管理通道超时），尽力发送 `response_failed`，以 WebSocket 1011 异常关闭，不发送伪造零用量或不完整总值的 session.done。断网/进程崩溃也不能保证终态送达。客户端必须处理没有 session.done 的异常断连，标记该会话最终用量未知，不得当作零用量或完整结算。
+> **最终用量不可用**：后端无法确认最终快照时，尽力发送 `response_failed` 并以 1011 关闭，不发送 `session.done`。断网或进程崩溃也可能没有终态。客户端必须将此类会话标记为“最终用量未知”，不得按零用量或完整结算处理。
 
 ### 7.3 可恢复拒绝
 
@@ -375,11 +459,25 @@ parked 超时针对模型进入静默并等待新输入的空闲请求，不是�
 容量不足时，WebSocket 接受后直接返回如下事件并以 1013 关闭；无 session.created，尚无模型消耗，也未分配会话标识：
 
 ```json
-{"type":"error","code":"session_capacity_exceeded","message":"video realtime service has no free session slot (capacity 4)"}
+{
+  "type": "error",
+  "code": "session_capacity_exceeded",
+  "message": "video realtime service has no free session slot (capacity 4)"
+}
 ```
 
 ```json
-{"type":"session.done","reason":"error","usage":{"vision_tokens":0,"text_input_tokens":0,"text_output_tokens":0,"text_tokens":0,"total_tokens":0}}
+{
+  "type": "session.done",
+  "reason": "error",
+  "usage": {
+    "vision_tokens": 0,
+    "text_input_tokens": 0,
+    "text_output_tokens": 0,
+    "text_tokens": 0,
+    "total_tokens": 0
+  }
+}
 ```
 
 鉴权失败在 WebSocket 接受之前拒绝，通常表现为握手 HTTP 403，不保证能收到 WebSocket error/session.done 事件。
