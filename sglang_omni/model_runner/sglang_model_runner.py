@@ -6,6 +6,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
+import sglang_omni.compat as _compat
+
+_compat.apply_all()
+
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
@@ -182,11 +186,6 @@ class SGLModelRunner(ModelRunner):
         self._register_omni_model()
 
         port_args = PortArgs.init_new(server_args)
-        if nccl_port is not None:
-            # Keep every TP rank on the shared rendezvous port assigned by the
-            # placement layer; PortArgs.init_new would otherwise pick a fresh
-            # random port per rank and the ranks would never rendezvous.
-            port_args.nccl_port = nccl_port
         tp_size = server_args.tp_size
         self.nccl_port = port_args.nccl_port
 
@@ -228,9 +227,12 @@ class SGLModelRunner(ModelRunner):
             gpu_id=gpu_id,
         )
 
-        import sglang_omni.compat as _compat
-
         if _compat.needs_bridge():
+            self.ps = ps
+            self.dcp_size = server_args.dcp_size
+            self.dcp_rank = tp_rank % self.dcp_size
+            if self.dcp_size != 1:
+                raise ValueError("SGLang 0.5.14 compatibility requires dcp_size=1")
             # 0.5.14 takes flat rank arguments; the attn_* world info is
             # computed inside the base constructor.
             super().__init__(
@@ -514,3 +516,16 @@ class SGLModelRunner(ModelRunner):
             },
             total_gpu_memory_fraction=self._total_gpu_memory_fraction,
         )
+
+    if _compat.uses_legacy_runner(ModelRunner):
+        def _profile_available_bytes(self, pre_model_load_memory):
+            """Keep the Omni memory budget in the legacy runner's profiling MRO."""
+            configurator = _OmniKVCacheConfigurator(
+                model_runner=self,
+                total_gpu_memory_fraction=self._total_gpu_memory_fraction,
+            )
+            return configurator._profile_available_bytes(pre_model_load_memory)
+
+        @property
+        def effective_max_total_num_tokens(self):
+            return self.max_total_num_tokens

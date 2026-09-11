@@ -608,6 +608,12 @@ class OmniScheduler:
         )
         self.device_module = torch.get_device_module(self.device)
 
+    def init_metrics_collector(self, tp_rank, pp_rank, dp_rank):
+        return _compat.init_metrics_collector(_Upstream, self, tp_rank, pp_rank, dp_rank)
+
+    def init_metrics_reporter(self, tp_rank, pp_rank, dp_rank):
+        return _compat.init_metrics_reporter(_Upstream, self, tp_rank, pp_rank, dp_rank)
+
     def _init_upstream_scheduler_components(self) -> None:
         """Install the scheduler components required by upstream hot paths."""
         from sglang.srt.managers.scheduler_components.batch_result_processor import (
@@ -1307,8 +1313,8 @@ class OmniScheduler:
         own that state, so feed it in and write the (possibly rebuilt) running
         batch back before handing the runnable batch to the caller.
         """
-        plan = _Upstream.get_next_batch_to_run(
-            self, self.running_batch, self.last_batch
+        plan = _compat.get_next_batch_plan(
+            _Upstream, self, self.running_batch, self.last_batch
         )
         self.running_batch = plan.running_batch
         return plan.batch_to_run
@@ -1324,10 +1330,10 @@ class OmniScheduler:
         # 0.5.16 passes ``running_batch`` in and expects a ``NextBatchPlan`` back,
         # so the coalesce hold-off returns an empty plan rather than None.
         if self.prefill_coalesce_requests <= 1 or self.chunked_req is not None:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         decode_is_idle = running_batch is None or running_batch.is_empty()
         if not self.prefill_coalesce_when_idle and decode_is_idle:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         if self.prefill_coalesce_requires_pending_builds:
             with self._request_admission_lock:
                 build_work_pending = bool(
@@ -1338,10 +1344,10 @@ class OmniScheduler:
             if not build_work_pending and not (
                 self.prefill_coalesce_after_builds_during_decode and not decode_is_idle
             ):
-                return _Upstream.get_new_batch_prefill(self, running_batch)
+                return _compat.get_prefill_plan(_Upstream, self, running_batch)
         waiting = self.waiting_queue
         if not waiting or len(waiting) >= self.prefill_coalesce_requests:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         now = time.perf_counter()
         oldest = now
         for req in waiting:
@@ -1350,7 +1356,7 @@ class OmniScheduler:
                 t = req._coalesce_enqueue_t = now
             oldest = min(oldest, t)
         if now - oldest >= self.prefill_coalesce_wait_s:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         return NextBatchPlan(batch_to_run=None, running_batch=running_batch)
 
     def run_batch(self, batch, pp_proxy_tensors=None):

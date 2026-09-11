@@ -10,9 +10,26 @@ import subprocess
 import tempfile
 
 
+def detect_patch_set(site: Path) -> str:
+    path = site / 'sglang/srt/model_executor/model_runner.py'
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == 'ModelRunner':
+            for method in node.body:
+                if isinstance(method, ast.FunctionDef) and method.name == '__init__':
+                    names = {arg.arg for arg in method.args.args + method.args.kwonlyargs}
+                    if 'ps' in names:
+                        return '0.5.16'
+                    if {'tp_rank', 'tp_size'} <= names:
+                        return '0.5.14'
+    raise RuntimeError('cannot identify the installed SGLang ModelRunner API')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('site_packages', nargs='?', type=Path)
+    parser.add_argument('--patch-set', choices=('auto', '0.5.14', '0.5.16'), default='auto',
+                        help='select source layout explicitly for vendor backports')
     args = parser.parse_args()
     if args.site_packages is None:
         spec = importlib.util.find_spec('sglang')
@@ -35,6 +52,10 @@ def main() -> None:
         ('0002-fix-cross-attention-extend-sdpa-alignment.patch', native),
         ('0003-preserve-frame-visibility.patch', None),
     ]
+    patch_set = detect_patch_set(site) if args.patch_set == 'auto' else args.patch_set
+    if patch_set == '0.5.14':
+        operations = [('sglang-0.5.14.patch', None)]
+    print(f'SGLang patch set: {patch_set}')
     originals = {path: (site / path).read_bytes() for path in (moss, native, backend)}
     # Resolve all patches on private copies before writing any installed file.
     with tempfile.TemporaryDirectory(prefix='moss-npu-patches-') as temp:

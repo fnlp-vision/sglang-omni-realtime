@@ -6,7 +6,14 @@
 
 ## 环境
 
-目标环境：Ascend 910B2C、CANN 9.0.0、PyTorch/torch_npu 2.11、支持 Ascend 的 SGLang 0.5.16、Transformers 5.12.1，以及 Python 3.12 或 3.13。使用 NPU 维护方提供的配套环境和本地 [MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG) 权重。不要在 NPU 环境安装 CUDA 依赖锁。保留了原分支的 SGLang 0.5.14 兼容代码，但它不属于本次集成的验收目标。
+目标环境：Ascend 910B2C、CANN 9.0.0、PyTorch/torch_npu 2.11、支持 Ascend 的 SGLang 0.5.14 或 0.5.16、Transformers 5.12.1，以及 Python 3.12 或 3.13。使用 NPU 维护方提供的配套环境和本地 [MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG) 权重。不要在 NPU 环境安装 CUDA 依赖锁。两个 SGLang 版本均为实现目标，需分别完成运行验收；厂商构建必须提供对应的上游 API。
+
+| SGLang API | 集成行为 |
+| --- | --- |
+| 0.5.16：`ModelRunner(ps=...)`、原生 `NextBatchPlan` 和请求 range | 使用原生接口，不应用旧版运行时补丁 |
+| 0.5.14：独立 rank 参数、调度器持有 batch、`fill_len`/`extend_input_len` | 实例内调度适配、请求 range 同步、显式 forward 参数和 KV 容量适配 |
+
+兼容判断依据实际 API 签名，不仅依赖版本字符串。未知构造接口和不支持的 forward 参数明确失败；不替换上游 Scheduler 类的方法，不跳过显存分配，也不静默丢弃 forward 参数。源码依据：[0.5.14 调度器](https://github.com/sgl-project/sglang/blob/v0.5.14/python/sglang/srt/managers/scheduler.py)、[0.5.14 ModelRunner](https://github.com/sgl-project/sglang/blob/v0.5.14/python/sglang/srt/model_executor/model_runner.py)。
 
 在仓库根目录，使用该环境的 Python 执行：
 
@@ -17,7 +24,7 @@ export ASCEND_USE_FA=false
 export ASCEND_USE_FIA=false
 ```
 
-补丁安装器默认修改当前解释器的 SGLang，可选参数为对应的 `site-packages` 目录。修改前先停止服务。全部补丁先在临时副本中处理：已经应用的允许跳过，不兼容的明确失败；被修改的文件保留 `.moss-npu.bak` 备份。安装后重启服务。环境应预先包含 FastAPI、websockets、Pillow、psutil、pytest、pytest-asyncio 等应用依赖。
+补丁安装器默认修改当前解释器的 SGLang，可选参数为对应的 `site-packages` 目录。根据已安装的 ModelRunner 签名选择 0.5.14 或 0.5.16 补丁集；厂商回移代码可用 `--patch-set 0.5.14` 或 `--patch-set 0.5.16` 显式选择源码布局，不兼容时仍会失败。修改前先停止服务。全部补丁先在临时副本中处理：已经应用的允许跳过，不兼容的明确失败；被修改的文件保留 `.moss-npu.bak` 备份。安装后重启服务。环境应预先包含 FastAPI、websockets、Pillow、psutil、pytest、pytest-asyncio 等应用依赖。
 
 帧可见性通过 native SDPA extend 路径的逐请求 mask 实现。带 mask 的 cross-attention 不接受 FA/FIA、推测解码或 context parallel 路径。补丁缺失时拒绝启动 MOSS-VL NPU 服务；decode 保持原有的视觉 KV 全可见行为。
 
@@ -45,12 +52,17 @@ MODEL_PATH=/path/to/model bash deploy.sh start8
 
 `CONTEXT_LENGTH`、`MEM_FRACTION`、`HOST` 可覆盖默认值。设备编号是可见设备列表中的逻辑索引，必须核对实际机器的 HCCS 分组，示例不代表所有机器的拓扑。每个适配层连接自己的后端，不做负载均衡。容量和显存默认值需要在 NPU 上验收。
 
+NPU 启动锁通过 `ASCEND_RT_VISIBLE_DEVICES` 解析进程内编号，使用独立的 NPU 锁名称；CUDA 保持原有的锁映射。TP 通信初始化沿用标准 ModelRunner 调用链接收部署层分配的 rendezvous 端口。
+
 ## 验收
 
 **当前状态：实现交接，尚未验证。本次集成修正未运行测试或推理。** 接收方应记录提交版本、环境、命令、原始输出和结果，验收后再合入 main。其他文档中的历史 CUDA 数据不代表本次 NPU 修订的结果。
 
 ```bash
 python -m pytest tests/unit_test/vendor/test_sglang_server_args.py \
+  tests/unit_test/vendor/test_sglang_versions.py \
+  tests/unit_test/pipeline/test_stage_process_env.py \
+  tests/unit_test/pipeline/test_npu_startup_lock.py \
   vl_legacy_adapter/tests/test_lifecycle.py \
   tests/unit_test/moss_vl_realtime/test_legacy_perf_probe.py -q
 MOSSVL_TEST_NPU_PATCHES=1 NPU_TEST_DEVICE=cpu python -m pytest \
@@ -65,4 +77,4 @@ bash perf.sh
 
 `perf.sh` 默认运行五轮，每轮使用四张不同的仓库样例帧，速率配置为 160 token/s，并对每轮实施 10 秒超时。必须收齐 ACK 且有可见文字；保留与 ACK 交错的输出，TTFT 从建连开始计到首段可见文字。可通过 `FRAMES_DIR`、`NFRAMES`、`ROUNDS`、`TOKEN_RATE`、`TIMEOUT_S`、`VL_MODEL_WS_URL` 配置。这些是协议与时延检查，不是 HF 等价性证明。
 
-合入 main 前还需完成：NPU HF/SGLang 多帧 extend、问题位于帧边界前后、历史视觉 KV、视觉滑窗切换、无可见帧行，以及长度不同的 1/2/4 会话对比。使用维护方 HF 脚本，保持输入和采样一致，保留输出及首次分歧证据。同时覆盖延迟/缺失二进制、损坏图片、启动失败、取消重连、显存回收和 CUDA 回归。仓库现有 CUDA 精度启动器不是 NPU 测评脚本。
+应在两个 SGLang 环境分别执行上述检查。合入 main 前还需完成：NPU HF/SGLang 多帧 extend、问题位于帧边界前后、历史视觉 KV、视觉滑窗切换、无可见帧行，以及长度不同的 1/2/4 会话对比。使用维护方 HF 脚本，保持输入和采样一致，保留输出及首次分歧证据。同时覆盖延迟/缺失二进制、损坏图片、启动失败、取消重连、显存回收和 CUDA 回归。仓库现有 CUDA 精度启动器不是 NPU 测评脚本。

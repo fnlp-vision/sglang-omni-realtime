@@ -787,14 +787,15 @@ def _construct_scheduler(
     if gpu_id is None:
         return factory(**factory_args)
 
-    # Key the lock on the physical accelerator (pre-normalization id): TP
-    # ranks each own one card and must construct concurrently — their
-    # distributed rendezvous is a barrier, so serializing on the normalized
-    # local id (0 for every rank) would deadlock rank 0 against the rest.
-    lock_gpu_id = spec.placement_gpu_id
-    if lock_gpu_id is None:
-        lock_gpu_id = gpu_id
-    with gpu_startup_lock(int(lock_gpu_id)) as lock_path:
+    if current_platform.device_type == "npu":
+        from sglang_omni.utils.npu_startup import npu_startup_lock
+
+        startup_lock = npu_startup_lock
+    else:
+        startup_lock = gpu_startup_lock
+    # Both helpers accept process-local IDs and resolve their own platform's
+    # visible-device list. Placement IDs must not be mapped a second time.
+    with startup_lock(int(gpu_id)) as lock_path:
         log.info(f"Acquired GPU startup lock for stage {spec.stage_name}: {lock_path}")
         return factory(**factory_args)
 

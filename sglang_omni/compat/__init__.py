@@ -1,378 +1,224 @@
-"""Compatibility shims for running sglang-omni on sglang 0.5.14 (NPU build).
+"""SGLang 0.5.14/0.5.16 API bridges; modern runtimes retain native behavior.
 
-The upstream sglang-omni-realtime sources target the 0.5.16 scheduler
-contract (``NextBatchPlan``-returning prefill planning, split ModelRunner
-phases). The NPU environment ships a 0.5.14 build with the Ascend hardware
-backend instead. This module bridges the differences at runtime:
-
-- ``NextBatchPlan`` dataclass missing from ``schedule_batch``
-- ``Scheduler.get_next_batch_to_run`` / ``get_new_batch_prefill`` signatures
-  (0.5.14 owns ``running_batch``/``last_batch`` on the scheduler itself and
-  returns the batch directly)
-- ModelRunner phase methods (``alloc_memory_pool``,
-  ``init_attention_backends``) that do not exist pre-0.5.15; the 0.5.14
-  constructor already performs those steps.
-
-Everything is idempotent and a no-op on a true 0.5.16 runtime.
+Scheduler calls are adapted on Omni instances, never by replacing methods on
+the upstream Scheduler class. Missing request/forward metadata APIs are added
+only on the legacy runtime, before Omni imports their consumers.
 """
-
 from __future__ import annotations
 
-import logging
+from dataclasses import dataclass
+import functools
+import inspect
+import sys
 import types
-from dataclasses import dataclass, field
-from typing import Any, Optional
-
-logger = logging.getLogger(__name__)
-
-_bridge_applied = False
+from typing import Any, NamedTuple
 
 
 @dataclass
 class NextBatchPlan:
-    """0.5.16 scheduler plan contract, reintroduced for 0.5.14."""
-
-    batch_to_run: Optional[Any] = None
-    running_batch: Optional[Any] = None
+    batch_to_run: Any = None
+    running_batch: Any = None
 
 
-def _sglang_version_tuple() -> tuple[int, ...]:
-    import sglang
+class ExtendRange(NamedTuple):
+    start: int
+    end: int
 
-    try:
-        parts = []
-        for piece in sglang.__version__.split(".")[:3]:
-            digits = "".join(ch for ch in piece if ch.isdigit())
-            parts.append(int(digits) if digits else 0)
-        return tuple(parts)
-    except Exception:
-        return (0, 0, 0)
+    @property
+    def length(self) -> int:
+        return self.end - self.start
+
+
+def uses_legacy_runner(runner_class) -> bool:
+    parameters = inspect.signature(runner_class.__init__).parameters
+    if 'ps' in parameters:
+        return False
+    if {'tp_rank', 'tp_size'} <= parameters.keys():
+        return True
+    raise RuntimeError('unsupported SGLang ModelRunner constructor; expected 0.5.14 or 0.5.16 API')
 
 
 def needs_bridge() -> bool:
-    """True when the installed sglang predates the 0.5.16 scheduler contract.
+    from sglang.srt.model_executor.model_runner import ModelRunner
 
-    Detected off ``ModelRunner.__init__`` (0.5.16 takes a composed ``ps``
-    ParallelState; 0.5.14 takes flat rank arguments), which is unaffected by
-    any shim this module installs.
-    """
+    return uses_legacy_runner(ModelRunner)
+
+
+def get_next_batch_plan(upstream, scheduler, running_batch, last_batch):
+    method = upstream.get_next_batch_to_run
+    if 'running_batch' in inspect.signature(method).parameters:
+        return method(scheduler, running_batch, last_batch)
+    # None is an explicit state update, not an instruction to retain a stale batch.
+    scheduler.running_batch = running_batch
+    scheduler.last_batch = last_batch
+    prefill = scheduler.get_new_batch_prefill
+    missing = object()
+    previous = scheduler.__dict__.get('get_new_batch_prefill', missing)
+
+    def legacy_prefill():
+        plan = prefill(scheduler.running_batch)
+        scheduler.running_batch = plan.running_batch
+        return plan.batch_to_run
+
+    scheduler.get_new_batch_prefill = legacy_prefill
     try:
-        import inspect
-
-        from sglang.srt.model_executor.model_runner import ModelRunner
-
-        return "ps" not in inspect.signature(ModelRunner.__init__).parameters
-    except Exception:
-        return False
-
-
-def export_next_batch_plan() -> None:
-    """Make ``NextBatchPlan`` importable from sglang.srt.managers.schedule_batch."""
-    if not needs_bridge():
-        return
-    import sglang.srt.managers.schedule_batch as sb
-
-    if not hasattr(sb, "NextBatchPlan"):
-        sb.NextBatchPlan = NextBatchPlan
+        batch = method(scheduler)
+    finally:
+        if previous is missing:
+            scheduler.__dict__.pop('get_new_batch_prefill', None)
+        else:
+            scheduler.get_new_batch_prefill = previous
+    return NextBatchPlan(batch, scheduler.running_batch)
 
 
-def apply_scheduler_bridge() -> None:
-    """Adapt 0.5.14 Scheduler methods to the 0.5.16 calling contract.
+def get_prefill_plan(upstream, scheduler, running_batch):
+    method = upstream.get_new_batch_prefill
+    if 'running_batch' in inspect.signature(method).parameters:
+        return method(scheduler, running_batch)
+    scheduler.running_batch = running_batch
+    return NextBatchPlan(method(scheduler), scheduler.running_batch)
 
-    After this, callers can invoke
-    ``scheduler.get_next_batch_to_run(running_batch, last_batch)`` and receive
-    a ``NextBatchPlan``, and ``scheduler.get_new_batch_prefill(running_batch)``
-    returns a ``NextBatchPlan`` — while the 0.5.14 internals (invoked through
-    the saved originals) keep operating on their native signatures. The
-    temporary instance-level shadowing inside ``patched_next`` keeps the 0.5.14
-    planning path calling the original no-arg prefill method even when an
-    OmniScheduler subclass overrides the 0.5.16-shaped one.
-    """
-    global _bridge_applied
-    if _bridge_applied or not needs_bridge():
-        return
-    export_next_batch_plan()
 
-    from sglang.srt.managers.scheduler import Scheduler as S
+def init_metrics_collector(upstream, scheduler, tp_rank, pp_rank, dp_rank):
+    method = getattr(upstream, 'init_metrics_collector', None)
+    if method is not None:
+        return method(scheduler, tp_rank, pp_rank, dp_rank)
+    from sglang.srt.observability.metrics_collector import SchedulerMetricsCollector
 
-    orig_next = S.get_next_batch_to_run
-    orig_prefill = S.get_new_batch_prefill
+    scheduler.metrics_collector_context = SchedulerMetricsCollector.init_new(
+        server_args=scheduler.server_args, ps=scheduler.ps,
+        tp_rank=tp_rank, pp_rank=pp_rank, dp_rank=dp_rank,
+        enable_priority_scheduling=scheduler.enable_priority_scheduling,
+        enable_lora=scheduler.enable_lora,
+        enable_hierarchical_cache=scheduler.enable_hierarchical_cache,
+    )
+    scheduler.metrics_collector = scheduler.metrics_collector_context.collector
 
-    def patched_next(self: Any, running_batch: Any = None, last_batch: Any = None):
-        if running_batch is not None:
-            self.running_batch = running_batch
-        if last_batch is not None:
-            self.last_batch = last_batch
 
-        def _prefill_and_unwrap(*args, **kwargs):
-            # Unshadow first so this (and any later call in the planning
-            # path) reaches the Omni/OmniScheduler hook with its 0.5.16
-            # NextBatchPlan contract; unwrap to the batch the 0.5.14
-            # planning path expects.
-            self.__dict__.pop("get_new_batch_prefill", None)
-            plan = self.get_new_batch_prefill(self.running_batch)
-            self.running_batch = plan.running_batch
-            return plan.batch_to_run
+def init_metrics_reporter(upstream, scheduler, tp_rank, pp_rank, dp_rank):
+    method = getattr(upstream, 'init_metrics_reporter', None)
+    if method is not None:
+        return method(scheduler, tp_rank, pp_rank, dp_rank)
+    from sglang.srt.managers.scheduler_components.metrics_reporter import SchedulerMetricsReporter
 
-        self.get_new_batch_prefill = _prefill_and_unwrap
-        try:
-            batch = orig_next(self)
-        finally:
-            self.__dict__.pop("get_new_batch_prefill", None)
-        return NextBatchPlan(batch_to_run=batch, running_batch=self.running_batch)
-
-    def patched_prefill(self: Any, running_batch: Any = None):
-        if running_batch is not None:
-            self.running_batch = running_batch
-        batch = orig_prefill(self)
-        return NextBatchPlan(batch_to_run=batch, running_batch=self.running_batch)
-
-    def init_metrics_collector(self: Any, tp_rank: int, pp_rank: int, dp_rank: Any):
-        from sglang.srt.observability.metrics_collector import SchedulerMetricsCollector
-
-        self.metrics_collector_context = SchedulerMetricsCollector.init_new(
-            server_args=self.server_args,
-            ps=self.ps,
-            tp_rank=tp_rank,
-            pp_rank=pp_rank,
-            dp_rank=dp_rank,
-            enable_priority_scheduling=self.enable_priority_scheduling,
-            enable_lora=self.enable_lora,
-            enable_hierarchical_cache=self.enable_hierarchical_cache,
-        )
-        self.metrics_collector = self.metrics_collector_context.collector
-
-    def init_metrics_reporter(self: Any, tp_rank: int, pp_rank: int, dp_rank: Any):
-        from sglang.srt.managers.scheduler_components.metrics_reporter import (
-            SchedulerMetricsReporter,
-        )
-
-        self.metrics_reporter = SchedulerMetricsReporter(
-            scheduler=self,
-            tp_rank=tp_rank,
-            pp_rank=pp_rank,
-            dp_rank=dp_rank,
-            metrics_collector_context=self.metrics_collector_context,
-            metrics_collector=self.metrics_collector,
-        )
-
-    S.get_next_batch_to_run = patched_next
-    S.get_new_batch_prefill = patched_prefill
-    S.init_metrics_collector = init_metrics_collector
-    S.init_metrics_reporter = init_metrics_reporter
-    _bridge_applied = True
-    logger.info(
-        "sglang-omni: installed 0.5.14 scheduler protocol bridge "
-        "(NextBatchPlan-compatible planning methods)"
+    scheduler.metrics_reporter = SchedulerMetricsReporter(
+        scheduler=scheduler, tp_rank=tp_rank, pp_rank=pp_rank, dp_rank=dp_rank,
+        metrics_collector_context=scheduler.metrics_collector_context,
+        metrics_collector=scheduler.metrics_collector,
     )
 
 
-def model_runner_phase_guard(model_runner: Any) -> None:
-    """No-op the split phase methods when the 0.5.14 runner did the work already."""
-    if not hasattr(model_runner, "alloc_memory_pool"):
-        model_runner.alloc_memory_pool = lambda: None
-    if not hasattr(model_runner, "init_attention_backends"):
-        model_runner.init_attention_backends = lambda: None
+def install_req_extend_range(req_class) -> None:
+    if hasattr(req_class, 'set_extend_range'):
+        return
+
+    def get_range(self):
+        end = getattr(self, 'fill_len', 0)
+        return ExtendRange(end - getattr(self, 'extend_input_len', 0), end)
+
+    def set_range(self, value):
+        if value is None:
+            self.fill_len = self.extend_input_len = 0
+        else:
+            self.fill_len = int(value.end)
+            self.extend_input_len = int(value.length)
+
+    def set_extend_range(self, start, end):
+        self.extend_range = ExtendRange(int(start), int(end))
+
+    # The old prefill planner still writes fill_len/extend_input_len directly.
+    # A property keeps both API views synchronized through admission/rollback.
+    req_class.extend_range = property(get_range, set_range)
+    req_class.set_extend_range = set_extend_range
+
+
+def install_forward_batch_shim(forward_class) -> None:
+    original = forward_class.init_new.__func__
+    if getattr(original, '_omni_legacy_forward', False):
+        return
+    parameters = inspect.signature(original).parameters
+    overrides = ('capture_hidden_mode', 'return_hidden_states_before_norm', 'seq_lens_cpu_cache')
+    if all(name in parameters for name in overrides[:2]):
+        return
+
+    @functools.wraps(original)
+    def init_new(cls, batch, model_runner, **kwargs):
+        unsupported = set(kwargs) - set(parameters) - set(overrides)
+        if unsupported:
+            raise TypeError(f'unsupported ForwardBatch overrides: {sorted(unsupported)}')
+        saved = {}
+        forwarded = {}
+        try:
+            for name, value in kwargs.items():
+                if name in parameters:
+                    forwarded[name] = value
+                else:
+                    if not hasattr(batch, name):
+                        raise RuntimeError(f'legacy ScheduleBatch has no {name} override slot')
+                    saved[name] = getattr(batch, name)
+                    setattr(batch, name, value)
+            return original(cls, batch, model_runner, **forwarded)
+        finally:
+            for name, value in saved.items():
+                setattr(batch, name, value)
+
+    init_new._omni_legacy_forward = True
+    forward_class.init_new = classmethod(init_new)
 
 
 def install_kv_cache_configurator_shim() -> None:
-    """Expose ``sglang.srt.mem_cache.kv_cache_configurator`` on 0.5.14.
-
-    0.5.16 composes a ``KVCacheConfigurator`` into the ModelRunner; 0.5.14
-    keeps ``_profile_available_bytes`` on the runner's own mixin. The shim
-    wraps a runner reference, forwards attribute reads to it (``gpu_id``,
-    ``server_args``, …), and delegates profiling to the 0.5.14 mixin method,
-    so Omni's colocated-budget subclass works unchanged.
-    """
+    name = 'sglang.srt.mem_cache.kv_cache_configurator'
     try:
-        import sglang.srt.mem_cache.kv_cache_configurator as _kcc  # noqa: F401
-
+        __import__(name)
         return
-    except ImportError:
-        pass
-
-    import sys
-    import types
-
-    import sglang.srt.mem_cache as mem_cache_mod
+    except ModuleNotFoundError as exc:
+        if exc.name != name:
+            raise
     from sglang.srt.model_executor.model_runner import ModelRunner
+    import sglang.srt.mem_cache as package
+
+    profile = ModelRunner._profile_available_bytes
 
     @dataclass
     class KVCacheConfigurator:
         model_runner: Any
 
-        def __getattr__(self, name: str) -> Any:
-            return getattr(self.model_runner, name)
+        def __getattr__(self, field):
+            return getattr(self.model_runner, field)
 
-        def _profile_available_bytes(self, pre_model_load_memory: float) -> int:
-            return self.model_runner._profile_available_bytes(pre_model_load_memory)
+        def _profile_available_bytes(self, pre_model_load_memory):
+            # Call the saved upstream implementation, not the Omni override.
+            return profile(self.model_runner, pre_model_load_memory)
 
-    mod = types.ModuleType("sglang.srt.mem_cache.kv_cache_configurator")
-    mod.KVCacheConfigurator = KVCacheConfigurator
-    sys.modules["sglang.srt.mem_cache.kv_cache_configurator"] = mod
-    setattr(mem_cache_mod, "kv_cache_configurator", mod)
-
-    if not hasattr(ModelRunner, "init_kv_cache_configurator"):
-
-        def init_kv_cache_configurator(self: Any) -> None:
-            self.kv_cache_configurator = KVCacheConfigurator(model_runner=self)
-
-        ModelRunner.init_kv_cache_configurator = init_kv_cache_configurator
-
-    if not hasattr(ModelRunner, "effective_max_total_num_tokens"):
-
-        @property
-        def effective_max_total_num_tokens(self: Any) -> int:
-            return self.max_total_num_tokens
-
-        ModelRunner.effective_max_total_num_tokens = effective_max_total_num_tokens
-    logger.info("sglang-omni: installed KVCacheConfigurator shim for 0.5.14")
-
-
-def patch_server_args_fields() -> None:
-    """Add 0.5.16-only ServerArgs fields that Omni reads, with safe defaults."""
-    try:
-        from sglang.srt.server_args import ServerArgs
-    except ImportError:
-        return
-
-    defaults = {
-        "dcp_size": 1,  # decode context parallel (0.5.16)
-    }
-
-    original_post_init = ServerArgs.__post_init__
-
-    def post_init(self: Any) -> None:
-        original_post_init(self)
-        for name, value in defaults.items():
-            if not hasattr(self, name):
-                setattr(self, name, value)
-
-    if getattr(original_post_init, "_omni_compat_patched", False):
-        return
-    post_init._omni_compat_patched = True
-    ServerArgs.__post_init__ = post_init
-
-
-def install_runtime_context_shim() -> None:
-    """Expose ``get_flags`` (0.5.16 structured runtime accessors) on 0.5.14.
-
-    Only Omni-side writers need it; the 0.5.14 srt code paths never call it.
-    The flags object mirrors the small subset Omni reads and writes
-    (``capture.enable_torch_compile``) and accepts arbitrary writes so other
-    optional fields don't break assignments.
-    """
-    try:
-        from sglang.srt.runtime_context import get_flags  # noqa: F401
-
-        return
-    except ImportError:
-        pass
-
-    import sglang.srt.runtime_context as rc
-
-    class _LooseFlags:
-        capture: Any = types.SimpleNamespace(enable_torch_compile=False)
-
-        def __getattr__(self, name: str) -> Any:
-            value = types.SimpleNamespace()
-            object.__setattr__(self, name, value)
-            return value
-
-    _FLAGS = _LooseFlags()
-
-    def get_flags() -> Any:
-        return _FLAGS
-
-    rc.get_flags = get_flags
-
-
-def patch_envs_fields() -> None:
-    """Register 0.5.16 env fields that Omni reads on the 0.5.14 Envs registry."""
-    try:
-        from sglang.srt.environ import envs
-
-        if hasattr(envs, "SGLANG_MAX_NEW_TOKENS_LIMIT"):
-            return
-        from sglang.srt.environ import EnvInt
-
-        # Runtime setattr skips __set_name__, so name it manually.
-        field = EnvInt(65536)
-        field.name = "SGLANG_MAX_NEW_TOKENS_LIMIT"
-        envs.SGLANG_MAX_NEW_TOKENS_LIMIT = field
-    except Exception:
-        logger.warning("sglang-omni: could not patch env fields", exc_info=True)
-
-
-def install_forward_batch_shim() -> None:
-    """Bridge ForwardBatch.init_new's per-forward override kwargs.
-
-    Omni (0.5.16 contract) passes ``capture_hidden_mode`` /
-    ``return_hidden_states_before_norm`` explicitly; 0.5.14 reads
-    ``capture_hidden_mode`` off the ScheduleBatch. Translate the kwargs into
-    batch-field writes so the native constructor keeps its contract.
-    """
-    import inspect
-
-    from sglang.srt.model_executor.forward_batch_info import ForwardBatch
-
-    params = inspect.signature(ForwardBatch.init_new).parameters
-    if "capture_hidden_mode" in params and "return_hidden_states_before_norm" in params:
-        return
-
-    original = ForwardBatch.init_new.__func__
-
-    @classmethod
-    def init_new(cls, batch, model_runner, capture_hidden_mode=None, **kwargs):
-        if capture_hidden_mode is not None and hasattr(batch, "capture_hidden_mode"):
-            batch.capture_hidden_mode = capture_hidden_mode
-        return original(cls, batch, model_runner)
-
-    ForwardBatch.init_new = init_new
-
-
-def install_req_extend_range_shim() -> None:
-    """Expose the 0.5.16 ``Req.extend_range`` slot on 0.5.14.
-
-    0.5.16 tracks the pending extend window explicitly; 0.5.14 derives it
-    from ``len(fill_ids) - len(prefix_indices)``, which Omni's realtime
-    segment append already keeps consistent. The shim only provides the
-    storage slot so Omni's save/restore symmetry works.
-    """
-    try:
-        from sglang.srt.managers.schedule_batch import Req
-    except ImportError:
-        return
-
-    if hasattr(Req, "set_extend_range"):
-        return
-
-    def set_extend_range(self: Any, start: int, end: int) -> None:
-        self.extend_range = (int(start), int(end))
-
-    Req.set_extend_range = set_extend_range
-    if not hasattr(Req, "extend_range"):
-        Req.extend_range = None
+    module = types.ModuleType(name)
+    module.KVCacheConfigurator = KVCacheConfigurator
+    sys.modules[name] = module
+    package.kv_cache_configurator = module
 
 
 def apply_all() -> None:
     if not needs_bridge():
         return
-    export_next_batch_plan()
-    apply_scheduler_bridge()
+    from sglang.srt.managers import schedule_batch
+    from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+    from sglang.srt.server_args import ServerArgs
+    from sglang.srt import runtime_context
+    from sglang.srt.environ import envs
+
+    if not hasattr(schedule_batch, 'NextBatchPlan'):
+        schedule_batch.NextBatchPlan = NextBatchPlan
+    if not hasattr(ServerArgs, 'dcp_size'):
+        ServerArgs.dcp_size = 1
+    install_req_extend_range(schedule_batch.Req)
+    install_forward_batch_shim(ForwardBatch)
     install_kv_cache_configurator_shim()
-    patch_server_args_fields()
-    install_runtime_context_shim()
-    install_forward_batch_shim()
-    install_req_extend_range_shim()
-    patch_envs_fields()
+    if not hasattr(runtime_context, 'get_flags'):
+        # Only this explicit capture flag is read/written by Omni on 0.5.14.
+        flags = types.SimpleNamespace(capture=types.SimpleNamespace(enable_torch_compile=False))
+        runtime_context.get_flags = lambda: flags
+    if not hasattr(envs, 'SGLANG_MAX_NEW_TOKENS_LIMIT'):
+        from sglang.srt.environ import EnvInt
 
-
-__all__ = [
-    "NextBatchPlan",
-    "apply_all",
-    "apply_scheduler_bridge",
-    "export_next_batch_plan",
-    "model_runner_phase_guard",
-    "needs_bridge",
-]
+        field = EnvInt(65536)
+        field.name = 'SGLANG_MAX_NEW_TOKENS_LIMIT'
+        envs.SGLANG_MAX_NEW_TOKENS_LIMIT = field
