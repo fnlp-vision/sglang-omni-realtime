@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import json
 import math
 import os
@@ -77,12 +78,15 @@ def main():
             base = 62000 + index * 200
             backend_env['HCCL_NPU_SOCKET_PORT_RANGE'] = f'{base}-{base + 199}'
             context = os.environ.get('CONTEXT_LENGTH', '8192' if len(group) == 2 else '32768')
-            memory = os.environ.get('MEM_FRACTION', '0.80' if len(group) == 2 else '0.70')
+            # 0.70 leaves activation headroom for the caller contract's
+            # 8-frame rounds: 0.80 deterministically OOMs the ViT SDPA there.
+            memory = os.environ.get('MEM_FRACTION', '0.70')
             capacity = os.environ.get('MAX_RUNNING_REQUESTS', str(len(group)))
             command = [sys.executable, str(ROOT / 'examples/run_moss_vl_realtime_server.py'),
                        '--model-path', str(model), '--host', args.host, '--port', str(port),
                        '--context-length', context, '--mem-fraction-static', memory,
                        '--max-running-requests', capacity]
+            command += shlex.split(os.environ.get('EXTRA_SERVER_ARGS', ''))
             if len(group) == 1:
                 command += ['--gpu', str(group[0])]
             else:

@@ -168,6 +168,23 @@ class Stage:
         self._loop = asyncio.get_running_loop()
         self._running = True
 
+        def _is_fatal_resource_error(exc: BaseException) -> bool:
+            """True for device-OOM failures that leave the engine unservable.
+
+            torch.OutOfMemoryError covers CUDA/NPU allocators; the substring
+            catch keeps vendor-specific runtime errors (e.g. "NPU out of
+            memory" raised as RuntimeError) in the same class.
+            """
+            try:
+                import torch
+
+                if isinstance(exc, getattr(torch, "OutOfMemoryError", ())):
+                    return True
+            except Exception:
+                pass
+            text = f"{type(exc).__name__}: {exc}".lower()
+            return "out of memory" in text
+
         # Start scheduler in dedicated thread
         if self.scheduler is not None:
 
@@ -193,11 +210,27 @@ class Stage:
                     logger.exception("Scheduler thread for stage %s crashed", self.name)
                     self._running = False
                     loop = self._loop
+                    flush = None
                     if loop is not None and not loop.is_closed():
-                        asyncio.run_coroutine_threadsafe(
+                        flush = asyncio.run_coroutine_threadsafe(
                             self._handle_scheduler_crash(exc),
                             loop,
                         )
+                    # Fatal resource errors (NPU/CUDA OOM) leave the engine
+                    # unable to serve any further request; live-but-aborting
+                    # would masquerade as healthy. Fail the active requests,
+                    # then terminate the stage process so mp_runner's death
+                    # watch flips the pipeline (and /health) to failed.
+                    if _is_fatal_resource_error(exc):
+                        if flush is not None:
+                            with suppress(Exception):
+                                flush.result(timeout=30)
+                        logger.error(
+                            "Stage %s exiting after fatal resource error: %s",
+                            self.name,
+                            exc,
+                        )
+                        os._exit(1)
 
             self._scheduler_thread = threading.Thread(
                 target=_run_scheduler,

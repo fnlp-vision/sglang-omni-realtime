@@ -52,6 +52,8 @@ def main() -> None:
         ('0002-fix-cross-attention-extend-sdpa-alignment.patch', native),
         ('0003-preserve-frame-visibility.patch', None),
         ('0004-fix-self-attention-extend-kv-window-on-vision-requests.patch', native),
+        ('0005-chunk-vision-encoder-for-multi-frame-rounds.patch', moss),
+        ('0006-ascend-vision-flash-attention-backend.patch', moss),
     ]
     patch_set = detect_patch_set(site) if args.patch_set == 'auto' else args.patch_set
     if patch_set == '0.5.14':

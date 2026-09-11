@@ -66,6 +66,13 @@ def parse_args() -> argparse.Namespace:
         help="Fall back to eager decode.",
     )
     parser.add_argument(
+        "--mm-attention-backend",
+        default=None,
+        help="Optional server_args override for the multimodal (vision) "
+        "attention backend, e.g. ascend_attn on NPU for memory-efficient "
+        "fused ViT attention.",
+    )
+    parser.add_argument(
         "--decode-attention-backend",
         default=None,
         help=f"Optional server_args override for the decode attention backend "
@@ -153,6 +160,10 @@ def main() -> None:
         }
     )
     server_args_overrides = dict(factory_args.get("server_args_overrides") or {})
+    if args.mm_attention_backend is not None:
+        server_args_overrides.update(
+            {"mm_attention_backend": args.mm_attention_backend}
+        )
     if args.decode_attention_backend is not None:
         server_args_overrides.update(
             {
