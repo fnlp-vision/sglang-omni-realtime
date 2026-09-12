@@ -21,13 +21,26 @@ class Reference:
             trust_remote_code=True,
             local_files_only=True,
             dtype=torch.bfloat16,
-            device_map={"": "cuda:0"},
+            device_map={"": ("npu:0" if getattr(torch, "npu", None) and torch.npu.is_available() else "cuda:0")},
             attn_implementation=attention,
         ).eval()
+        self.device = ("npu" if getattr(torch, "npu", None) and torch.npu.is_available() else "cuda")
         self.stepper = MossVLRealtimeStepper(self.model, self.processor)
         self.tokenizer = self.processor.tokenizer
         self.silence = self.tokenizer.convert_tokens_to_ids("<|silence|>")
         self.word = self.tokenizer.encode("the", add_special_tokens=False)[0]
+
+    def _empty_cache(self):
+        if self.device == "npu":
+            self.torch.npu.empty_cache()
+        else:
+            self.torch.cuda.empty_cache()
+
+    def _sync(self):
+        if self.device == "npu":
+            self.torch.npu.synchronize()
+        else:
+            self.torch.cuda.synchronize()
 
     def initial(self, case):
         encoded = self.tokenizer.apply_chat_template(
@@ -39,7 +52,7 @@ class Reference:
             add_generation_prompt=True,
             return_tensors="pt",
         )
-        ids = (encoded["input_ids"] if hasattr(encoded, "keys") else encoded).to("cuda")
+        ids = (encoded["input_ids"] if hasattr(encoded, "keys") else encoded).to(self.device)
         return self.stepper.initial_prefill(ids)
 
     def extend(self, state, event):
@@ -117,29 +130,29 @@ class Reference:
         finally:
             states.clear()
             gc.collect()
-            self.torch.cuda.empty_cache()
+            self._empty_cache()
 
     def performance(self, case, repeats=3):
         rows = []
         frames = [e for e in case["events"] if e["type"] == "frame"][:11]
         assert len(frames) == 11
         for _ in range(repeats + 1):
-            self.torch.cuda.synchronize()
+            self._sync()
             begin = time.perf_counter()
             state = self.initial(case)
             self.stepper.sample_next_token(state, forced_token_id=self.silence)
-            self.torch.cuda.synchronize()
+            self._sync()
             prefill = time.perf_counter() - begin
             durations = []
             for index, event in enumerate(frames):
-                self.torch.cuda.synchronize()
+                self._sync()
                 begin = time.perf_counter()
                 self.extend(state, event)
                 self.stepper.sample_next_token(state, forced_token_id=self.silence)
-                self.torch.cuda.synchronize()
+                self._sync()
                 if index >= 3:
                     durations.append(time.perf_counter() - begin)
-            self.torch.cuda.synchronize()
+            self._sync()
             begin = time.perf_counter()
             self.stepper.apply_event_and_extend(
                 state,
@@ -153,14 +166,14 @@ class Reference:
                 decoder_prefix_tokens=state.text_cache_position,
             )
             self.stepper.sample_next_token(state, forced_token_id=self.word)
-            self.torch.cuda.synchronize()
+            self._sync()
             prompt_ttft = time.perf_counter() - begin
             intervals = []
             for _ in range(63):
                 begin = time.perf_counter()
                 self.stepper.commit_pending_tokens(state)
                 self.stepper.sample_next_token(state, forced_token_id=self.word)
-                self.torch.cuda.synchronize()
+                self._sync()
                 intervals.append(time.perf_counter() - begin)
             rows.append(
                 dict(
@@ -179,4 +192,4 @@ class Reference:
     def close(self):
         del self.stepper, self.model
         gc.collect()
-        self.torch.cuda.empty_cache()
+        self._empty_cache()
