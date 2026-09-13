@@ -21,6 +21,13 @@ def _ensure_python_bin_on_path() -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    from sglang_omni.models.moss_vl_realtime.platform_compat import (
+        is_npu_platform,
+        preferred_attention_backend,
+    )
+
+    is_npu = is_npu_platform()
+    backend = preferred_attention_backend()
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--host", default="0.0.0.0")
@@ -49,9 +56,10 @@ def parse_args() -> argparse.Namespace:
         "--enable-decode-cuda-graph",
         dest="decode_cuda_graph",
         action="store_true",
-        default=True,
+        default=not is_npu,
         help="Capture CUDA graphs for stable-shape decode steps "
-        "(frame extend stays eager). Default on; validated in P11.",
+        "(frame extend stays eager). Default on for CUDA, off for NPU; "
+        "validated in P11.",
     )
     parser.add_argument(
         "--disable-decode-cuda-graph",
@@ -62,9 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--decode-attention-backend",
         default=None,
-        help="Optional server_args override for the decode attention backend "
-        "(e.g. flashinfer, to match a decode-graph run in comparisons). "
-        "Must be flashinfer when decode CUDA graph is on.",
+        help=f"Optional server_args override for the decode attention backend "
+        f"(default {backend}). Must be {backend} when decode CUDA graph is on.",
     )
     parser.add_argument(
         "--enable-async-decode",
@@ -106,12 +113,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--gpus only applies when --tp-size > 1; use --gpu for TP=1")
     if args.decode_cuda_graph and args.decode_attention_backend not in (
         None,
-        "flashinfer",
+        backend,
     ):
         # fa3 decode-graph replay overflows req_to_token rows for the
         # encoder-prefix KV layout (see perf_p10_3/server_graph_blocking.log).
         parser.error(
-            "--decode-attention-backend must be flashinfer when decode CUDA "
+            f"--decode-attention-backend must be {backend} when decode CUDA "
             "graph is enabled"
         )
     return args
@@ -121,8 +128,13 @@ def main() -> None:
     args = parse_args()
     _ensure_python_bin_on_path()
     from sglang_omni.models.moss_vl_realtime.config import MossVLRealtimePipelineConfig
+    from sglang_omni.models.moss_vl_realtime.platform_compat import (
+        device_spec,
+        preferred_attention_backend,
+    )
     from sglang_omni.serve import launch_server
 
+    backend = preferred_attention_backend()
     config = MossVLRealtimePipelineConfig(model_path=args.model_path)
     stage = config.stages[0]
     stage.gpu = args.gpus if args.tp_size > 1 else args.gpu
@@ -131,7 +143,7 @@ def main() -> None:
     factory_args = dict(stage.factory_args)
     factory_args.update(
         {
-            "device": "cuda:0" if args.tp_size > 1 else f"cuda:{args.gpu}",
+            "device": device_spec(0) if args.tp_size > 1 else device_spec(args.gpu),
             "mem_fraction_static": args.mem_fraction_static,
             "context_length": args.context_length,
             "max_new_tokens": args.max_new_tokens,
@@ -147,8 +159,8 @@ def main() -> None:
         server_args_overrides.update(
             {
                 # Setting any single backend dimension stops the upstream MossVL
-                # override from injecting its flashinfer prefill default; pin both.
-                "prefill_attention_backend": "flashinfer",
+                # override from injecting its prefill default; pin both.
+                "prefill_attention_backend": backend,
                 "decode_attention_backend": args.decode_attention_backend,
             }
         )

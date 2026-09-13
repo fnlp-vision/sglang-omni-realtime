@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 class OmniPlatform(DeviceMixin):
     _omni_platform_qualname: str | None = None
 
+    @property
+    def visible_devices_env_key(self) -> str:
+        """Env var that pins a child process to one physical accelerator."""
+        return "CUDA_VISIBLE_DEVICES"
+
     def get_stage_process_env(
         self,
         spec: StageLaunchConfig,

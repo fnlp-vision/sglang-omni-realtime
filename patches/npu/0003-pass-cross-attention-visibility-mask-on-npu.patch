@@ -1,0 +1,12 @@
+--- /tmp/opencode/ascend_backend_orig.py	2026-09-10 13:14:57.395592872 +0800
++++ /tmp/opencode/ascend_backend_masked.py	2026-09-10 13:14:57.371592871 +0800
+@@ -1539,6 +1539,9 @@
+                         ),
+                         logit_cap=layer.logit_cap,
+                         logit_capping_method=layer.logit_capping_method,
++                        custom_mask=getattr(
++                            forward_batch, "cross_attention_custom_mask", None
++                        ),
+                     )
+                     attn_output = attn_output.view(
+                         -1, layer.tp_q_head_num * layer.v_head_dim
