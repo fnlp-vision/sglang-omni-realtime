@@ -26,7 +26,7 @@ export ASCEND_USE_FIA=false
 
 The patch installer operates on the active interpreter's SGLang package; an optional argument selects its `site-packages` directory. It selects the 0.5.14 or 0.5.16 patch set from the installed ModelRunner signature. `--patch-set 0.5.14` or `--patch-set 0.5.16` selects a source layout explicitly for vendor backports; incompatible sources still fail. Stop serving processes before patching. All patches are staged before installation; already-applied patches are accepted, incompatible sources fail rather than being skipped, and modified files get `.moss-npu.bak` backups. Restart after installation. The environment must already contain application dependencies, including FastAPI, websockets, Pillow, psutil, pytest and pytest-asyncio.
 
-Frame visibility uses the native SDPA extend path with a per-request mask. FA/FIA, speculative and context-parallel paths are not accepted for masked cross-attention. Missing patches prevent MOSS-VL NPU startup. Decode retains its existing all-visible encoder behavior.
+Frame visibility uses per-request masks in the native extend path. Cross-attention uses explicit Torch operations rather than fused SDPA; self-attention dispatch is unchanged. Both version-specific patch sets include the common `0004-use-torch-cross-attention.patch`. Rerun the installer when upgrading an already-patched environment. FA/FIA, speculative and context-parallel paths are not accepted for masked cross-attention. Missing visibility or Torch-path support prevents startup. Decode retains its existing all-visible encoder behavior.
 
 ## Start
 
@@ -50,19 +50,22 @@ Each command runs in the foreground. Stop with Ctrl-C or SIGTERM from a service 
 | Adapter capacity | `MAX_INFLIGHT=1`; set independently for concurrent callers |
 | Context / memory fraction | TP2: 8192 / 0.80; otherwise 32768 / 0.70 |
 
-`CONTEXT_LENGTH`, `MEM_FRACTION` and `HOST` override the defaults. Device IDs are logical indices in the visible-device list. Verify HCCS planes on the actual host; the example grouping is not a portable hardware topology guarantee. Each adapter connects to its own backend, not to a load balancer. Capacity and memory defaults need NPU acceptance testing.
+NPU serving defaults are centralized in [config.py](./config.py) and used by the supervisor. `CONTEXT_LENGTH`, `MEM_FRACTION` and `HOST` override the defaults; CUDA configuration is unaffected. Device IDs are logical indices in the visible-device list. Verify HCCS planes on the actual host; the example grouping is not a portable hardware topology guarantee. Each adapter connects to its own backend, not to a load balancer. Capacity and memory defaults need NPU acceptance testing.
 
 NPU startup locks resolve local IDs through `ASCEND_RT_VISIBLE_DEVICES` and use an NPU-specific lock namespace. CUDA retains its existing lock mapping. TP communication initialization receives the deployment-assigned rendezvous port through the standard model-runner path.
 
 ## Acceptance
 
-**Status: implementation handoff, not validated. No tests or inference were run for these integration fixes.** The recipient must record the commit, environment, commands, raw outputs and results before merging into main. Historical CUDA measurements elsewhere are not results for this NPU revision.
+**Status: CPU regression and patch validation complete; hardware acceptance pending.** See [validation results](./VALIDATION.md). This branch combines the existing Ascend fixes with PR #1 additions; it does not yet include later main changes. Historical CUDA measurements elsewhere are not results for this NPU revision.
 
 ```bash
 python -m pytest tests/unit_test/vendor/test_sglang_server_args.py \
   tests/unit_test/vendor/test_sglang_versions.py \
   tests/unit_test/pipeline/test_stage_process_env.py \
   tests/unit_test/pipeline/test_npu_startup_lock.py \
+  tests/unit_test/moss_vl_realtime/test_npu_deployment.py \
+  tests/unit_test/moss_vl_realtime/test_npu_patch_installer.py \
+  tests/unit_test/moss_vl_realtime/test_npu_platform_contract.py \
   vl_legacy_adapter/tests/test_lifecycle.py \
   tests/unit_test/moss_vl_realtime/test_legacy_perf_probe.py -q
 MOSSVL_TEST_NPU_PATCHES=1 NPU_TEST_DEVICE=cpu python -m pytest \
@@ -74,6 +77,8 @@ python vl_legacy_adapter/tests/smoke_client.py \
   --testdata deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122
 bash perf.sh
 ```
+
+Attention tests normally read the installed SGLang sources. Set `NPU_TEST_SITE_PACKAGES` to test a patched private copy without modifying the serving environment.
 
 `perf.sh` defaults to five rounds of four distinct repository frames at 160 tokens/s, with a real 10 s deadline per round. It requires all ACKs and visible text, preserves output interleaved with ACKs, and measures TTFT from connection start to the first visible text. `FRAMES_DIR`, `NFRAMES`, `ROUNDS`, `TOKEN_RATE`, `TIMEOUT_S` and `VL_MODEL_WS_URL` configure it. These are protocol/latency checks, not HF equivalence proofs.
 

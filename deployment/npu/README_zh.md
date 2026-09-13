@@ -26,7 +26,7 @@ export ASCEND_USE_FIA=false
 
 补丁安装器默认修改当前解释器的 SGLang，可选参数为对应的 `site-packages` 目录。根据已安装的 ModelRunner 签名选择 0.5.14 或 0.5.16 补丁集；厂商回移代码可用 `--patch-set 0.5.14` 或 `--patch-set 0.5.16` 显式选择源码布局，不兼容时仍会失败。修改前先停止服务。全部补丁先在临时副本中处理：已经应用的允许跳过，不兼容的明确失败；被修改的文件保留 `.moss-npu.bak` 备份。安装后重启服务。环境应预先包含 FastAPI、websockets、Pillow、psutil、pytest、pytest-asyncio 等应用依赖。
 
-帧可见性通过 native SDPA extend 路径的逐请求 mask 实现。带 mask 的 cross-attention 不接受 FA/FIA、推测解码或 context parallel 路径。补丁缺失时拒绝启动 MOSS-VL NPU 服务；decode 保持原有的视觉 KV 全可见行为。
+帧可见性通过原生 extend 路径的逐请求 mask 实现。Cross-attention 使用显式 Torch 计算，不进入 fused SDPA；self-attention 调用路径不变。两套版本补丁均包含公共的 `0004-use-torch-cross-attention.patch`，已有旧补丁的环境升级时也需重新执行安装器。带 mask 的 cross-attention 不接受 FA/FIA、推测解码或 context parallel 路径。缺少可见性或 Torch 路径支持时拒绝启动；decode 保持原有的视觉 KV 全可见行为。
 
 ## 启动
 
@@ -50,19 +50,22 @@ MODEL_PATH=/path/to/model bash deploy.sh start8
 | 适配层容量 | `MAX_INFLIGHT=1`，并发调用时独立调整 |
 | Context / 静态显存比例 | TP2：8192 / 0.80；其他：32768 / 0.70 |
 
-`CONTEXT_LENGTH`、`MEM_FRACTION`、`HOST` 可覆盖默认值。设备编号是可见设备列表中的逻辑索引，必须核对实际机器的 HCCS 分组，示例不代表所有机器的拓扑。每个适配层连接自己的后端，不做负载均衡。容量和显存默认值需要在 NPU 上验收。
+NPU 默认配置统一位于 [config.py](./config.py)，由启动器实际调用。`CONTEXT_LENGTH`、`MEM_FRACTION`、`HOST` 可覆盖默认值，CUDA 配置不受影响。设备编号是可见设备列表中的逻辑索引，必须核对实际机器的 HCCS 分组，示例不代表所有机器的拓扑。每个适配层连接自己的后端，不做负载均衡。容量和显存默认值需要在 NPU 上验收。
 
 NPU 启动锁通过 `ASCEND_RT_VISIBLE_DEVICES` 解析进程内编号，使用独立的 NPU 锁名称；CUDA 保持原有的锁映射。TP 通信初始化沿用标准 ModelRunner 调用链接收部署层分配的 rendezvous 端口。
 
 ## 验收
 
-**当前状态：实现交接，尚未验证。本次集成修正未运行测试或推理。** 接收方应记录提交版本、环境、命令、原始输出和结果，验收后再合入 main。其他文档中的历史 CUDA 数据不代表本次 NPU 修订的结果。
+**当前状态：CPU 回归和补丁验证完成，硬件验收待完成。** 结果见[验证记录](./VALIDATION_zh.md)。本分支整合已有 Ascend 修复与 PR #1 新增内容，尚未包含 main 后续改动。其他文档中的历史 CUDA 数据不代表本次 NPU 修订的结果。
 
 ```bash
 python -m pytest tests/unit_test/vendor/test_sglang_server_args.py \
   tests/unit_test/vendor/test_sglang_versions.py \
   tests/unit_test/pipeline/test_stage_process_env.py \
   tests/unit_test/pipeline/test_npu_startup_lock.py \
+  tests/unit_test/moss_vl_realtime/test_npu_deployment.py \
+  tests/unit_test/moss_vl_realtime/test_npu_patch_installer.py \
+  tests/unit_test/moss_vl_realtime/test_npu_platform_contract.py \
   vl_legacy_adapter/tests/test_lifecycle.py \
   tests/unit_test/moss_vl_realtime/test_legacy_perf_probe.py -q
 MOSSVL_TEST_NPU_PATCHES=1 NPU_TEST_DEVICE=cpu python -m pytest \
@@ -76,5 +79,7 @@ bash perf.sh
 ```
 
 `perf.sh` 默认运行五轮，每轮使用四张不同的仓库样例帧，速率配置为 160 token/s，并对每轮实施 10 秒超时。必须收齐 ACK 且有可见文字；保留与 ACK 交错的输出，TTFT 从建连开始计到首段可见文字。可通过 `FRAMES_DIR`、`NFRAMES`、`ROUNDS`、`TOKEN_RATE`、`TIMEOUT_S`、`VL_MODEL_WS_URL` 配置。这些是协议与时延检查，不是 HF 等价性证明。
+
+Attention 测试默认读取已安装的 SGLang 源码。设置 `NPU_TEST_SITE_PACKAGES` 可测试打补丁后的私有副本，不修改服务环境。
 
 应在两个 SGLang 环境分别执行上述检查。合入 main 前还需完成：NPU HF/SGLang 多帧 extend、问题位于帧边界前后、历史视觉 KV、视觉滑窗切换、无可见帧行，以及长度不同的 1/2/4 会话对比。使用维护方 HF 脚本，保持输入和采样一致，保留输出及首次分歧证据。同时覆盖延迟/缺失二进制、损坏图片、启动失败、取消重连、显存回收和 CUDA 回归。仓库现有 CUDA 精度启动器不是 NPU 测评脚本。

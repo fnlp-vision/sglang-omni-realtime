@@ -14,8 +14,10 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'deployment/moss_vl_realtime'))
 from common import Child, free_port, validate_model
+from deployment.npu.config import recommended_deploy_params
 
 
 def main():
@@ -43,6 +45,10 @@ def main():
     devices = [device for group in groups for device in group]
     if not devices or min(devices) < 0 or len(set(devices)) != len(devices):
         parser.error('each logical device must appear in exactly one group')
+    try:
+        profiles = [recommended_deploy_params(len(group), os.environ) for group in groups]
+    except ValueError as exc:
+        parser.error(str(exc))
     backend_ports = [args.port + index for index in range(len(groups))]
     adapter_ports = [args.adapter_port + index for index in range(len(groups))]
     ports = backend_ports + adapter_ports
@@ -76,13 +82,12 @@ def main():
             backend_env['HCCL_IF_BASE_PORT'] = str(int(env.get('HCCL_IF_BASE_PORT', '61000')) + index * 100)
             base = 62000 + index * 200
             backend_env['HCCL_NPU_SOCKET_PORT_RANGE'] = f'{base}-{base + 199}'
-            context = os.environ.get('CONTEXT_LENGTH', '8192' if len(group) == 2 else '32768')
-            memory = os.environ.get('MEM_FRACTION', '0.80' if len(group) == 2 else '0.70')
-            capacity = os.environ.get('MAX_RUNNING_REQUESTS', str(len(group)))
+            profile = profiles[index]
             command = [sys.executable, str(ROOT / 'examples/run_moss_vl_realtime_server.py'),
                        '--model-path', str(model), '--host', args.host, '--port', str(port),
-                       '--context-length', context, '--mem-fraction-static', memory,
-                       '--max-running-requests', capacity]
+                       '--context-length', str(profile['context_length']),
+                       '--mem-fraction-static', str(profile['mem_fraction_static']),
+                       '--max-running-requests', str(profile['max_running_requests'])]
             if len(group) == 1:
                 command += ['--gpu', str(group[0])]
             else:

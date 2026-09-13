@@ -55,6 +55,7 @@ def main() -> None:
     patch_set = detect_patch_set(site) if args.patch_set == 'auto' else args.patch_set
     if patch_set == '0.5.14':
         operations = [('sglang-0.5.14.patch', None)]
+    operations.append(('0004-use-torch-cross-attention.patch', None))
     print(f'SGLang patch set: {patch_set}')
     originals = {path: (site / path).read_bytes() for path in (moss, native, backend)}
     # Resolve all patches on private copies before writing any installed file.

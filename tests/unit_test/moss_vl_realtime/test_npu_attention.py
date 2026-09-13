@@ -17,13 +17,19 @@ def backend_and_device():
     device = os.environ.get('NPU_TEST_DEVICE', 'cpu')
     if device.startswith('npu'):
         import torch_npu  # noqa: F401
-    spec = importlib.util.find_spec('sglang')
-    path = Path(spec.origin).parent / 'srt/hardware_backend/npu/attention/ascend_torch_native_backend.py'
+    site = os.environ.get('NPU_TEST_SITE_PACKAGES')
+    if site:
+        root = Path(site) / 'sglang'
+    else:
+        spec = importlib.util.find_spec('sglang')
+        root = Path(spec.origin).parent
+    path = root / 'srt/hardware_backend/npu/attention/ascend_torch_native_backend.py'
     spec = importlib.util.spec_from_file_location('moss_test_ascend_native', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     backend = module.AscendTorchNativeAttnBackend()
     assert 'cross_attention_custom_mask' in inspect.signature(backend.run_sdpa_forward_extend).parameters
+    assert backend._moss_vl_torch_cross_attention_supported
     return backend, device
 
 
@@ -69,3 +75,55 @@ def test_mask_length_is_validated():
             torch.tensor([2], device=device), torch.tensor([0], device=device),
             torch.tensor([2], device=device), torch.tensor([2], device=device),
             is_cross_attention=True, cross_attention_custom_mask=torch.ones(1, device=device))
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.bfloat16])
+def test_cross_attention_uses_torch_and_preserves_reference(monkeypatch, dtype):
+    backend, device = backend_and_device()
+    torch.manual_seed(7)
+    query = torch.randn(3, 2, 4, device=device, dtype=dtype)
+    key = torch.randn(2, 1, 4, device=device, dtype=dtype)
+    value = torch.randn(2, 1, 4, device=device, dtype=dtype)
+    mask = torch.tensor([[1, 0], [0, 0], [1, 1]], device=device, dtype=torch.bool)
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        query.float().cpu().transpose(0, 1), key.float().cpu().transpose(0, 1),
+        value.float().cpu().transpose(0, 1), attn_mask=mask.cpu(), enable_gqa=True,
+    ).transpose(0, 1)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('cross-attention entered fused SDPA')
+
+    monkeypatch.setitem(backend.run_sdpa_forward_extend.__globals__,
+                        'scaled_dot_product_attention', forbidden)
+    actual = backend.run_sdpa_forward_extend(
+        query, torch.empty_like(query), key, value,
+        torch.tensor([[0, 1]], device=device), torch.tensor([0], device=device),
+        torch.tensor([3], device=device), torch.tensor([0], device=device),
+        torch.tensor([3], device=device), torch.tensor([2], device=device),
+        is_cross_attention=True, enable_gqa=True,
+        cross_attention_custom_mask=mask.flatten(),
+    )
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual.float().cpu(), expected, atol=0.03, rtol=0.03)
+
+
+def test_self_attention_retains_sdpa_dispatch(monkeypatch):
+    backend, device = backend_and_device()
+    calls = []
+    original = backend.run_sdpa_forward_extend.__globals__['scaled_dot_product_attention']
+
+    def record(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setitem(backend.run_sdpa_forward_extend.__globals__,
+                        'scaled_dot_product_attention', record)
+    query = torch.ones(2, 1, 4, device=device)
+    actual = backend.run_sdpa_forward_extend(
+        query, torch.empty_like(query), query, query,
+        torch.tensor([[0, 1]], device=device), torch.tensor([0], device=device),
+        torch.tensor([2], device=device), torch.tensor([0], device=device),
+        torch.tensor([2], device=device), is_cross_attention=False, causal=True,
+    )
+    assert calls == [True]
+    torch.testing.assert_close(actual, query)

@@ -77,6 +77,7 @@ def relax_mossvl_flashinfer_guard() -> None:
     ).parameters
     if (
         not getattr(AscendAttnBackend, "_moss_vl_visibility_mask_supported", False)
+        or not getattr(AscendTorchNativeAttnBackend, "_moss_vl_torch_cross_attention_supported", False)
         or "cross_attention_custom_mask" not in parameters
     ):
         raise RuntimeError(
