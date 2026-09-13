@@ -22,6 +22,14 @@ def create_parallel_state(
             "attn_dcp_rank": tp_rank % dcp_size,
             "attn_dcp_size": dcp_size,
         }
+    elif {"attn_cp_rank", "attn_cp_size"} <= field_names:
+        # 0.5.14 spells the same slot as attn context parallel. Callers on the
+        # 0.5.16 contract pass attn_cp_* explicitly, so only backfill gaps.
+        dcp_fields = {}
+        if "attn_cp_rank" not in fields:
+            dcp_fields["attn_cp_rank"] = tp_rank % dcp_size
+        if "attn_cp_size" not in fields:
+            dcp_fields["attn_cp_size"] = dcp_size
     else:
         raise TypeError(
             "Unsupported SGLang ParallelState DCP fields: " f"{sorted(field_names)}"

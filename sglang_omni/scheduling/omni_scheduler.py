@@ -28,16 +28,20 @@ import torch
 from sglang.srt.environ import envs
 from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
 from sglang.srt.managers.io_struct import AbortReq
-from sglang.srt.managers.schedule_batch import (
+
+import sglang_omni.compat as _compat
+
+_compat.apply_all()
+from sglang.srt.managers.schedule_batch import (  # noqa: E402
     FINISH_ABORT,
     NextBatchPlan,
     ScheduleBatch,
     retract_all,
 )
-from sglang.srt.managers.scheduler import Scheduler as _Upstream
-from sglang.srt.managers.scheduler import validate_input_length
-from sglang.srt.mem_cache.common import release_kv_cache
-from sglang.srt.utils import broadcast_pyobj
+from sglang.srt.managers.scheduler import Scheduler as _Upstream  # noqa: E402
+from sglang.srt.managers.scheduler import validate_input_length  # noqa: E402
+from sglang.srt.mem_cache.common import release_kv_cache  # noqa: E402
+from sglang.srt.utils import broadcast_pyobj  # noqa: E402
 
 from sglang_omni.profiler.event_recorder import emit as _emit_event
 from sglang_omni.profiler.event_recorder import (
@@ -572,9 +576,19 @@ class OmniScheduler:
         # unconditionally, so it must be a real manager, not None. Upstream
         # takes it from the model runner; no Omni model uses ngram embedding
         # (see use_ngram_embedding above), so a disabled passthrough is correct.
-        from sglang.srt.model_executor.model_runner_components.ngram_embedding_manager import (  # noqa: E501
-            NgramEmbeddingManager,
-        )
+        try:
+            from sglang.srt.model_executor.model_runner_components.ngram_embedding_manager import (  # noqa: E501
+                NgramEmbeddingManager,
+            )
+        except ImportError:
+            # 0.5.14 has no ngram embedding manager; a disabled passthrough
+            # with the same call surface is sufficient.
+            class NgramEmbeddingManager:
+                def __init__(self, *, enabled=False, table=None, n=0, k=0):
+                    self.enabled = False
+
+                def prepare_for_forward(self, *args, **kwargs):
+                    return None
 
         self.ngram_embedding_manager = NgramEmbeddingManager(
             enabled=False, table=None, n=0, k=0
@@ -593,6 +607,12 @@ class OmniScheduler:
             publish_kv_events=lambda: None,
         )
         self.device_module = torch.get_device_module(self.device)
+
+    def init_metrics_collector(self, tp_rank, pp_rank, dp_rank):
+        return _compat.init_metrics_collector(_Upstream, self, tp_rank, pp_rank, dp_rank)
+
+    def init_metrics_reporter(self, tp_rank, pp_rank, dp_rank):
+        return _compat.init_metrics_reporter(_Upstream, self, tp_rank, pp_rank, dp_rank)
 
     def _init_upstream_scheduler_components(self) -> None:
         """Install the scheduler components required by upstream hot paths."""
@@ -1293,8 +1313,8 @@ class OmniScheduler:
         own that state, so feed it in and write the (possibly rebuilt) running
         batch back before handing the runnable batch to the caller.
         """
-        plan = _Upstream.get_next_batch_to_run(
-            self, self.running_batch, self.last_batch
+        plan = _compat.get_next_batch_plan(
+            _Upstream, self, self.running_batch, self.last_batch
         )
         self.running_batch = plan.running_batch
         return plan.batch_to_run
@@ -1310,10 +1330,10 @@ class OmniScheduler:
         # 0.5.16 passes ``running_batch`` in and expects a ``NextBatchPlan`` back,
         # so the coalesce hold-off returns an empty plan rather than None.
         if self.prefill_coalesce_requests <= 1 or self.chunked_req is not None:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         decode_is_idle = running_batch is None or running_batch.is_empty()
         if not self.prefill_coalesce_when_idle and decode_is_idle:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         if self.prefill_coalesce_requires_pending_builds:
             with self._request_admission_lock:
                 build_work_pending = bool(
@@ -1324,10 +1344,10 @@ class OmniScheduler:
             if not build_work_pending and not (
                 self.prefill_coalesce_after_builds_during_decode and not decode_is_idle
             ):
-                return _Upstream.get_new_batch_prefill(self, running_batch)
+                return _compat.get_prefill_plan(_Upstream, self, running_batch)
         waiting = self.waiting_queue
         if not waiting or len(waiting) >= self.prefill_coalesce_requests:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         now = time.perf_counter()
         oldest = now
         for req in waiting:
@@ -1336,7 +1356,7 @@ class OmniScheduler:
                 t = req._coalesce_enqueue_t = now
             oldest = min(oldest, t)
         if now - oldest >= self.prefill_coalesce_wait_s:
-            return _Upstream.get_new_batch_prefill(self, running_batch)
+            return _compat.get_prefill_plan(_Upstream, self, running_batch)
         return NextBatchPlan(batch_to_run=None, running_batch=running_batch)
 
     def run_batch(self, batch, pp_proxy_tensors=None):

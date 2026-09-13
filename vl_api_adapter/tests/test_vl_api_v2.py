@@ -253,6 +253,71 @@ def test_v2_keeps_native_config_fields():
 
 
 @pytest.mark.asyncio
+async def test_v2_forwards_history_without_changing_telemetry_preference():
+    session, _, _, _ = make_session()
+    captured = []
+
+    async def capture(request):
+        captured.append(request)
+
+    session.stream_response = capture
+    history = [{'role': 'user', 'content': 'Remember 42'},
+               {'role': 'assistant', 'content': 'OK'}]
+    try:
+        await session.configure(Configure(type='session.configure', prefill_messages=history,
+                                          include_usage=False))
+        await session.response_task
+        assert captured[0].prompt['prefill_messages'] == history
+        assert captured[0].extra_params['include_usage'] is True
+        assert session.wants_usage is False
+    finally:
+        await session.teardown()
+
+
+def test_history_prefill_accounting_counts_history_as_input(monkeypatch):
+    import torch
+    from sglang_omni.models.moss_vl_realtime.accounting import ACCOUNTING_PARAM
+    from sglang_omni.models.moss_vl_realtime.request_builders import make_moss_vl_realtime_scheduler_adapters
+    from sglang_omni.models.moss_vl_realtime import model_runner as module
+    from sglang_omni.proto import OmniRequest, StagePayload
+
+    class Tokenizer:
+        eos_token_id = 2
+        vocab_size = 1000
+
+        def __len__(self):
+            return self.vocab_size
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.messages = messages
+            return torch.tensor([[101, 102, 103]])
+
+    tokenizer = Tokenizer()
+    builder, _ = make_moss_vl_realtime_scheduler_adapters(tokenizer=tokenizer, max_new_tokens=128)
+    history = [{'role': 'user', 'content': 'Remember 42'},
+               {'role': 'assistant', 'content': 'OK'}]
+    data = builder(StagePayload(request_id='history', request=OmniRequest(
+        inputs={'prefill_messages': history}, params={ACCOUNTING_PARAM: True}), data={}))
+    state = data.runtime_state
+    data.req.req_pool_idx = 0  # Assigned by admission before the prefill callback.
+    assert history[1]['content'] == 'OK'
+    assert tokenizer.messages[2]['content'] == '<|silence|>OK'
+    assert state.accounting.snapshot() == counts()
+
+    def commit(batch):
+        state.decoder_length = len(data.initial_input_ids)
+
+    monkeypatch.setattr(module, 'is_moss_vl_realtime_batch', lambda _: True)
+    monkeypatch.setattr(module, 'commit_moss_vl_realtime_batch', commit)
+    runner = object.__new__(module.MossVLRealtimeModelRunner)
+    batch = SimpleNamespace(reqs=[data.req], seq_lens_cpu=torch.tensor([3]))
+    runner.post_prefill(None, None, batch, [])
+    assert state.accounting.snapshot() == counts(inputs=3)
+    state.accounting.sampled()
+    assert state.accounting.snapshot() == counts(inputs=3, outputs=1)
+
+
+@pytest.mark.asyncio
 async def test_native_done_event_remains_unchanged():
     socket = Socket()
     session = VideoRealtimeSession(socket, client=Client(), model_name='model', frame_store=Store())

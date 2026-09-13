@@ -4,6 +4,8 @@
 
 [Usage](./README.md) | [API Reference](./API.md)
 
+This page records the 2026-09-11 protocol validation. For the Ascend/main integration candidate, see [candidate validation](../deployment/npu/VALIDATION.md); the historical GPU results below are not a new hardware acceptance run.
+
 ## Environment
 
 Date: 2026-09-11. Compared original main `68a0eef`, native v1 on the feature branch, and v2 on the feature branch.

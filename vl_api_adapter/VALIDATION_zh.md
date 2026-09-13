@@ -4,6 +4,8 @@
 
 [使用说明](./README_zh.md) | [API 参考](./API_zh.md)
 
+本页为 2026-09-11 的协议验证记录。Ascend/main 合并候选结果见[候选验证](../deployment/npu/VALIDATION_zh.md)；下述历史 GPU 结果不是候选版本的新一轮硬件验收。
+
 ## 环境
 
 验证日期：2026-09-11。对照版本：原 main `68a0eef`、当前分支原生 v1、当前分支 v2。

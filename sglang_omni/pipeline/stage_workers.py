@@ -787,7 +787,15 @@ def _construct_scheduler(
     if gpu_id is None:
         return factory(**factory_args)
 
-    with gpu_startup_lock(int(gpu_id)) as lock_path:
+    if current_platform.device_type == "npu":
+        from sglang_omni.utils.npu_startup import npu_startup_lock
+
+        startup_lock = npu_startup_lock
+    else:
+        startup_lock = gpu_startup_lock
+    # Both helpers accept process-local IDs and resolve their own platform's
+    # visible-device list. Placement IDs must not be mapped a second time.
+    with startup_lock(int(gpu_id)) as lock_path:
         log.info(f"Acquired GPU startup lock for stage {spec.stage_name}: {lock_path}")
         return factory(**factory_args)
 
@@ -803,15 +811,17 @@ def _prepare_accelerator_environment(
     single visible device.
     """
     if (
-        current_platform.is_cuda_alike()
-        and os.environ.get("SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS") == "true"
+        os.environ.get("SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS") == "true"
+        and os.environ.get(current_platform.visible_devices_env_key)
     ):
-        mapped_gpu = os.environ.get("CUDA_VISIBLE_DEVICES", str(spec.gpu_id))
+        visible_key = current_platform.visible_devices_env_key
+        mapped_gpu = os.environ.get(visible_key, str(spec.gpu_id))
         _normalize_spec_gpu_id_to_local_device(spec)
         log.info(
-            "TP stage %s rank %d sees CUDA_VISIBLE_DEVICES=%s (local gpu_id=0)",
+            "TP stage %s rank %d sees %s=%s (local gpu_id=0)",
             spec.stage_name,
             spec.tp_rank,
+            visible_key,
             mapped_gpu,
         )
         return
@@ -823,7 +833,8 @@ def _prepare_accelerator_environment(
     for key, value in env_updates.items():
         os.environ[key] = value
 
-    mapped_gpu = env_updates.get("CUDA_VISIBLE_DEVICES")
+    visible_key = current_platform.visible_devices_env_key
+    mapped_gpu = env_updates.get(visible_key)
     if mapped_gpu is None:
         log.info(
             "TP stage %s rank %d keeps every card visible, using gpu_id=%s",

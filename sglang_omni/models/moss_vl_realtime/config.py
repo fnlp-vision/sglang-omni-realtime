@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from pydantic import Field
 
 from sglang_omni.config import PipelineConfig, StageConfig
+from sglang_omni.models.moss_vl_realtime.platform_compat import device_spec
 
 _PKG = "sglang_omni.models.moss_vl_realtime"
 
@@ -18,7 +19,7 @@ def _stages() -> list[StageConfig]:
             process="moss_vl_realtime",
             factory=f"{_PKG}.stages.create_sglang_moss_vl_realtime_executor",
             factory_args={
-                "device": "cuda:0",
+                "device": device_spec(0),
                 "max_running_requests": 1,
                 "max_new_tokens": 4096,
                 "context_length": 262144,

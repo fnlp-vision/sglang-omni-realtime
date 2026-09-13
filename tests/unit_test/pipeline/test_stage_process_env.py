@@ -288,6 +288,54 @@ def test_gpu_scheduler_construction_uses_startup_lock(monkeypatch) -> None:
     assert seen_gpu_ids == [0]
 
 
+def test_cuda_startup_lock_uses_local_not_placement_index(monkeypatch) -> None:
+    from sglang_omni.utils.gpu_memory import get_gpu_startup_lock_path
+
+    paths = []
+
+    @contextmanager
+    def lock(device_id):
+        paths.append(get_gpu_startup_lock_path(device_id))
+        yield paths[-1]
+
+    monkeypatch.setattr(stage_workers, "current_platform", cuda_platform)
+    monkeypatch.setattr(stage_workers, "gpu_startup_lock", lock)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+    spec = StageLaunchConfig(
+        stage_name="thinker", factory=fake_factory_path("make_scheduler"),
+        gpu_id=0, placement_gpu_id=1,
+    )
+    stage_workers._construct_scheduler(spec, 0, _RecordingLog())
+    assert paths[0].name == "sglang_omni_gpu_3_startup.lock"
+
+
+def test_npu_scheduler_does_not_call_cuda_startup_lock(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from sglang_omni.utils import npu_startup
+
+    paths = []
+
+    @contextmanager
+    def lock(device_id):
+        paths.append(npu_startup.get_npu_startup_lock_path(device_id))
+        yield paths[-1]
+
+    def unexpected(*args):
+        raise AssertionError("NPU must not use the CUDA startup lock")
+
+    monkeypatch.setattr(stage_workers, "current_platform", SimpleNamespace(device_type="npu"))
+    monkeypatch.setattr(stage_workers, "gpu_startup_lock", unexpected)
+    monkeypatch.setattr(npu_startup, "npu_startup_lock", lock)
+    monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "6")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+    spec = StageLaunchConfig(
+        stage_name="thinker", factory=fake_factory_path("make_scheduler"),
+        gpu_id=0, placement_gpu_id=2,
+    )
+    stage_workers._construct_scheduler(spec, 0, _RecordingLog())
+    assert paths[0].name == "sglang_omni_npu_6_startup.lock"
+
+
 def test_scheduler_applies_child_defaults_without_overriding_explicit_args(
     monkeypatch,
 ) -> None:

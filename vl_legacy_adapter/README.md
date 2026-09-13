@@ -6,6 +6,8 @@ Translate the legacy VL WebSocket messages into the native sglang-omni video rea
 
 ## Run
 
+For Ascend, use the [NPU deployment guide](../deployment/npu/README.md); it starts this same adapter beside the native backend.
+
 Install the backend following the [installation guide](../docs/get_started/installation.md). Run these commands from the repository root, in separate terminals:
 
 ```bash
@@ -86,4 +88,4 @@ Smoke measurements, 2026-09-10, warm GPU backend, current revision. Times are se
 | VL-02, second round | 0.065 | 0.077 | 0.388 | 0.468 | 2.078 |
 | VL-03, recovery round | 0.057 | 0.069 | 0.381 | 0.454 | 0.756 |
 
-Each new session still performs initial prefill. The external `model-api-protocol-asr-tts-vl.md` and `vision.go` are not included in this repository; their complete contract acceptance requires those sources.
+Each new session still performs initial prefill. The interface targets section 5 of `model-api-protocol-asr-tts-vl.md`. That external document and the `vision.go` caller are not bundled here; final integration acceptance requires the actual caller.

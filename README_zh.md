@@ -15,6 +15,8 @@
 
 ## 安装
 
+Ascend 集成请使用独立的 [NPU 部署与验收指南](./deployment/npu/README_zh.md)。以下安装步骤面向 CUDA。
+
 按[安装指南](./docs/get_started/installation_zh.md)创建 Python 3.12 环境并安装哈希依赖锁。需要完整应用时，直接使用 [Demo 安装器](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md)，不要重复安装后端。
 
 配套版本与验证范围见[兼容清单](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md)。参考设备为 H200，其他硬件需验证显存配置与 JIT。
