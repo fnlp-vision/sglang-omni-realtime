@@ -21,6 +21,7 @@ from sglang_omni.serve.video_realtime import (
 )
 from .schemas import CAPABILITIES, Configure, Frame, Prompt
 from .usage import UsageLedger, empty_usage
+from sglang_omni.serve._cleanup import await_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ class V2Session(VideoRealtimeSession):
         self._event_lock = asyncio.Lock()
         self._binary_timer = None
         self._timer_tasks = set()
+        self._finish_task = None
+        self._finish_waiters = set()
 
     def record_accounting(self, data):
         if self._finalized:
@@ -343,6 +346,19 @@ class V2Session(VideoRealtimeSession):
         return result
 
     async def _finish(self, reason):
+        caller = asyncio.current_task()
+        self._finish_waiters.add(caller)
+        if self._finish_task is None:
+            self._finalizing = True
+            self.closed = True
+            self._cancel_binary_timer()
+            self._finish_task = asyncio.create_task(self._finish_impl(reason))
+        try:
+            await await_cleanup(self._finish_task)
+        finally:
+            self._finish_waiters.discard(caller)
+
+    async def _finish_impl(self, reason):
         async with self._finish_lock:
             if self._finalized:
                 return
@@ -380,16 +396,18 @@ class V2Session(VideoRealtimeSession):
                 with suppress(Exception):
                     await self._wire({'type': 'error', 'code': 'response_failed',
                                       'message': f'authoritative accounting unavailable: {type(exc).__name__}: {exc}'})
-                    await self.websocket.close(code=1011)
+                    await asyncio.wait_for(self.websocket.close(code=1011), 5)
             finally:
                 self._finalized = True
-                timers = [task for task in self._timer_tasks if task is not asyncio.current_task()]
+                timers = [task for task in self._timer_tasks
+                          if task is not asyncio.current_task() and task not in self._finish_waiters]
                 for timer in timers:
                     timer.cancel()
                 await asyncio.gather(*timers, return_exceptions=True)
                 self._timer_tasks.clear()
                 task = self.response_task
-                if task is not None and task is not asyncio.current_task():
+                if (task is not None and task is not asyncio.current_task()
+                        and task not in self._finish_waiters):
                     task.cancel()
                     with suppress(TimeoutError):
                         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
@@ -398,6 +416,8 @@ class V2Session(VideoRealtimeSession):
                 try:
                     self.frame_store.cleanup(self.request_id)
                 finally:
+                    self.frame_refs_by_seq.clear()
+                    self.pending_frame = None
                     await self._close_input_queue()
                     with suppress(Exception):
                         await asyncio.wait_for(VideoRealtimeSession.close_websocket(self), 5)

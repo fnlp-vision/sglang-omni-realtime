@@ -8,12 +8,57 @@ import json
 from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
+import anyio
 from starlette.websockets import WebSocketState
 
 import sglang_omni.serve.video_realtime as video_realtime
 from sglang_omni.client.types import GenerateChunk
 from sglang_omni.serve.openai_api import create_app
 from sglang_omni.serve.video_realtime import VideoRealtimeSessionManager
+
+
+@pytest.mark.asyncio
+async def test_cleanup_survives_repeated_task_cancellation():
+    from sglang_omni.serve._cleanup import await_cleanup
+    gate, entered, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def cleanup():
+        entered.set()
+        await gate.wait()
+        finished.set()
+
+    owned = asyncio.create_task(cleanup())
+    waiter = asyncio.create_task(await_cleanup(owned))
+    await entered.wait()
+    waiter.cancel()
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    assert not owned.cancelled() and not finished.is_set()
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_abort_cancellation_still_releases_local_resources():
+    class CancelledClient(PendingClient):
+        async def abort(self, rid):
+            raise asyncio.CancelledError
+
+    manager = VideoRealtimeSessionManager(client=CancelledClient(), model_name='test')
+    session = manager.open(Socket())
+    session.configured = True
+    session.outstanding_seq_nos.add(0)
+    session.frame_refs_by_seq[0] = manager.frame_store.put(session.request_id, b'unconsumed')
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await manager.close(session.session_id)
+        assert not manager.sessions and not manager.frame_store._names_by_request
+        assert not session.frame_refs_by_seq and not session.outstanding_seq_nos
+    finally:
+        manager.frame_store.close()
 
 
 class Socket:
@@ -101,6 +146,82 @@ async def opened(*, configure_timeout_s=180, client=None):
 async def configure(session, socket):
     socket.submit(dict(type="session.configure", input_queue_capacity=1))
     await until(lambda: session.ready)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('protocol', ['v1', 'v2'])
+@pytest.mark.parametrize('abort_mode', ['slow', 'error', 'timeout'])
+async def test_cancelled_scope_completes_cleanup(protocol, abort_mode):
+    from functools import partial
+    from vl_api_adapter.adapter.session import V2Session
+    from vl_api_adapter.adapter.usage import empty_usage
+
+    class SlowClient(PendingClient):
+        async def abort(self, rid):
+            if abort_mode == 'timeout':
+                await asyncio.Event().wait()
+            await asyncio.sleep(0.01)
+            if abort_mode == 'error':
+                raise RuntimeError('synthetic abort failure')
+            self.aborted.append(rid)
+
+        async def admin(self, action, payload, **kwargs):
+            await asyncio.sleep(0.01)
+            return {'success': True, 'results': [{'data': {
+                **payload, 'final': True, 'watermark': 0, 'usage': empty_usage(),
+            }}]}
+
+    class FlexibleSocket(Socket):
+        async def close(self, code=1000):
+            await super().close()
+
+    client, socket = SlowClient(), FlexibleSocket()
+    manager = VideoRealtimeSessionManager(client=client, model_name='test', max_sessions=1)
+    factory = partial(V2Session, context_limit=131072, accounting_stage='test') if protocol == 'v2' else None
+    session = manager.open(socket, session_factory=factory)
+    session.cleanup_timeout_s = 0.03
+    if protocol == 'v2':
+        # Exercise the same timeout branch without spending five seconds.
+        original_abort = client.abort
+        async def bounded_abort(rid):
+            return await asyncio.wait_for(original_abort(rid), 0.03)
+        client.abort = bounded_abort
+    scopes, exited = [], asyncio.Event()
+
+    async def serve():
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            try:
+                await session.run()
+            finally:
+                await manager.close(session.session_id)
+        exited.set()
+
+    try:
+        async with anyio.create_task_group() as group:
+            group.start_soon(serve)
+            await until(lambda: bool(socket.sent))
+            await configure(session, socket)
+            socket.submit(dict(type='input.frame', seq_no=0, timestamp=0, mime_type='image/png'))
+            await until(lambda: any(e['type']=='input.frame.ready' for e in socket.sent))
+            payload = BytesIO()
+            Image.new('RGB', (2, 2)).save(payload, format='PNG')
+            socket.submit(payload.getvalue())
+            await until(lambda: len(client.updates)==1)
+            assert manager.frame_store._names_by_request
+            scopes[0].cancel()
+            await asyncio.wait_for(exited.wait(), 2)
+        assert not manager.sessions
+        assert not manager.frame_store._names_by_request
+        assert not session.outstanding_seq_nos and not session.frame_refs_by_seq
+        assert session.response_task.done()
+        before = list(socket.sent)
+        await session.teardown()
+        assert socket.sent == before
+        replacement = manager.open(FlexibleSocket())
+        await manager.close(replacement.session_id)
+    finally:
+        manager.frame_store.close()
 
 
 @pytest.mark.parametrize("action", ["abort", "disconnect"])

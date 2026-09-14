@@ -24,6 +24,7 @@ from sglang_omni.models.moss_vl_realtime.frame_store import (
     SharedMemoryFrameStore,
 )
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
+from sglang_omni.serve._cleanup import await_cleanup
 
 logger = logging.getLogger(__name__)
 CONFIGURE_TIMEOUT_S = 180.0
@@ -229,6 +230,8 @@ class VideoRealtimeSession:
         self.request_finished = False
         self.abort_sent = False
         self.closed = False
+        self._teardown_task: asyncio.Task | None = None
+        self.cleanup_timeout_s = 5.0
 
     async def run(self) -> None:
         inputs: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(
@@ -256,9 +259,17 @@ class VideoRealtimeSession:
                 task.result()
         finally:
             self.closed = True
+            await await_cleanup(asyncio.create_task(self._finish_run(tasks)))
+
+    async def _finish_run(self, tasks) -> None:
+        try:
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            if tasks:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True), self.cleanup_timeout_s
+                )
+        finally:
             await self.teardown()
 
     async def _receive_inputs(self, inputs: asyncio.Queue) -> None:
@@ -653,40 +664,60 @@ class VideoRealtimeSession:
             await self.close_websocket()
 
     async def teardown(self) -> None:
-        if self.closed and self.request_finished:
-            return
+        if self._teardown_task is None:
+            self._teardown_task = asyncio.create_task(self._teardown())
+        await await_cleanup(self._teardown_task)
+
+    async def _teardown(self) -> None:
         self.closed = True
-        if not self.request_finished and self.configured:
-            try:
-                await self.abort_request()
-            except Exception:
-                logger.exception(
-                    "Failed to abort realtime request %s during teardown",
-                    self.request_id,
-                )
-        task = self.response_task
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        self.frame_store.cleanup(self.request_id)
-        await self._close_input_queue()
+        try:
+            if not self.request_finished and self.configured:
+                try:
+                    await asyncio.wait_for(self.abort_request(), self.cleanup_timeout_s)
+                except Exception:
+                    logger.exception(
+                        "Failed to abort realtime request %s during teardown",
+                        self.request_id,
+                    )
+        finally:
+            await self._release_local_resources()
         if not self.request_finished:
             # Give clients a terminal event instead of a bare connection close.
             try:
-                await self.send(
-                    {
-                        "type": "session.done",
-                        "session_id": self.session_id,
+                await asyncio.wait_for(
+                    self.send({
+                        "type": "session.done", "session_id": self.session_id,
                         "aborted": True,
-                    }
+                    }), self.cleanup_timeout_s,
                 )
-            except (OSError, RuntimeError, WebSocketDisconnect):
+            except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
                 logger.debug(
                     "Realtime session %s teardown: WebSocket already closed",
                     self.session_id,
                     exc_info=True,
                 )
-        await self.close_websocket()
+        try:
+            await asyncio.wait_for(self.close_websocket(), self.cleanup_timeout_s)
+        except TimeoutError:
+            logger.warning("Realtime WebSocket close timed out for %s", self.request_id)
+
+    async def _release_local_resources(self) -> None:
+        task = self.response_task
+        try:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True), self.cleanup_timeout_s
+                )
+        except TimeoutError:
+            logger.warning("Realtime response cleanup timed out for %s", self.request_id)
+        finally:
+            try:
+                self.frame_store.cleanup(self.request_id)
+            finally:
+                self.frame_refs_by_seq.clear()
+                self.pending_frame = None
+                await self._close_input_queue()
 
     async def abort_request(self) -> None:
         if self.abort_sent:
@@ -845,9 +876,12 @@ class VideoRealtimeSessionManager:
         return session
 
     async def close(self, session_id: str) -> None:
-        session = self.sessions.pop(session_id, None)
+        session = self.sessions.get(session_id)
         if session is not None:
-            await session.teardown()
+            try:
+                await session.teardown()
+            finally:
+                self.sessions.pop(session_id, None)
 
 
 def register_video_realtime(

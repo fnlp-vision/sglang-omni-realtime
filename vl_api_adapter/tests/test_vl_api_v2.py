@@ -176,6 +176,28 @@ async def test_finalization_uses_backend_total_and_emits_once():
 
 
 @pytest.mark.asyncio
+async def test_response_task_and_teardown_share_finalizer_without_deadlock():
+    session, socket, _, store = make_session()
+    session.request_finished = True
+    session.response_task = asyncio.create_task(session.send({'type': 'session.done'}))
+    await asyncio.wait_for(asyncio.gather(session.response_task, session.teardown()), 1)
+    assert session._finish_task.done() and not session._finish_waiters
+    assert len([m for m in socket.sent if m['type']=='session.done']) == 1
+    assert store.cleaned == [session.request_id]
+
+
+@pytest.mark.asyncio
+async def test_binary_timeout_does_not_wait_on_its_own_timer():
+    session, socket, _, store = make_session(binary_timeout_s=0.01)
+    session.configured = session.ready = True
+    await session.prepare_frame(Frame(type='input.frame',seq_no=0,timestamp=0.0,mime_type='image/jpeg'))
+    timer = session._binary_timer
+    await asyncio.wait_for(timer, 1)
+    assert session._finish_task.done() and store.cleaned == [session.request_id]
+    assert socket.sent[-1]['type']=='session.done' and socket.sent[-1]['reason']=='error'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('code,reason', [('context_exhausted', 'context_exhausted'), ('session_timeout', 'error'), ('response_failed', 'error')])
 async def test_backend_error_classification_survives_teardown(code, reason):
     session, socket, client, _ = make_session()
