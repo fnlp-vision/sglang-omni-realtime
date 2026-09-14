@@ -19,7 +19,7 @@ For Ascend integration, use the separate [NPU setup and validation guide](./depl
 
 Follow the [installation guide](./docs/get_started/installation.md) to create a Python 3.12 environment and install the hashed dependency lock. For the complete application, use the [Demo installer](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#readme) without installing the backend twice.
 
-Companion revisions and validation scope are in the [compatibility matrix](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md). H200 is the reference device; validate memory settings and JIT on other hardware.
+Companion repositories and runtime requirements are in the [Demo README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#compatibility-and-updates). Installation follows current repositories, not a fixed source commit; record actual installed revisions when reporting issues. Validate memory settings and JIT on the target hardware.
 
 ## Start the Server
 
@@ -86,7 +86,7 @@ decision. Generated silence remains valid, including an explicit request to stay
 
 ## Demo Integration
 
-Set these values in the Demo's `.env.deploy`:
+For manual/legacy Demo deployment only, set these values in `.env.deploy`:
 
 ```dotenv
 VLM_DEPLOY=sglang_omni
@@ -97,6 +97,12 @@ MODEL_PATH=/absolute/path/to/MOSS-VL-Realtime-SGLANG
 ```
 
 Match the backend URL, session capacity, and context limit. The model directory must be readable on the Demo host. The Demo uses its own environment and ports; see its [README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#readme).
+
+The recommended Demo `bootstrap.sh` / `scripts/repro/run.py` setup does not read
+`.env.deploy`: it manages the backend and API itself (default ports 18500/18501,
+browser 18502). Use its CLI configuration instead; do not start a duplicate
+backend using this section. The optional VL API v2 listener is separate and does
+not replace the native endpoint used by Demo.
 
 The visual window releases old frame KV, but historical positions and text context keep growing. Demo memory rollover manages conversations across context limits; see [capacity planning](./docs/cookbook/moss_vl_realtime_capacity.md).
 

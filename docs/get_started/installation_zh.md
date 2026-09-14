@@ -58,7 +58,6 @@ uv pip check
 ```bash
 export MODEL_PATH="$HOME/models/MOSS-VL-Realtime-SGLANG"
 hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
-  --revision bcfd9ccf1e9db2896ad852301cc8dde4a6349c78 \
   --local-dir "$MODEL_PATH"
 ```
 
@@ -85,7 +84,7 @@ bash deployment/moss_vl_realtime/start.sh "$MODEL_PATH"
 
 ## 版本与更新
 
-配套组件与依赖版本见 [Demo 兼容清单](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md)。
+配套仓库与运行依赖见 [Demo README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md#兼容性与更新)。不固定源码或模型提交。更新前停止服务，使用 `git pull --ff-only` 更新代码后重新安装依赖锁；完整模型下载到新目录，验证后再切换 `MODEL_PATH`，不要把不同版本文件混在一起。
 
 升级代码、模型或依赖后，需要重新验证；不要只替换模型目录里的个别自定义文件。旧版 Transformers 4.57 参考实现不用于此后端环境。
 
