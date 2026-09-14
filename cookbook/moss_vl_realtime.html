@@ -507,6 +507,8 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#send-timestamped-frames">Send timestamped frames</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#websocket-protocol">WebSocket protocol</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#restoring-text-history">Restoring text history</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#initial-configuration">Initial configuration</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#context-usage-and-completion">Context usage and completion</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#text-barge-in-and-turns">Text barge-in and turns</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backpressure">Backpressure</a></li>
@@ -545,7 +547,7 @@ The launch examples place all TP ranks on one host.</p>
 Use the <a class="reference external" href="https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG">MOSS-VL-Realtime-SGLANG checkpoint</a>,
 which includes Transformers 5.12.1-compatible configuration and processor code:</p>
 <p>The installation guide is the single source for the hashed dependency lock,
-model revision, and CUDA toolkit setup. Activate that environment and set
+model repository, and CUDA toolkit setup. Activate that environment and set
 <code class="docutils literal notranslate"><span class="pre">MODEL_PATH</span></code> before running the examples below.</p>
 <p>If checkpoint access returns 401/403, use an authorized Hugging Face account
 (<code class="docutils literal notranslate"><span class="pre">hf</span> <span class="pre">auth</span> <span class="pre">login</span></code>). Keep the full downloaded directory together and pass its
@@ -675,6 +677,22 @@ same structure used by offline singleton video segments:</p>
 </section>
 <section id="websocket-protocol">
 <h2>WebSocket protocol<a class="headerlink" href="#websocket-protocol" title="Link to this heading">#</a></h2>
+<p>This section describes the native endpoint, not the optional VL API v2 adapter
+or the Demo browser protocol. The separate v2 listener has per-response
+<code class="docutils literal notranslate"><span class="pre">response.done</span></code> semantics; native <code class="docutils literal notranslate"><span class="pre">response.done</span></code> terminates the persistent session.</p>
+<section id="restoring-text-history">
+<h3>Restoring text history<a class="headerlink" href="#restoring-text-history" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/v1/video/realtime/capabilities</span></code> advertises <code class="docutils literal notranslate"><span class="pre">prefill_messages:</span> <span class="pre">true</span></code>.
+After probing support, a client may provide optional <code class="docutils literal notranslate"><span class="pre">prefill_messages</span></code> in
+<code class="docutils literal notranslate"><span class="pre">session.configure</span></code>: 1-64 <code class="docutils literal notranslate"><span class="pre">{role,</span> <span class="pre">content}</span></code> objects, with roles <code class="docutils literal notranslate"><span class="pre">system</span></code>, <code class="docutils literal notranslate"><span class="pre">user</span></code>,
+or <code class="docutils literal notranslate"><span class="pre">assistant</span></code> and string content totaling at most 131072 characters.
+The configured model context limit still applies. The server restores assistant
+openers; this is text prefill, not recovery of cached KV or past visual tensors.
+When supplied, the history replaces the initial <code class="docutils literal notranslate"><span class="pre">prompt</span></code> input; include any active
+task in that history. Without the field, the existing configure behavior remains.</p>
+</section>
+<section id="initial-configuration">
+<h3>Initial configuration<a class="headerlink" href="#initial-configuration" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">session.configure</span></code> accepts <code class="docutils literal notranslate"><span class="pre">prompt</span></code> (the initial user prompt), whose default
 is an empty string, matching the Transformers realtime reference. Production
 deployments are expected to pass the SFT prompt explicitly; the system prompt
@@ -736,6 +754,7 @@ non-decreasing. A violating event is rejected with a per-event
 <code class="docutils literal notranslate"><span class="pre">invalid_request</span></code> error and the session stays alive. Input submission failures
 and engine failures terminate the session; explicit abort, disconnect and
 parked timeout also end it.</p>
+</section>
 <section id="context-usage-and-completion">
 <h3>Context usage and completion<a class="headerlink" href="#context-usage-and-completion" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">session.created.capabilities</span></code> includes <code class="docutils literal notranslate"><span class="pre">session.usage</span></code>. Set <code class="docutils literal notranslate"><span class="pre">include_usage</span></code>
@@ -777,7 +796,7 @@ session. Handle errors and use a completion timeout in client applications.</p>
 <code class="docutils literal notranslate"><span class="pre">input.frame</span></code> carrying a non-empty <code class="docutils literal notranslate"><span class="pre">prompt</span></code>, atomically closes the current
 assistant turn and opens the next user/assistant turn in the same persistent
 request. The appended training-format text is:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;|im_end|&gt;\n&lt;|im_start|&gt;user\n{prompt}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;|im_end|&gt;\n&lt;|im_start|&gt;user\n{prompt}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n&lt;|silence|&gt;
 </pre></div>
 </div>
 <p>The scheduler applies the update at the next safe token boundary, retains the
@@ -786,8 +805,8 @@ the transition. It does not abort the request or recreate the WebSocket.
 Already-running CUDA work is cooperative rather than forcibly cancelled.</p>
 <p>All events queued at one scheduler step are drained into a single segment,
 matching the Transformers reference drain: prompts are spliced first in
-arrival order and every prompt is followed by <code class="docutils literal notranslate"><span class="pre">&lt;|silence|&gt;</span></code> when the same
-drain cycle also appends frames (the trained assistant-turn opener); frames
+arrival order and every prompt is followed by <code class="docutils literal notranslate"><span class="pre">&lt;|silence|&gt;</span></code> (the trained
+assistant-turn opener), including prompt-only updates; frames
 follow, sorted by timestamp. Multiple prompts in one cycle therefore transition
 through consecutive turn ids, and a frame that races with a prompt is appended
 after the prompt text.</p>
@@ -960,6 +979,8 @@ guarantee that the session has finished. See the
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#send-timestamped-frames">Send timestamped frames</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#websocket-protocol">WebSocket protocol</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#restoring-text-history">Restoring text history</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#initial-configuration">Initial configuration</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#context-usage-and-completion">Context usage and completion</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#text-barge-in-and-turns">Text barge-in and turns</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backpressure">Backpressure</a></li>

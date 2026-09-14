@@ -19,7 +19,7 @@ Use the [MOSS-VL-Realtime-SGLANG checkpoint](https://huggingface.co/OpenMOSS-Tea
 which includes Transformers 5.12.1-compatible configuration and processor code:
 
 The installation guide is the single source for the hashed dependency lock,
-model revision, and CUDA toolkit setup. Activate that environment and set
+model repository, and CUDA toolkit setup. Activate that environment and set
 `MODEL_PATH` before running the examples below.
 
 If checkpoint access returns 401/403, use an authorized Hugging Face account
@@ -130,6 +130,23 @@ same structure used by offline singleton video segments:
 
 ## WebSocket protocol
 
+This section describes the native endpoint, not the optional VL API v2 adapter
+or the Demo browser protocol. The separate v2 listener has per-response
+`response.done` semantics; native `response.done` terminates the persistent session.
+
+### Restoring text history
+
+`GET /v1/video/realtime/capabilities` advertises `prefill_messages: true`.
+After probing support, a client may provide optional `prefill_messages` in
+`session.configure`: 1-64 `{role, content}` objects, with roles `system`, `user`,
+or `assistant` and string content totaling at most 131072 characters.
+The configured model context limit still applies. The server restores assistant
+openers; this is text prefill, not recovery of cached KV or past visual tensors.
+When supplied, the history replaces the initial `prompt` input; include any active
+task in that history. Without the field, the existing configure behavior remains.
+
+### Initial configuration
+
 `session.configure` accepts `prompt` (the initial user prompt), whose default
 is an empty string, matching the Transformers realtime reference. Production
 deployments are expected to pass the SFT prompt explicitly; the system prompt
@@ -227,7 +244,7 @@ assistant turn and opens the next user/assistant turn in the same persistent
 request. The appended training-format text is:
 
 ```text
-<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
+<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<|silence|>
 ```
 
 The scheduler applies the update at the next safe token boundary, retains the
@@ -237,8 +254,8 @@ Already-running CUDA work is cooperative rather than forcibly cancelled.
 
 All events queued at one scheduler step are drained into a single segment,
 matching the Transformers reference drain: prompts are spliced first in
-arrival order and every prompt is followed by `<|silence|>` when the same
-drain cycle also appends frames (the trained assistant-turn opener); frames
+arrival order and every prompt is followed by `<|silence|>` (the trained
+assistant-turn opener), including prompt-only updates; frames
 follow, sorted by timestamp. Multiple prompts in one cycle therefore transition
 through consecutive turn ids, and a frame that races with a prompt is appended
 after the prompt text.

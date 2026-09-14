@@ -58,7 +58,6 @@ uv pip check
 ```bash
 export MODEL_PATH="$HOME/models/MOSS-VL-Realtime-SGLANG"
 hf download OpenMOSS-Team/MOSS-VL-Realtime-SGLANG \
-  --revision bcfd9ccf1e9db2896ad852301cc8dde4a6349c78 \
   --local-dir "$MODEL_PATH"
 ```
 
@@ -85,7 +84,7 @@ The check does not load weights. `--no-gpu` checks packages and files only. Star
 
 ## Versions and Updates
 
-Companion components and dependency versions are listed in the [Demo compatibility matrix](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md). Revalidate after changing code, models, or dependencies. Do not replace isolated custom model files. The Transformers 4.57 reference implementation is not the backend environment.
+Companion repositories and runtime requirements are listed in the [Demo README](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#compatibility-and-updates). No fixed source/model commit is required. Stop the service before updating code with `git pull --ff-only`, reinstall its dependency lock, and download a complete model snapshot into a new directory before switching `MODEL_PATH`. Keep the previous model until validation succeeds; do not mix files from different versions. The Transformers 4.57 reference implementation is not the backend environment.
 
 ## Troubleshooting
 

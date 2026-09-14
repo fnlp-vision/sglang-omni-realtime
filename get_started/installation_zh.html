@@ -601,7 +601,6 @@ uv<span class="w"> </span>pip<span class="w"> </span>check
 <h2>下载模型<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">MODEL_PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/models/MOSS-VL-Realtime-SGLANG"</span>
 hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--revision<span class="w"> </span>bcfd9ccf1e9db2896ad852301cc8dde4a6349c78<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--local-dir<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span>
 </pre></div>
 </div>
@@ -624,7 +623,7 @@ bash<span class="w"> </span>deployment/moss_vl_realtime/start.sh<span class="w">
 </section>
 <section id="id6">
 <h2>版本与更新<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
-<p>配套组件与依赖版本见 <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md">Demo 兼容清单</a>。</p>
+<p>配套仓库与运行依赖见 <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/README_zh.md#%E5%85%BC%E5%AE%B9%E6%80%A7%E4%B8%8E%E6%9B%B4%E6%96%B0">Demo README</a>。不固定源码或模型提交。更新前停止服务，使用 <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">pull</span> <span class="pre">--ff-only</span></code> 更新代码后重新安装依赖锁；完整模型下载到新目录，验证后再切换 <code class="docutils literal notranslate"><span class="pre">MODEL_PATH</span></code>，不要把不同版本文件混在一起。</p>
 <p>升级代码、模型或依赖后，需要重新验证；不要只替换模型目录里的个别自定义文件。旧版 Transformers 4.57 参考实现不用于此后端环境。</p>
 </section>
 <section id="id7">

@@ -601,7 +601,6 @@ uv<span class="w"> </span>pip<span class="w"> </span>check
 <h2>Download the Model<a class="headerlink" href="#download-the-model" title="Link to this heading">#</a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">MODEL_PATH</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/models/MOSS-VL-Realtime-SGLANG"</span>
 hf<span class="w"> </span>download<span class="w"> </span>OpenMOSS-Team/MOSS-VL-Realtime-SGLANG<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--revision<span class="w"> </span>bcfd9ccf1e9db2896ad852301cc8dde4a6349c78<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--local-dir<span class="w"> </span><span class="s2">"</span><span class="nv">$MODEL_PATH</span><span class="s2">"</span>
 </pre></div>
 </div>
@@ -624,7 +623,7 @@ bash<span class="w"> </span>deployment/moss_vl_realtime/start.sh<span class="w">
 </section>
 <section id="versions-and-updates">
 <h2>Versions and Updates<a class="headerlink" href="#versions-and-updates" title="Link to this heading">#</a></h2>
-<p>Companion components and dependency versions are listed in the <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo/blob/main/docs/compatibility.md">Demo compatibility matrix</a>. Revalidate after changing code, models, or dependencies. Do not replace isolated custom model files. The Transformers 4.57 reference implementation is not the backend environment.</p>
+<p>Companion repositories and runtime requirements are listed in the <a class="reference external" href="https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo#compatibility-and-updates">Demo README</a>. No fixed source/model commit is required. Stop the service before updating code with <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">pull</span> <span class="pre">--ff-only</span></code>, reinstall its dependency lock, and download a complete model snapshot into a new directory before switching <code class="docutils literal notranslate"><span class="pre">MODEL_PATH</span></code>. Keep the previous model until validation succeeds; do not mix files from different versions. The Transformers 4.57 reference implementation is not the backend environment.</p>
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
