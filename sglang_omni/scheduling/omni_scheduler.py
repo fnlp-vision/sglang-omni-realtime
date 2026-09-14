@@ -14,6 +14,7 @@ inheriting from ``SGLangScheduler``.
 from __future__ import annotations
 
 import logging
+import os
 import queue as _queue_mod
 import threading
 import time
@@ -1496,13 +1497,23 @@ class OmniScheduler:
         )
 
     def _handle_batch_failure(self, batch: Any, error: Exception) -> None:
+        from sglang_omni.platforms.errors import is_fatal_npu_oom
+
+        fatal_npu_oom = is_fatal_npu_oom(error)
         reqs = list(batch.reqs)
         request_ids = [req.rid for req in reqs]
         logger.exception("OmniScheduler batch failed for requests=%s", request_ids)
-        for req in reqs:
-            self._emit_request_error(req.rid, error)
-            self._emit_model_path_end_once(req.rid, status="error")
-            self.abort(req.rid, defer_running_cleanup=False)
+        try:
+            for req in reqs:
+                self._emit_request_error(req.rid, error)
+                self._emit_model_path_end_once(req.rid, status="error")
+                self.abort(req.rid, defer_running_cleanup=False)
+        finally:
+            if fatal_npu_oom:
+                # Exit even if OOM also prevents reporting/cleanup. CUDA keeps
+                # its batch-local error recovery, including cleanup exceptions.
+                logger.error("NPU OOM in scheduler; exiting: %s", error)
+                os._exit(1)
 
     def _emit_prefill_start_for_batch(self, batch: ScheduleBatch) -> None:
         """Emit once when a request's first executable batch is selected."""

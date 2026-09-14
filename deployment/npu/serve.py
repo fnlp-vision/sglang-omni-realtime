@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import json
 import math
 import os
@@ -88,6 +89,7 @@ def main():
                        '--context-length', str(profile['context_length']),
                        '--mem-fraction-static', str(profile['mem_fraction_static']),
                        '--max-running-requests', str(profile['max_running_requests'])]
+            command += shlex.split(os.environ.get('EXTRA_SERVER_ARGS', ''))
             if len(group) == 1:
                 command += ['--gpu', str(group[0])]
             else:

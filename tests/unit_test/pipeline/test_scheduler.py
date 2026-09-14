@@ -252,8 +252,18 @@ def test_take_deferred_request_payloads_is_event_driven() -> None:
     assert scheduler._dirty_deferred_request_ids == set()
 
 
-def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(monkeypatch) -> None:
+@pytest.mark.parametrize('error', [
+    RuntimeError('cuda out of memory'),
+    torch.OutOfMemoryError('cuda out of memory'),
+    RuntimeError('ordinary forward failure'),
+])
+def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(monkeypatch, error) -> None:
     """Forward failures are owned by the scheduler, not model executors."""
+    import sglang_omni.platforms as platforms
+
+    monkeypatch.setattr(platforms.current_platform, 'device_type', 'cuda')
+    monkeypatch.setattr(omni_scheduler_module.os, '_exit',
+                        lambda code: pytest.fail(f'CUDA batch failure exited with {code}'))
     release_calls: list[tuple[str, object]] = []
     tree_cache = object()
     model_path_events: list[tuple[str, str, str | None]] = []
@@ -279,7 +289,7 @@ def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(monkeypatch) ->
                 "req-1",
                 "req-2",
             ]
-            raise RuntimeError("cuda out of memory")
+            raise error
 
     scheduler = object.__new__(OmniScheduler)
     scheduler._model_runner = BoomModelRunner()
@@ -340,7 +350,7 @@ def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(monkeypatch) ->
     assert {output.request_id for output in outputs} == {"req-1", "req-2"}
     assert all(output.type == "error" for output in outputs)
     assert all(isinstance(output.data, RuntimeError) for output in outputs)
-    assert all("cuda out of memory" in str(output.data) for output in outputs)
+    assert all(str(error) in str(output.data) for output in outputs)
     assert scheduler._aborted_request_ids == {"req-1", "req-2"}
     assert batch.reqs == []
     assert all(req._omni_data is None for req in failed_reqs)

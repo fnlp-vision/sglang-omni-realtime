@@ -9,7 +9,7 @@ def recommended_deploy_params(tp_size: int, env: Mapping[str, str]) -> dict:
     if type(tp_size) is not int or tp_size < 1:
         raise ValueError('tp_size must be a positive integer')
     context = int(env.get('CONTEXT_LENGTH', '8192' if tp_size == 2 else '32768'))
-    memory = float(env.get('MEM_FRACTION', '0.80' if tp_size == 2 else '0.70'))
+    memory = float(env.get('MEM_FRACTION', '0.70'))
     capacity = int(env.get('MAX_RUNNING_REQUESTS', str(tp_size)))
     if context <= 0 or capacity <= 0:
         raise ValueError('context length and session capacity must be positive')

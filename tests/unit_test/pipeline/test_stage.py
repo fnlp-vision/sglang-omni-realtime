@@ -245,9 +245,15 @@ def test_stage_process_accepts_iterable_dynamic_wait_sources() -> None:
     assert merged.data["merged_sources"] == ["preprocess", "thinker"]
 
 
-def test_stage_run_raises_when_scheduler_thread_crashes() -> None:
+@pytest.mark.parametrize('error', [RuntimeError('boom'),
+                                  RuntimeError('CUDA out of memory'),
+                                  torch.OutOfMemoryError('allocation failed')])
+def test_stage_run_raises_when_scheduler_thread_crashes(monkeypatch, error) -> None:
+    monkeypatch.setattr(platforms.current_platform, 'device_type', 'cuda')
+    exits = []
+    monkeypatch.setattr(stage_runtime_module.os, '_exit', exits.append)
     async def _run() -> None:
-        scheduler = FakeScheduler(fail_start=RuntimeError("boom"))
+        scheduler = FakeScheduler(fail_start=error)
         stage_obj = make_stage(
             scheduler=scheduler,
             control_plane=_CloseAwareControlPlane(),
@@ -255,6 +261,8 @@ def test_stage_run_raises_when_scheduler_thread_crashes() -> None:
 
         with pytest.raises(RuntimeError, match="Scheduler thread"):
             await asyncio.wait_for(stage_obj.run(), timeout=2.0)
+
+        assert exits == []
 
         assert scheduler.stopped is True
 
