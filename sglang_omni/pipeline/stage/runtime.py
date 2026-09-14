@@ -192,12 +192,33 @@ class Stage:
                 except Exception as exc:
                     logger.exception("Scheduler thread for stage %s crashed", self.name)
                     self._running = False
+                    from sglang_omni.platforms.errors import is_fatal_npu_oom
+
+                    fatal_npu_oom = is_fatal_npu_oom(exc)
                     loop = self._loop
+                    flush = None
                     if loop is not None and not loop.is_closed():
-                        asyncio.run_coroutine_threadsafe(
-                            self._handle_scheduler_crash(exc),
-                            loop,
+                        notification = self._handle_scheduler_crash(exc)
+                        try:
+                            flush = asyncio.run_coroutine_threadsafe(notification, loop)
+                        except Exception:
+                            notification.close()
+                            if not fatal_npu_oom:
+                                raise
+                            logger.exception("Could not report NPU OOM for stage %s", self.name)
+
+                    # Preserve the NPU fail-fast policy. Other platforms keep
+                    # their existing scheduler-crash propagation and cleanup.
+                    if fatal_npu_oom:
+                        if flush is not None:
+                            with suppress(Exception):
+                                flush.result(timeout=30)
+                        logger.error(
+                            "Stage %s exiting after NPU OOM: %s",
+                            self.name,
+                            exc,
                         )
+                        os._exit(1)
 
             self._scheduler_thread = threading.Thread(
                 target=_run_scheduler,

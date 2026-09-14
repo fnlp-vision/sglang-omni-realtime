@@ -65,6 +65,31 @@ def test_empty_encoder_produces_zero_output():
     torch.testing.assert_close(actual, torch.zeros_like(query))
 
 
+@pytest.mark.parametrize('dtype', [torch.float32, torch.bfloat16])
+def test_self_attention_extend_reads_complete_text_prefix_after_encoder(dtype):
+    backend, device = backend_and_device()
+    torch.manual_seed(17)
+    query = torch.randn(3, 2, 4, device=device, dtype=dtype)
+    keys = torch.randn(10, 1, 4, device=device, dtype=dtype)
+    values = torch.randn_like(keys)
+    table = torch.tensor([[0, 1, 2, 3, 4, 5, 6], [7, 8, 9, 0, 0, 0, 0]], device=device)
+    actual = backend.run_sdpa_forward_extend(
+        query, torch.empty_like(query), keys, values, table,
+        torch.tensor([0, 1], device=device), torch.tensor([5, 2], device=device),
+        torch.tensor([3, 1], device=device), torch.tensor([2, 1], device=device),
+        torch.tensor([2, 1], device=device), is_cross_attention=False,
+        causal=True, enable_gqa=True)
+    expected = []
+    for q, indices, prefix in [(query[:2], [2, 3, 4, 5, 6], 3), (query[2:], [8, 9], 1)]:
+        mask = torch.arange(len(indices), device=device)[None, :] <= (
+            prefix + torch.arange(q.shape[0], device=device)[:, None])
+        expected.append(torch.nn.functional.scaled_dot_product_attention(
+            q.float().transpose(0, 1), keys[indices].float().transpose(0, 1),
+            values[indices].float().transpose(0, 1), attn_mask=mask,
+            enable_gqa=True).transpose(0, 1))
+    torch.testing.assert_close(actual.float(), torch.cat(expected), atol=0.04, rtol=0.03)
+
+
 def test_mask_length_is_validated():
     backend, device = backend_and_device()
     query = torch.zeros((2, 1, 4), device=device)

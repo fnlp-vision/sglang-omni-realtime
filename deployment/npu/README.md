@@ -26,7 +26,9 @@ export ASCEND_USE_FIA=false
 
 The patch installer operates on the active interpreter's SGLang package; an optional argument selects its `site-packages` directory. It selects the 0.5.14 or 0.5.16 patch set from the installed ModelRunner signature. `--patch-set 0.5.14` or `--patch-set 0.5.16` selects a source layout explicitly for vendor backports; incompatible sources still fail. Stop serving processes before patching. All patches are staged before installation; already-applied patches are accepted, incompatible sources fail rather than being skipped, and modified files get `.moss-npu.bak` backups. Restart after installation. The environment must already contain application dependencies, including FastAPI, websockets, Pillow, psutil, pytest and pytest-asyncio.
 
-Frame visibility uses per-request masks in the native extend path. Cross-attention uses explicit Torch operations rather than fused SDPA; self-attention dispatch is unchanged. Both version-specific patch sets include the common `0004-use-torch-cross-attention.patch`. Rerun the installer when upgrading an already-patched environment. FA/FIA, speculative and context-parallel paths are not accepted for masked cross-attention. Missing visibility or Torch-path support prevents startup. Decode retains its existing all-visible encoder behavior.
+Frame visibility uses per-request masks in the native extend path. Cross-attention uses explicit Torch operations rather than fused SDPA; self-attention reads the complete text prefix after the encoder slots. Both version-specific patch sets include the common `0004-use-torch-cross-attention.patch` capability marker. Decode retains its existing all-visible encoder behavior. Missing visibility or Torch-path support prevents startup. Use the native Ascend extend path with FA/FIA disabled; speculative and context-parallel execution require separate validation.
+
+Rerun the installer to upgrade environments using the repository's previous patch sets. The 0.5.16 installer migrates the former `0002/0003/0004` attention state; the 0.5.14 installer applies its version-specific alignment supplement. Fresh and upgraded installations converge to the same source state, and repeated installation leaves sources unchanged. Unknown or partially modified patch states are rejected. The 0.5.16 vision patch includes `layers/attention/vision.py`; it is backed up and validated with the model and attention files.
 
 ## Start
 
@@ -48,7 +50,9 @@ Each command runs in the foreground. Stop with Ctrl-C or SIGTERM from a service 
 | Group override | `NPU_GROUPS='0,1;2,3'` |
 | Backend session capacity | Device count in each group; override `MAX_RUNNING_REQUESTS` |
 | Adapter capacity | `MAX_INFLIGHT=1`; set independently for concurrent callers |
-| Context / memory fraction | TP2: 8192 / 0.80; otherwise 32768 / 0.70 |
+| Context / memory fraction | TP2: 8192 / 0.70; otherwise 32768 / 0.70 |
+| Optional frame chunking | `SGLANG_MOSS_VIT_CHUNK_FRAMES=0` (disabled); positive values limit frames per ViT call |
+| Additional backend arguments | `EXTRA_SERVER_ARGS`, for example `--mm-attention-backend ascend_attn` |
 
 NPU serving defaults are centralized in [config.py](./config.py) and used by the supervisor. `CONTEXT_LENGTH`, `MEM_FRACTION` and `HOST` override the defaults; CUDA configuration is unaffected. Device IDs are logical indices in the visible-device list. Verify HCCS planes on the actual host; the example grouping is not a portable hardware topology guarantee. Each adapter connects to its own backend, not to a load balancer. Capacity and memory defaults need NPU acceptance testing.
 
@@ -56,15 +60,20 @@ NPU startup locks resolve local IDs through `ASCEND_RT_VISIBLE_DEVICES` and use 
 
 For the opt-in [VL API v2](../../vl_api_adapter/README.md), add `--vl-api-v2-port 18610` to `examples/run_moss_vl_realtime_server.py` in the prepared NPU environment. `deploy.sh` continues to start native v1 and the legacy adapter only. The `vl_api_adapter/start.sh` wrapper uses the CUDA deployment profile and is not the NPU launcher.
 
+## Failure Handling
+
+NPU serving uses a fail-fast policy for allocator OOM and runtime OOM errors: the worker exits and the deployment supervisor stops the affected deployment. Restart is managed externally. Scheduler-thread error notification waits at most 30 seconds before exit; parent-process health reflects failure after propagation, not instantaneously. This NPU policy does not change CUDA batch-error handling or enable automatic restart on CUDA.
+
 ## Acceptance
 
-**Status: main integration candidate; CPU regressions pass, hardware acceptance pending.** This branch combines main `194bcc8` with Ascend integration `790b96e`, including history prefill and VL API v2. See [validation results](./VALIDATION.md). Historical CUDA measurements elsewhere are not hardware acceptance results for this candidate.
+Run the following checks in each supported SGLang environment. CPU attention and installation tests do not replace NPU hardware validation. Earlier integration measurements are retained in [validation results](./VALIDATION.md).
 
 ```bash
 python -m pytest tests/unit_test/vendor/test_sglang_server_args.py \
   tests/unit_test/vendor/test_sglang_versions.py \
   tests/unit_test/pipeline/test_stage_process_env.py \
   tests/unit_test/pipeline/test_npu_startup_lock.py \
+  tests/unit_test/pipeline/test_resource_errors.py \
   tests/unit_test/moss_vl_realtime/test_npu_deployment.py \
   tests/unit_test/moss_vl_realtime/test_npu_patch_installer.py \
   tests/unit_test/moss_vl_realtime/test_npu_platform_contract.py \

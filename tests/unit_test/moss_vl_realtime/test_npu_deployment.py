@@ -4,8 +4,8 @@ import pytest
 from deployment.npu.config import recommended_deploy_params
 
 
-@pytest.mark.parametrize('tp,context,memory', [(1, 32768, 0.70), (2, 8192, 0.80), (4, 32768, 0.70)])
-def test_preserves_existing_profiles(tp, context, memory):
+@pytest.mark.parametrize('tp,context,memory', [(1, 32768, 0.70), (2, 8192, 0.70), (4, 32768, 0.70)])
+def test_default_profiles(tp, context, memory):
     assert recommended_deploy_params(tp, {}) == {
         'context_length': context, 'mem_fraction_static': memory,
         'max_running_requests': tp,

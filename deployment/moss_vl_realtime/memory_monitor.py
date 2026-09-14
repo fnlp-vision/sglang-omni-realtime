@@ -17,8 +17,17 @@ class MemoryMonitor:
         self.samples = []
         self.errors = []
         self.stop = threading.Event()
+        try:
+            import pynvml as _nvml_mod
+            self.nvml = _nvml_mod
+            self.nvml.nvmlInit()
+            self.handle = self.nvml.nvmlDeviceGetHandleByIndex(0)
+        except Exception:
+            self.nvml = None
 
     def sample(self):
+        if self.nvml is None:
+            return
         info = self.nvml.nvmlDeviceGetMemoryInfo(self.handle)
         processes = self.nvml.nvmlDeviceGetComputeRunningProcesses(self.handle)
         used = sum(
@@ -37,6 +46,11 @@ class MemoryMonitor:
         )
 
     def __enter__(self):
+        if self.nvml is None:
+            self.started = time.monotonic()
+            self.total = 0
+            self.thread = None
+            return self
         import pynvml
 
         self.nvml = pynvml
@@ -65,13 +79,20 @@ class MemoryMonitor:
 
     def __exit__(self, exc_type, exc, tb):
         self.stop.set()
-        self.thread.join(5)
+        if getattr(self, "thread", None) is not None:
+            self.thread.join(5)
         try:
             self.sample()
         except Exception as error:
             self.errors.append(repr(error))
-        finally:
-            self.nvml.nvmlShutdown()
+        if self.nvml is None:
+            write_json(
+                self.path,
+                dict(interval_seconds=self.interval, pid=os.getpid(),
+                     device_total_bytes=0, note="nvml unavailable (NPU)"),
+            )
+            return
+        self.nvml.nvmlShutdown()
         process_peak = max(s["process_bytes"] for s in self.samples)
         device_peak = max(s["device_bytes"] for s in self.samples)
         write_json(
