@@ -17,6 +17,8 @@ class Engine:
         server_args_overrides=None,
         max_running_requests=4,
         frame_window_enabled=False,
+        device=None,
+        context_length=131072,
     ):
         import torch
 
@@ -27,11 +29,11 @@ class Engine:
         self.torch = torch
         self.scheduler = create_sglang_moss_vl_realtime_executor(
             str(model_path),
-            device="cuda:0",
+            device=device,
             gpu_id=0,
             max_running_requests=max_running_requests,
             max_new_tokens=4096,
-            context_length=131072,
+            context_length=context_length,
             mem_fraction_static=CONFIG["mem_fraction_static"],
             disable_cuda_graph=disable_cuda_graph,
             enable_async_decode=False,
