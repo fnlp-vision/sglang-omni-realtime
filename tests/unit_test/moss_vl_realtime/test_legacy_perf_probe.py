@@ -2,6 +2,8 @@
 import asyncio
 import importlib.util
 import json
+import sys
+from types import ModuleType
 from pathlib import Path
 
 import pytest
@@ -66,3 +68,47 @@ async def test_silent_peer_has_an_actual_deadline(monkeypatch):
     with pytest.raises(TimeoutError):
         await probe.one_round('ws://test', [b'jpeg'], 'describe', {}, timeout_s=0.03)
     assert peer.closed and peer.stopped
+
+
+@pytest.mark.parametrize('modern', [True, False])
+@pytest.mark.parametrize('relative', ['perf_probe.py', 'vl_legacy_adapter/tests/smoke_client.py'])
+def test_websocket_api_compatibility_keeps_direct_connections(monkeypatch, modern, relative):
+    module = ModuleType('websockets.asyncio.client')
+
+    def old_connect(uri, *, max_size=None, **kwargs):
+        assert 'proxy' not in kwargs
+
+    def new_connect(uri, *, proxy=True, **kwargs):
+        assert proxy is None
+
+    module.connect = new_connect if modern else old_connect
+    monkeypatch.setitem(sys.modules, 'websockets.asyncio.client', module)
+    path = Path(__file__).parents[3]/relative
+    spec = importlib.util.spec_from_file_location('compat_probe', path)
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    assert loaded.CONNECT_OPTIONS == ({'proxy': None} if modern else {})
+    loaded.connect('ws://test', **loaded.CONNECT_OPTIONS)
+
+
+@pytest.mark.asyncio
+async def test_environment_proxy_cannot_redirect_perf_probe(monkeypatch):
+    from websockets.asyncio.server import serve
+
+    monkeypatch.setenv('ws_proxy', 'http://127.0.0.1:1')
+    monkeypatch.setenv('no_proxy', '')
+    monkeypatch.setenv('NO_PROXY', '')
+
+    async def handler(ws):
+        await ws.recv()
+        await ws.send('{"type":"ready"}')
+        await ws.recv()
+        await ws.recv()
+        await ws.send('{"type":"frame_ack"}')
+        await ws.send('{"type":"output","text":"hello<|im_end|>"}')
+        await ws.recv()
+
+    async with serve(handler, '127.0.0.1', 0) as server:
+        result = await probe.one_round(
+            f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}', [b'jpeg'], '', {})
+    assert result['text'] == 'hello'

@@ -387,14 +387,22 @@ def test_construct_stage_uses_placement_gpu_id_for_device_and_startup_lock(
         seen_gpu_ids.append(gpu_id)
         yield Path("/tmp/test.lock")
 
-    monkeypatch.setattr(
-        torch.get_device_module(platforms.current_platform.device_type),
-        "set_device",
-        lambda gpu_id: set_device_calls.append(int(gpu_id)),
-    )
     monkeypatch.setattr(stage_workers, "gpu_startup_lock", _fake_lock)
     monkeypatch.setattr(stage_workers, "Stage", _FakeStage)
     monkeypatch.setattr(stage_workers, "current_platform", cuda_platform)
+    # Patch the platform instance the code under test actually invokes, NOT the
+    # shared singleton: other test modules (e.g. test_resource_errors) mutate
+    # platforms.current_platform.device_type in-place, so keying the fake on
+    # torch.get_device_module(platforms.current_platform.device_type) leaks
+    # cross-test state into which module receives the fake. An instance-level
+    # patch shadows CudaDeviceMixin.set_device for this test only and is fully
+    # reverted by monkeypatch teardown.
+    monkeypatch.setattr(
+        cuda_platform,
+        "set_device",
+        lambda gpu_id: set_device_calls.append(int(gpu_id)),
+        raising=False,
+    )
 
     specs = [
         StageLaunchConfig(

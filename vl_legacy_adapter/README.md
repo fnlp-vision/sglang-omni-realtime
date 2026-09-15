@@ -77,6 +77,8 @@ From `vl_legacy_adapter/`, run the CPU regression suite or the GPU-backed smoke 
 
 The regression suite covers delayed/incomplete frames, input closure, startup failures and cancellation, capacity release and parameter mapping. Smoke cases cover batched input, consecutive rounds, invalid JPEG, busy rejection and disconnect recovery; `--tests vl01,vl02` selects a subset. Smoke output alone is not proof of semantic alignment or complete external-contract conformance.
 
+The smoke client reconnects up to three times for busy rejection before `ready`, with 0.5/1/1.5-second backoff within the shared round deadline. Retry history is reported separately from terminal errors. VL-02 disables retries to check immediate capacity release between rounds. Test clients connect directly, including when environment proxies are configured.
+
 ### Reference Latency
 
 Smoke measurements, 2026-09-10, warm GPU backend, current revision. Times are seconds; these are observations, not latency guarantees.

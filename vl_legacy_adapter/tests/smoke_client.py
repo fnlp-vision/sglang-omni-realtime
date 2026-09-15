@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
+import inspect
 import json
 import os
 import sys
@@ -37,11 +38,14 @@ from PIL import Image
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+CONNECT_OPTIONS = {"proxy": None} if "proxy" in inspect.signature(connect).parameters else {}
+
 END_MARKERS = ("<|im_end|>", "<|silence|>", "<|round_end|>", "<|eot_id|>", "<|endoftext|>")
 BUSY_SUBSTRING = "realtime session is already active"
 
 READY_TIMEOUT_S = 10.0
 ROUND_TIMEOUT_S = 10.0
+BUSY_RETRY_DELAYS = (0.5, 1.0, 1.5)
 
 # The §5.2 example start message, verbatim.
 START_EXAMPLE = {
@@ -86,6 +90,7 @@ class RoundResult:
         self.acks = 0
         self.outputs: list[str] = []
         self.errors: list[str] = []
+        self.retry_errors: list[str] = []
         self.marker_seen = False
         self.t_start = 0.0
         self.t_ready: float | None = None
@@ -139,18 +144,46 @@ async def recv_json(ws, timeout: float) -> dict | None:
 
 
 async def run_round(url: str, frames: list[bytes], *, prompt: str | None = None,
-                    max_new_tokens: int | None = None) -> RoundResult:
+                    max_new_tokens: int | None = None, retry_busy: bool = True) -> RoundResult:
+    """Retry rejected connections only, within one shared round deadline."""
+    started = time.monotonic()
+    deadline = started + ROUND_TIMEOUT_S
+    retries = []
+    result = RoundResult()
+    delays = BUSY_RETRY_DELAYS if retry_busy else ()
+    try:
+        async with asyncio.timeout_at(deadline):
+            for attempt in range(len(delays) + 1):
+                result = await _run_round_once(
+                    url, frames, prompt=prompt, max_new_tokens=max_new_tokens,
+                    deadline=deadline)
+                busy = (result.t_ready is None and len(result.errors) == 1
+                        and BUSY_SUBSTRING in result.errors[0])
+                if not busy or attempt == len(delays):
+                    break
+                retries.extend(result.errors)
+                await asyncio.sleep(delays[attempt])
+    except (TimeoutError, ConnectionClosed, OSError) as exc:
+        result = RoundResult()
+        result.errors.append(f"round failed: {exc!r}")
+    result.retry_errors = retries
+    result.t_start = started
+    result.t_total = time.monotonic() - started
+    return result
+
+
+async def _run_round_once(url: str, frames: list[bytes], *, prompt: str | None = None,
+                    max_new_tokens: int | None = None, deadline: float) -> RoundResult:
     """One full legacy-contract round: start -> ready -> frames -> outputs -> stop."""
     result = RoundResult()
     result.t_start = time.monotonic()
-    async with connect(url, max_size=16 * 1024 * 1024, open_timeout=READY_TIMEOUT_S) as ws:
+    async with connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024, open_timeout=READY_TIMEOUT_S) as ws:
         start = dict(START_EXAMPLE)
         if prompt is not None:
             start["prompt"] = prompt
         if max_new_tokens is not None:
             start["max_new_tokens"] = max_new_tokens
         await ws.send(json.dumps(start, ensure_ascii=False))
-        deadline = time.monotonic() + ROUND_TIMEOUT_S
         # Wait for ready.
         while True:
             message = await recv_json(ws, max(0.1, deadline - time.monotonic()))
@@ -203,7 +236,8 @@ def report(name: str, ok: bool, detail: str, result: RoundResult | None = None) 
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}")
     if result is not None:
         record = {"test": name, **result.timings(), "acks": result.acks,
-                  "text": result.visible_text[:80], "errors": result.errors}
+                  "text": result.visible_text[:80], "errors": result.errors,
+                  "retry_errors": result.retry_errors}
         print("      " + json.dumps(record, ensure_ascii=False))
     return ok
 
@@ -228,8 +262,8 @@ async def test_vl01(url: str, frames: list[bytes]) -> bool:
 
 
 async def test_vl02(url: str, frames: list[bytes]) -> bool:
-    r1 = await run_round(url, frames[:4], prompt="第一轮：请描述画面中的主体。")
-    r2 = await run_round(url, frames[:4], prompt="第二轮：画面里有什么动作？")
+    r1 = await run_round(url, frames[:4], prompt="第一轮：请描述画面中的主体。", retry_busy=False)
+    r2 = await run_round(url, frames[:4], prompt="第二轮：画面里有什么动作？", retry_busy=False)
     good = (
         r1.marker_seen and r2.marker_seen
         and not any(BUSY_SUBSTRING in e for e in r2.errors)
@@ -270,13 +304,13 @@ async def test_vl03_bad_jpeg(url: str, frames: list[bytes]) -> bool:
 
 async def test_vl03_busy(url: str, frames: list[bytes]) -> bool:
     # Hold one session open (ready, frames unsent) and start another.
-    async with connect(url, max_size=16 * 1024 * 1024) as ws1:
+    async with connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024) as ws1:
         await ws1.send(json.dumps(dict(START_EXAMPLE), ensure_ascii=False))
         first = await recv_json(ws1, READY_TIMEOUT_S)
         assert first["type"] == "ready", first
         busy_seen = False
         try:
-            async with connect(url, max_size=16 * 1024 * 1024) as ws2:
+            async with connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024) as ws2:
                 await ws2.send(json.dumps(dict(START_EXAMPLE), ensure_ascii=False))
                 message = await recv_json(ws2, READY_TIMEOUT_S)
                 busy_seen = (message["type"] == "error"
@@ -322,7 +356,7 @@ async def test_vl03_silent_round(url: str, frames: list[bytes]) -> bool:
 
 async def test_vl03_abrupt_close(url: str, frames: list[bytes]) -> bool:
     # Mid-round abrupt disconnect (no stop), then a fresh round must work.
-    ws = await connect(url, max_size=16 * 1024 * 1024)
+    ws = await connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024)
     await ws.send(json.dumps(dict(START_EXAMPLE), ensure_ascii=False))
     first = await recv_json(ws, READY_TIMEOUT_S)
     assert first["type"] == "ready", first

@@ -5,6 +5,7 @@ import argparse
 import asyncio
 from contextlib import suppress
 import io
+import inspect
 import json
 import math
 from pathlib import Path
@@ -13,6 +14,8 @@ import time
 from PIL import Image
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
+
+CONNECT_OPTIONS = {"proxy": None} if "proxy" in inspect.signature(connect).parameters else {}
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CASE = ROOT / 'deployment/moss_vl_realtime/cases/cd067_sbpro_L2_stream_000122'
@@ -35,7 +38,7 @@ async def one_round(url, frames, prompt, sampling, *, timeout_s=10.0):
     start_at = time.perf_counter()
     reader = None
     async with asyncio.timeout(timeout_s):
-        async with connect(url, proxy=None, max_size=32 << 20,
+        async with connect(url, **CONNECT_OPTIONS, max_size=32 << 20,
                            open_timeout=timeout_s, close_timeout=2) as ws:
             connect_s = time.perf_counter() - start_at
             await ws.send(json.dumps(dict(
