@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from sglang_omni.models.moss_vl_realtime.platform_compat import (
+    preferred_attention_backend,
+)
 from sglang_omni.models.moss_vl_realtime.engine_builder import (
     DECODE_GRAPH_ENCODER_LEN_FILL_VALUE,
     MossVLRealtimeEngineBuilder,
@@ -29,17 +32,19 @@ def _fake_model_worker() -> SimpleNamespace:
 
 
 def test_generation_defaults_enable_decode_graph_by_default() -> None:
+    expected_attention_backend = preferred_attention_backend()
     defaults = _make_builder().generation_defaults(dtype="bfloat16")
 
     assert defaults["disable_cuda_graph"] is False
     assert defaults["disable_prefill_cuda_graph"] is True
     # FlashInfer is the project's decode backend in all modes; setting any
     # backend dimension requires pinning prefill explicitly as well.
-    assert defaults["decode_attention_backend"] == "flashinfer"
-    assert defaults["prefill_attention_backend"] == "flashinfer"
+    assert defaults["decode_attention_backend"] == expected_attention_backend
+    assert defaults["prefill_attention_backend"] == expected_attention_backend
 
 
 def test_generation_defaults_enable_decode_graph_only() -> None:
+    expected_attention_backend = preferred_attention_backend()
     defaults = _make_builder(disable_cuda_graph=False).generation_defaults(
         dtype="bfloat16"
     )
@@ -48,7 +53,7 @@ def test_generation_defaults_enable_decode_graph_only() -> None:
     # Frame extend keeps dynamic shapes and must stay eager.
     assert defaults["disable_prefill_cuda_graph"] is True
     assert defaults["page_size"] == 1
-    assert defaults["decode_attention_backend"] == "flashinfer"
+    assert defaults["decode_attention_backend"] == expected_attention_backend
 
 
 def test_generation_defaults_fix_page_size_to_one() -> None:

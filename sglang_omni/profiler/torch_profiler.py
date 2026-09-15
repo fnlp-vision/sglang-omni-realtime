@@ -27,7 +27,7 @@ class TorchProfiler(ProfilerBase):
     Compression is offloaded to a background subprocess to avoid blocking the worker loop.
     """
 
-    _profiler: profile | None = None
+    _profiler: "profile | None" = None
     _trace_template: str = ""
 
     _active_run_id: str | None = None
