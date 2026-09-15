@@ -35,7 +35,7 @@ async def one_round(url, frames, prompt, sampling, *, timeout_s=10.0):
     start_at = time.perf_counter()
     reader = None
     async with asyncio.timeout(timeout_s):
-        async with connect(url, proxy=None, max_size=32 << 20,
+        async with connect(url, max_size=32 << 20,
                            open_timeout=timeout_s, close_timeout=2) as ws:
             connect_s = time.perf_counter() - start_at
             await ws.send(json.dumps(dict(

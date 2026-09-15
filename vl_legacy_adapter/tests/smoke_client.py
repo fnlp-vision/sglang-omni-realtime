@@ -149,18 +149,30 @@ async def run_round(url: str, frames: list[bytes], *, prompt: str | None = None,
             start["prompt"] = prompt
         if max_new_tokens is not None:
             start["max_new_tokens"] = max_new_tokens
-        await ws.send(json.dumps(start, ensure_ascii=False))
-        deadline = time.monotonic() + ROUND_TIMEOUT_S
-        # Wait for ready.
+        # The previous round's slot may still be draining when the next start
+        # arrives; retry busy starts with the legacy back-off (0.5/1/1.5s)
+        # instead of failing the round outright.
+        busy_retries = (0.5, 1.0, 1.5)
+        attempt = 0
         while True:
-            message = await recv_json(ws, max(0.1, deadline - time.monotonic()))
-            if message["type"] == "ready":
-                result.t_ready = time.monotonic()
+            await ws.send(json.dumps(start, ensure_ascii=False))
+            deadline = time.monotonic() + ROUND_TIMEOUT_S
+            while True:
+                message = await recv_json(ws, max(0.1, deadline - time.monotonic()))
+                if message["type"] == "ready":
+                    result.t_ready = time.monotonic()
+                    break
+                if message["type"] == "error":
+                    msg = message.get("message", "")
+                    result.errors.append(msg)
+                    if BUSY_SUBSTRING in msg and attempt < len(busy_retries):
+                        await asyncio.sleep(busy_retries[attempt])
+                        attempt += 1
+                        break  # resend start
+                    result.t_total = time.monotonic() - result.t_start
+                    return result
+            if result.t_ready is not None:
                 break
-            if message["type"] == "error":
-                result.errors.append(message.get("message", ""))
-                result.t_total = time.monotonic() - result.t_start
-                return result
         # Batch-send all frames without waiting for individual acks.
         for index, payload in enumerate(frames):
             await ws.send(json.dumps({"type": "frame", "timestamp": float(index + 1)}))
