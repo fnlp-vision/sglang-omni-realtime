@@ -40,8 +40,13 @@ async def warmup_video_realtime(
     *,
     model_name: str,
     timeout_s: float = 180.0,
+    dp_rank: int | None = None,
 ) -> None:
-    """Exercise the dynamic vision path before accepting user traffic."""
+    """Exercise the dynamic vision path before accepting user traffic.
+
+    ``dp_rank`` pins the warmup to one data-parallel replica (per-replica
+    warmup); ``None`` lets the coordinator choose, as before.
+    """
     if timeout_s <= 0:
         raise ValueError("video realtime warmup timeout must be positive")
 
@@ -71,7 +76,12 @@ async def warmup_video_realtime(
     async def _run() -> None:
         nonlocal frame_ref, processed
         submitted = False
-        async for chunk in client.generate(request, request_id=request_id):
+        generate_kwargs: dict[str, Any] = {}
+        if dp_rank is not None:
+            generate_kwargs["dp_rank"] = dp_rank
+        async for chunk in client.generate(
+            request, request_id=request_id, **generate_kwargs
+        ):
             if chunk.control_event == "session.ready" and not submitted:
                 output = BytesIO()
                 Image.new("RGB", (640, 352), color=(127, 127, 127)).save(
@@ -200,6 +210,7 @@ class VideoRealtimeSession:
         allow_benchmark_mode: bool = False,
         parked_request_timeout_s: float = 300.0,
         configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
+        dp_rank: int | None = None,
     ) -> None:
         self.websocket = websocket
         self.client = client
@@ -208,6 +219,9 @@ class VideoRealtimeSession:
         self.allow_benchmark_mode = bool(allow_benchmark_mode)
         self.parked_request_timeout_s = float(parked_request_timeout_s)
         self.configure_timeout_s = float(configure_timeout_s)
+        # Data-parallel replica pinned by the session manager at open time.
+        # ``None`` for single-replica serving (session routing unchanged).
+        self.dp_rank = dp_rank
         if not math.isfinite(self.configure_timeout_s) or self.configure_timeout_s <= 0:
             raise ValueError("configure_timeout_s must be finite and positive")
         self._configure_deadline = time.monotonic() + self.configure_timeout_s
@@ -535,8 +549,11 @@ class VideoRealtimeSession:
     async def stream_response(self, request: GenerateRequest) -> None:
         streamed_text = ""
         try:
+            generate_kwargs: dict[str, Any] = {}
+            if self.dp_rank is not None:
+                generate_kwargs["dp_rank"] = self.dp_rank
             async for chunk in self.client.generate(
-                request, request_id=self.request_id
+                request, request_id=self.request_id, **generate_kwargs
             ):
                 if chunk.control_event == "session.usage":
                     await self.send({"type": "session.usage", **dict(chunk.control_data or {})})
@@ -842,6 +859,7 @@ class VideoRealtimeSessionManager:
         allow_benchmark_mode: bool = False,
         parked_request_timeout_s: float = 300.0,
         max_sessions: int = 1,
+        replica_count: int = 1,
         configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
     ) -> None:
         self.client = client
@@ -854,8 +872,46 @@ class VideoRealtimeSessionManager:
             raise ValueError("configure_timeout_s must be finite and positive")
         if self.max_sessions < 1:
             raise ValueError("max_sessions must be at least 1")
+        # Native DP: the entry stage is replicated ``replica_count`` times and
+        # replicas are homogeneous, so the aggregate cap splits evenly. Session
+        # accounting lives here (open/close), not in the scheduler, because a
+        # parked session still holds its slot on the owning replica.
+        self.replica_count = int(replica_count)
+        if self.replica_count < 1:
+            raise ValueError("replica_count must be at least 1")
+        if self.max_sessions % self.replica_count != 0:
+            raise ValueError(
+                "max_sessions must be a multiple of replica_count "
+                f"({self.max_sessions} sessions over {self.replica_count} replicas)"
+            )
         self.frame_store = SharedMemoryFrameStore()
         self.sessions: dict[str, VideoRealtimeSession] = {}
+
+    def _assign_replica(self) -> int | None:
+        """Least-loaded replica with a free slot; ``None`` when dp == 1.
+
+        Session counts (including not-yet-configured opens) drive the choice;
+        the session then pins its persistent request to that replica so the
+        two counts can never diverge.
+        """
+        if self.replica_count == 1:
+            return None
+        loads = [0] * self.replica_count
+        for session in self.sessions.values():
+            if session.dp_rank is not None:
+                loads[session.dp_rank] += 1
+        per_replica_capacity = self.max_sessions // self.replica_count
+        free = [
+            rank
+            for rank in range(self.replica_count)
+            if loads[rank] < per_replica_capacity
+        ]
+        if not free:
+            raise RuntimeError(
+                "video realtime service has no free session slot "
+                f"(capacity {self.max_sessions})"
+            )
+        return min(free, key=lambda rank: loads[rank])
 
     def open(self, websocket: WebSocket, *, session_factory=None) -> VideoRealtimeSession:
         if len(self.sessions) >= self.max_sessions:
@@ -863,6 +919,7 @@ class VideoRealtimeSessionManager:
                 "video realtime service has no free session slot "
                 f"(capacity {self.max_sessions})"
             )
+        dp_rank = self._assign_replica()
         session = (session_factory or VideoRealtimeSession)(
             websocket,
             client=self.client,
@@ -871,6 +928,7 @@ class VideoRealtimeSessionManager:
             allow_benchmark_mode=self.allow_benchmark_mode,
             parked_request_timeout_s=self.parked_request_timeout_s,
             configure_timeout_s=self.configure_timeout_s,
+            dp_rank=dp_rank,
         )
         self.sessions[session.session_id] = session
         return session
@@ -890,6 +948,7 @@ def register_video_realtime(
     allow_benchmark_mode: bool = False,
     parked_request_timeout_s: float = 300.0,
     max_sessions: int = 1,
+    replica_count: int = 1,
     configure_timeout_s: float = CONFIGURE_TIMEOUT_S,
 ) -> None:
     manager = VideoRealtimeSessionManager(
@@ -898,6 +957,7 @@ def register_video_realtime(
         allow_benchmark_mode=allow_benchmark_mode,
         parked_request_timeout_s=parked_request_timeout_s,
         max_sessions=max_sessions,
+        replica_count=replica_count,
         configure_timeout_s=configure_timeout_s,
     )
     app.state.video_realtime_manager = manager

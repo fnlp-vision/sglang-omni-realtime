@@ -12,6 +12,7 @@ from importlib import import_module
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "Coordinator": ("sglang_omni.pipeline.coordinator", "Coordinator"),
+    "ReplicaInfo": ("sglang_omni.pipeline.coordinator", "ReplicaInfo"),
     "AggregatedInput": ("sglang_omni.pipeline.stage.input", "AggregatedInput"),
     "DirectInput": ("sglang_omni.pipeline.stage.input", "DirectInput"),
     "InputHandler": ("sglang_omni.pipeline.stage.input", "InputHandler"),

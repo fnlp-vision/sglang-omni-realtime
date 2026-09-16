@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
+import os
 import socket
 from typing import Any
 
 from sglang_omni.config.placement import (
     StagePlacementPlan,
     resolve_gpu_stage_names,
-    resolve_stage_gpu_ids,
+    resolve_stage_replica_gpu_ids,
 )
 from sglang_omni.config.runtime import (
     resolve_stage_factory_arg_defaults,
@@ -29,7 +30,9 @@ from sglang_omni.pipeline.runtime_config import (
     IpcRuntimeDir,
     PipelineRuntimePrep,
     build_comm_config,
+    comm_rank_endpoint_key,
     prepare_pipeline_runtime,
+    stage_recv_endpoint_key,
 )
 from sglang_omni.pipeline.stage_workers import (
     StageGroup,
@@ -59,13 +62,23 @@ def _build_stage_groups(
     if ctx is None:
         ctx = multiprocessing.get_context("spawn")
 
-    stage_endpoints = {s.name: endpoints[f"stage_{s.name}"] for s in stages_cfg}
+    # stage_endpoints/rank_endpoints are the name-keyed routing maps shared by
+    # every spec. Replicated (dp>1) stages own no name-keyed endpoint: traffic
+    # reaches a replica only via the Coordinator, and any name-keyed route into
+    # a replicated stage fails loudly on the missing key instead of picking an
+    # arbitrary replica.
+    stage_endpoints = {
+        s.name: endpoints[f"stage_{s.name}"]
+        for s in stages_cfg
+        if s.parallelism.dp == 1
+    }
     rank_endpoints = {
         stage.name: tuple(
             endpoints[f"comm_{stage.name}_rank{tp_rank}"]
             for tp_rank in range(stage.tp_size)
         )
         for stage in stages_cfg
+        if stage.parallelism.dp == 1
     }
     stream_receivers: set[str] = set()
     for scfg in stages_cfg:
@@ -95,8 +108,19 @@ def _build_stage_groups(
     tp_groups: list[StageGroup] = []
     for stage_cfg in stages_cfg:
         tp_size = stage_cfg.tp_size
-        gpu_ids = resolve_stage_gpu_ids(placement_plan, stage_cfg)
-        nccl_port = nccl_port_counter.allocate() if tp_size > 1 else None
+        dp_size = stage_cfg.parallelism.dp
+        replica_gpu_ids = resolve_stage_replica_gpu_ids(placement_plan, stage_cfg)
+        # One NCCL group per replica. tp>1 needs one per (replica) TP group
+        # today; a replicated (dp>1) stage needs a unique port per replica even
+        # at tp=1, because each replica's world-size-1 process group still
+        # rendezvouses on a TCPStore and two same-host replicas would collide
+        # (EADDRINUSE) on the inherited MASTER_PORT/default otherwise.
+        # dp=1 & tp=1 stays None, preserving the legacy rendezvous exactly.
+        needs_nccl_port = tp_size > 1 or dp_size > 1
+        nccl_ports = {
+            dp_rank: (nccl_port_counter.allocate() if needs_nccl_port else None)
+            for dp_rank in range(dp_size)
+        }
 
         same_process_targets = _resolve_same_process_targets(
             stage_cfg,
@@ -138,36 +162,84 @@ def _build_stage_groups(
             disable_direct_cuda_ipc_payload=stage_cfg.disable_direct_cuda_ipc_payload,
             name_map=name_map,
         )
-        if tp_size == 1:
+        if tp_size == 1 and dp_size == 1:
             single_stage_specs[stage_cfg.name] = _build_single_stage_spec(
                 stage_cfg=stage_cfg,
                 config=config,
-                gpu_id=gpu_ids[0],
+                gpu_id=replica_gpu_ids[0][0],
                 recv_endpoint=stage_endpoints[stage_cfg.name],
                 base_factory_args=base_factory_args,
                 stage_kwargs=stage_kwargs,
+                dp_rank=0,
+                dp_size=1,
             )
-        else:
-            specs = _build_tp_stage_specs(
-                ctx=ctx,
-                stage_cfg=stage_cfg,
-                config=config,
-                gpu_ids=gpu_ids,
-                nccl_port=nccl_port,
-                recv_endpoint=stage_endpoints[stage_cfg.name],
-                base_factory_args=base_factory_args,
-                stage_kwargs=stage_kwargs,
+            continue
+
+        # One process group per (dp_rank, tp_rank): replica leaders own their
+        # own recv endpoint; comm endpoints and follower queues are per replica.
+        for dp_rank in range(dp_size):
+            recv_endpoint = endpoints[
+                stage_recv_endpoint_key(stage_cfg.name, dp_size, dp_rank)
+            ]
+            replica_factory_args = dict(base_factory_args)
+            replica_kwargs = stage_kwargs
+            if dp_size > 1:
+                replica_factory_args["dp_rank"] = dp_rank
+                replica_factory_args["dp_size"] = dp_size
+                replica_kwargs = {
+                    **stage_kwargs,
+                    "rank_endpoints": {
+                        **rank_endpoints,
+                        stage_cfg.name: tuple(
+                            endpoints[
+                                comm_rank_endpoint_key(
+                                    stage_cfg.name, dp_size, dp_rank, tp_rank
+                                )
+                            ]
+                            for tp_rank in range(tp_size)
+                        ),
+                    },
+                }
+            group_name = (
+                stage_cfg.name if dp_size == 1 else f"{stage_cfg.name}_dp{dp_rank}"
             )
+            if tp_size == 1:
+                specs = [
+                    _build_single_stage_spec(
+                        stage_cfg=stage_cfg,
+                        config=config,
+                        gpu_id=replica_gpu_ids[dp_rank][0],
+                        recv_endpoint=recv_endpoint,
+                        base_factory_args=replica_factory_args,
+                        stage_kwargs=replica_kwargs,
+                        dp_rank=dp_rank,
+                        dp_size=dp_size,
+                        nccl_port=nccl_ports[dp_rank],
+                    )
+                ]
+            else:
+                specs = _build_tp_stage_specs(
+                    ctx=ctx,
+                    stage_cfg=stage_cfg,
+                    config=config,
+                    gpu_ids=replica_gpu_ids[dp_rank],
+                    nccl_port=nccl_ports[dp_rank],
+                    recv_endpoint=recv_endpoint,
+                    base_factory_args=replica_factory_args,
+                    stage_kwargs=replica_kwargs,
+                    dp_rank=dp_rank,
+                    dp_size=dp_size,
+                )
             process_specs = [
                 StageWorkerProcessSpec(
                     process_name=process_plan.tp_stage_to_processes[stage_cfg.name][
-                        spec.tp_rank
+                        dp_rank * tp_size + spec.tp_rank
                     ],
                     stage_specs=[spec],
                 )
                 for spec in specs
             ]
-            tp_groups.append(StageGroup(stage_cfg.name, process_specs))
+            tp_groups.append(StageGroup(group_name, process_specs))
 
     groups: list[StageGroup] = []
     for group in process_plan.groups:
@@ -222,6 +294,24 @@ def _attach_process_memory_fraction_defaults(groups: list[StageGroup]) -> None:
                     ] = process_loaded_fraction
 
 
+def _replica_capacity(
+    group: StageGroup, stage_name: str, dp_rank: int
+) -> int | None:
+    """Admission hint for replica selection: the replica's max_running_requests.
+
+    ``None`` (no hint) keeps replica selection as plain round-robin.
+    """
+    for spec in group.specs:
+        if (
+            spec.stage_name == stage_name
+            and spec.dp_rank == dp_rank
+            and spec.owns_external_io
+        ):
+            capacity = spec.factory_args.get("max_running_requests")
+            return int(capacity) if capacity is not None else None
+    return None
+
+
 def _resolve_same_process_targets(
     stage_cfg: StageConfig,
     stage_cfg_by_name: dict[str, StageConfig],
@@ -260,16 +350,25 @@ def _build_single_stage_spec(
     recv_endpoint: str,
     base_factory_args: dict[str, Any],
     stage_kwargs: dict[str, Any],
+    dp_rank: int = 0,
+    dp_size: int = 1,
+    nccl_port: int | None = None,
 ) -> StageLaunchConfig:
     factory_args = dict(base_factory_args)
+    # The per-replica rendezvous port is only injected for replicated stages;
+    # dp=1 keeps the legacy None so the worker resolves its own port.
+    if nccl_port is not None:
+        factory_args["nccl_port"] = nccl_port
     comm_config = _resolve_comm_config(stage_cfg, gpu_id=gpu_id)
     return StageLaunchConfig(
         role="single",
         tp_rank=0,
         tp_size=1,
+        dp_rank=dp_rank,
+        dp_size=dp_size,
         placement_gpu_id=gpu_id,
         gpu_id=gpu_id,
-        nccl_port=None,
+        nccl_port=nccl_port,
         factory_args=factory_args,
         factory_arg_defaults=resolve_stage_factory_arg_defaults(
             stage_cfg, config, gpu_id=gpu_id
@@ -290,6 +389,8 @@ def _build_tp_stage_specs(
     recv_endpoint: str,
     base_factory_args: dict[str, Any],
     stage_kwargs: dict[str, Any],
+    dp_rank: int = 0,
+    dp_size: int = 1,
 ) -> list[StageLaunchConfig]:
     follower_work_queues = [ctx.Queue() for _ in range(stage_cfg.tp_size - 1)]
     follower_abort_queues = [ctx.Queue() for _ in range(stage_cfg.tp_size - 1)]
@@ -313,6 +414,8 @@ def _build_tp_stage_specs(
                     role="leader",
                     tp_rank=tp_rank,
                     tp_size=stage_cfg.tp_size,
+                    dp_rank=dp_rank,
+                    dp_size=dp_size,
                     placement_gpu_id=gpu_id,
                     gpu_id=gpu_id,
                     nccl_port=nccl_port,
@@ -336,6 +439,8 @@ def _build_tp_stage_specs(
                 role="follower",
                 tp_rank=tp_rank,
                 tp_size=stage_cfg.tp_size,
+                dp_rank=dp_rank,
+                dp_size=dp_size,
                 placement_gpu_id=gpu_id,
                 gpu_id=gpu_id,
                 nccl_port=nccl_port,
@@ -368,9 +473,15 @@ def _resolve_comm_config(
 
 
 class _NcclPortAllocator:
-    """Allocate unique NCCL ports for per-stage TP groups."""
+    """Allocate unique NCCL ports for per-stage per-replica TP groups.
 
-    def __init__(self, base_port: int = 29500):
+    The base port can be overridden with SGLANG_OMNI_NCCL_PORT_BASE so two
+    servers sharing a host do not race over the same port window.
+    """
+
+    def __init__(self, base_port: int | None = None):
+        if base_port is None:
+            base_port = int(os.environ.get("SGLANG_OMNI_NCCL_PORT_BASE", "29500"))
         self._next = base_port
 
     def allocate(self) -> int:
@@ -420,7 +531,17 @@ class MultiProcessPipelineRunner:
             raise RuntimeError("Runner not started")
         endpoints: dict[str, str] = {}
         for group in self._groups:
-            endpoints.update(group.stage_control_endpoints)
+            for stage_name, dp_rank, endpoint in group.stage_replica_control_endpoints:
+                # Replicated stages key by replica so profiler/admin broadcasts
+                # reach every replica; single-replica keys stay name-only.
+                group_dp_size = next(
+                    (s.dp_size for s in group.specs if s.stage_name == stage_name),
+                    1,
+                )
+                key = (
+                    stage_name if group_dp_size == 1 else f"{stage_name}_dp{dp_rank}"
+                )
+                endpoints[key] = endpoint
         return endpoints
 
     async def start(self, timeout: float = 120.0) -> None:
@@ -481,8 +602,17 @@ class MultiProcessPipelineRunner:
                     )
 
             for group in self._groups:
-                for stage_name, endpoint in group.stage_control_endpoints.items():
-                    self._coordinator.register_stage(stage_name, endpoint)
+                for (
+                    stage_name,
+                    dp_rank,
+                    endpoint,
+                ) in group.stage_replica_control_endpoints:
+                    self._coordinator.register_stage(
+                        stage_name,
+                        endpoint,
+                        dp_rank=dp_rank,
+                        capacity=_replica_capacity(group, stage_name, dp_rank),
+                    )
 
             self._started = True
             self._monitor_task = asyncio.create_task(self._monitor_children())

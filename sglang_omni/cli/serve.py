@@ -452,9 +452,33 @@ def _parse_gpu_placement(flag_name: str, value: str) -> int | list[int]:
     return gpus[0] if len(gpus) == 1 else gpus
 
 
-def _validate_stage_parallelism_config(stage_name: str, tp_size: int, gpu) -> None:
+def _validate_stage_parallelism_config(
+    stage_name: str,
+    tp_size: int,
+    gpu,
+    dp_size: int = 1,
+) -> None:
     if tp_size < 1:
         raise typer.BadParameter(f"{stage_name}_tp_size must be >= 1")
+    if dp_size < 1:
+        raise typer.BadParameter("--dp-size must be >= 1")
+    if dp_size > 1:
+        expected_gpu_count = tp_size * dp_size
+        if not isinstance(gpu, list):
+            raise typer.BadParameter(
+                f"{stage_name}_gpus must provide {expected_gpu_count} GPU ids "
+                f"(tp_size={tp_size} x dp_size={dp_size}), got {gpu!r}"
+            )
+        if len(gpu) != expected_gpu_count:
+            raise typer.BadParameter(
+                f"{stage_name}_gpus must contain exactly {expected_gpu_count} "
+                f"GPU ids when tp_size={tp_size} and dp_size={dp_size}"
+            )
+        if len(set(gpu)) != len(gpu):
+            raise typer.BadParameter(
+                f"{stage_name}_gpus must not contain duplicate GPU ids"
+            )
+        return
     if tp_size == 1:
         if isinstance(gpu, list) and len(gpu) != 1:
             raise typer.BadParameter(
@@ -649,6 +673,7 @@ def apply_parallelism_cli_overrides(
     thinker_gpus: str | None,
     image_encoder_tp_size: int | None = None,
     image_encoder_gpus: str | None = None,
+    dp_size: int | None = None,
     talker_gpu: int | None,
     code2wav_gpu: int | None,
 ) -> PipelineConfig:
@@ -669,8 +694,10 @@ def apply_parallelism_cli_overrides(
                 stage.parallelism.tp = stage.tp_size
             if thinker_gpu_override is not None:
                 stage.gpu = thinker_gpu_override
-            _validate_stage_parallelism_config("thinker", stage.tp_size, stage.gpu)
-            if stage.tp_size == 1 and isinstance(stage.gpu, list):
+            _validate_stage_parallelism_config(
+                "thinker", stage.tp_size, stage.gpu, stage.dp_size
+            )
+            if stage.tp_size == 1 and stage.dp_size == 1 and isinstance(stage.gpu, list):
                 stage.gpu = int(stage.gpu[0])
 
     image_encoder_gpu_override = (
@@ -691,10 +718,21 @@ def apply_parallelism_cli_overrides(
             if image_encoder_gpu_override is not None:
                 stage.gpu = image_encoder_gpu_override
             _validate_stage_parallelism_config(
-                "image_encoder", stage.tp_size, stage.gpu
+                "image_encoder", stage.tp_size, stage.gpu, stage.dp_size
             )
-            if stage.tp_size == 1 and isinstance(stage.gpu, list):
+            if stage.tp_size == 1 and stage.dp_size == 1 and isinstance(stage.gpu, list):
                 stage.gpu = int(stage.gpu[0])
+
+    if dp_size is not None:
+        entry_stage_name = pipeline_config.resolved_entry_stage
+        entry_stage = next(
+            stage for stage in pipeline_config.stages if stage.name == entry_stage_name
+        )
+        entry_stage.dp_size = int(dp_size)
+        entry_stage.parallelism.dp = entry_stage.dp_size
+        _validate_stage_parallelism_config(
+            entry_stage.name, entry_stage.tp_size, entry_stage.gpu, entry_stage.dp_size
+        )
 
     talker_stage = (
         _resolve_talker_stage(
@@ -1212,6 +1250,17 @@ def serve(
             help="GPU ids for image_encoder TP ranks, e.g. '4,5' or '[4, 5]'.",
         ),
     ] = None,
+    dp_size: Annotated[
+        int | None,
+        typer.Option(
+            "--dp-size",
+            "--dp_size",
+            help=(
+                "Number of data-parallel replicas for the entry stage "
+                "(native DP; stage-level override: stages.<name>.parallelism.dp)."
+            ),
+        ),
+    ] = None,
     talker_gpu: Annotated[
         int | None,
         typer.Option(
@@ -1481,6 +1530,7 @@ def serve(
         thinker_gpus=thinker_gpus,
         image_encoder_tp_size=image_encoder_tp_size,
         image_encoder_gpus=image_encoder_gpus,
+        dp_size=dp_size,
         talker_gpu=talker_gpu,
         code2wav_gpu=code2wav_gpu,
     )

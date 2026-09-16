@@ -378,6 +378,8 @@ class CoordinatorControlPlane:
 
         self._completion_socket: PullSocket | None = None
         self._abort_socket: PubSocket | None = None
+        # Keyed by endpoint, not stage name: data-parallel replicas of one
+        # stage name each own a distinct PUSH socket.
         self._stage_sockets: dict[str, PushSocket] = {}
 
     async def start(self) -> None:
@@ -398,13 +400,14 @@ class CoordinatorControlPlane:
         stage_endpoint: str,
         msg: SubmitMessage | RequestUpdateMessage | AdminMessage | ShutdownMessage,
     ) -> None:
-        """Submit a request to a stage."""
-        if stage_name not in self._stage_sockets:
+        """Submit a request to a stage replica endpoint."""
+        del stage_name  # sockets are per-endpoint; the name is informational
+        if stage_endpoint not in self._stage_sockets:
             sock = PushSocket(stage_endpoint)
             await sock.connect()
-            self._stage_sockets[stage_name] = sock
+            self._stage_sockets[stage_endpoint] = sock
 
-        await self._stage_sockets[stage_name].send(msg)
+        await self._stage_sockets[stage_endpoint].send(msg)
 
     async def recv_event(self) -> CompleteMessage | StreamMessage | AdminResultMessage:
         """Receive completion or stream event from a stage."""
@@ -431,13 +434,8 @@ class CoordinatorControlPlane:
         await self._abort_socket.publish(msg)
 
     async def send_shutdown(self, stage_name: str, stage_endpoint: str) -> None:
-        """Send shutdown message to a stage."""
-        if stage_name not in self._stage_sockets:
-            sock = PushSocket(stage_endpoint)
-            await sock.connect()
-            self._stage_sockets[stage_name] = sock
-
-        await self._stage_sockets[stage_name].send(ShutdownMessage())
+        """Send shutdown message to a stage replica endpoint."""
+        await self.submit_to_stage(stage_name, stage_endpoint, ShutdownMessage())
 
     def close(self) -> None:
         """Close all sockets."""

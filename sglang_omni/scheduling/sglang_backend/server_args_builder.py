@@ -43,9 +43,15 @@ def build_sglang_server_args(
     max_prefill_tokens: int = 16384,
     max_running_requests: int = 16,
     mem_fraction_static: float | None = None,
+    allow_native_dp: bool = False,
     **overrides: Any,
 ) -> ServerArgs:
-    """Build ServerArgs with shared defaults for all SGLang AR engines."""
+    """Build ServerArgs with shared defaults for all SGLang AR engines.
+
+    ``allow_native_dp`` is reserved for the pipeline's own per-replica
+    scheduler construction; it marks ``dp_size`` as system-injected rather
+    than a raw server_args override.
+    """
     kwargs: dict[str, Any] = {
         "model_path": model_path,
         "trust_remote_code": True,
@@ -73,6 +79,16 @@ def build_sglang_server_args(
     # chunked prefill stays allowed (the bridge handles it natively).
     if server_args.enable_dp_attention:
         raise ValueError("sglang-omni does not support enable_dp_attention")
+    # Native data parallelism is owned by the pipeline (parallelism.dp):
+    # rejecting raw dp_size overrides keeps a misconfiguration from silently
+    # computing parallel state for a world that mp_runner never launched.
+    if getattr(server_args, "dp_size", 1) > 1 and not allow_native_dp:
+        raise ValueError(
+            "sglang-omni does not accept dp_size > 1 through server_args "
+            "overrides; enable native data parallelism via the pipeline "
+            "parallelism config (parallelism.dp / --dp-size), or run "
+            "multiple instances behind sgl-omni-router"
+        )
     return server_args
 
 

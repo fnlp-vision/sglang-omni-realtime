@@ -26,6 +26,10 @@ class RequestInfo:
     terminal_stages: set[str] | None = None
     result: Any = None
     error: str | None = None
+    # Data-parallel ownership: the entry-stage replica this request was
+    # admitted to. ``None`` for pipelines without native DP (dp_size == 1).
+    owner_endpoint: str | None = None
+    owner_dp_rank: int | None = None
 
 
 EXPLICIT_GENERATION_PARAMS_KEY = "explicit_generation_params"

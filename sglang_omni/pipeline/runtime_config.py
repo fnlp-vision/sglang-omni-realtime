@@ -157,6 +157,22 @@ def build_comm_config(
     }
 
 
+def stage_recv_endpoint_key(stage_name: str, dp_size: int, dp_rank: int) -> str:
+    """Endpoint key for one stage replica's external-I/O inbox."""
+    if dp_size == 1:
+        return f"stage_{stage_name}"
+    return f"stage_{stage_name}_dp{dp_rank}"
+
+
+def comm_rank_endpoint_key(
+    stage_name: str, dp_size: int, dp_rank: int, tp_rank: int
+) -> str:
+    """Endpoint key for one replica's per-TP-rank comm socket."""
+    if dp_size == 1:
+        return f"comm_{stage_name}_rank{tp_rank}"
+    return f"comm_{stage_name}_dp{dp_rank}_rank{tp_rank}"
+
+
 def allocate_endpoints(
     *,
     stages: list[StageConfig],
@@ -169,10 +185,15 @@ def allocate_endpoints(
         "abort": f"ipc://{base_dir}/abort.sock",
     }
     for stage in stages:
-        endpoints[f"stage_{stage.name}"] = f"ipc://{base_dir}/stage_{stage.name}.sock"
-        for tp_rank in range(stage.tp_size):
-            endpoint_name = f"comm_{stage.name}_rank{tp_rank}"
-            endpoints[endpoint_name] = f"ipc://{base_dir}/{endpoint_name}.sock"
+        dp_size = stage.parallelism.dp
+        for dp_rank in range(dp_size):
+            recv_key = stage_recv_endpoint_key(stage.name, dp_size, dp_rank)
+            endpoints[recv_key] = f"ipc://{base_dir}/{recv_key}.sock"
+            for tp_rank in range(stage.tp_size):
+                endpoint_name = comm_rank_endpoint_key(
+                    stage.name, dp_size, dp_rank, tp_rank
+                )
+                endpoints[endpoint_name] = f"ipc://{base_dir}/{endpoint_name}.sock"
     return endpoints
 
 
@@ -225,10 +246,15 @@ def _validate_ipc_endpoint_budget(
 
 def _longest_endpoint_suffix_len(stages: list[StageConfig]) -> int:
     suffixes = [len("/completion.sock"), len("/abort.sock")]
-    suffixes.extend(len(f"/stage_{stage.name}.sock") for stage in stages)
-    suffixes.extend(
-        len(f"/comm_{stage.name}_rank{stage.tp_size - 1}.sock") for stage in stages
-    )
+    for stage in stages:
+        dp_size = stage.parallelism.dp
+        suffixes.append(
+            len(f"/{stage_recv_endpoint_key(stage.name, dp_size, dp_size - 1)}.sock")
+        )
+        longest_comm_key = comm_rank_endpoint_key(
+            stage.name, dp_size, dp_size - 1, stage.tp_size - 1
+        )
+        suffixes.append(len(f"/{longest_comm_key}.sock"))
     return max(suffixes)
 
 

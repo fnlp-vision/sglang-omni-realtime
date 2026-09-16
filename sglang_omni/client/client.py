@@ -59,11 +59,21 @@ class Client:
         self,
         request: GenerateRequest,
         request_id: str | None = None,
+        *,
+        dp_rank: int | None = None,
     ) -> AsyncIterator[GenerateChunk]:
         req_id = request_id or str(uuid.uuid4())
         omni_request = self._build_omni_request(request)
         if request.stream:
-            coordinator_stream = self._coordinator.stream(req_id, omni_request)
+            # Keep the unpinned call byte-compatible with the original
+            # coordinator.stream(req_id, request) signature (test doubles and
+            # out-of-tree coordinators do not take dp_rank).
+            if dp_rank is None:
+                coordinator_stream = self._coordinator.stream(req_id, omni_request)
+            else:
+                coordinator_stream = self._coordinator.stream(
+                    req_id, omni_request, dp_rank=dp_rank
+                )
             async with aclosing(coordinator_stream):
                 async for msg in coordinator_stream:
                     if isinstance(msg, StreamMessage):

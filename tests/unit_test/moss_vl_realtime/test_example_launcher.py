@@ -101,3 +101,108 @@ def test_launcher_does_not_expose_paged_kv(monkeypatch) -> None:
             "--kv-page-size",
             "16",
         )
+
+
+def test_launcher_accepts_dp_replicas_with_distinct_gpus(monkeypatch) -> None:
+    args = _parse(
+        monkeypatch,
+        "--model-path",
+        "/models/x",
+        "--dp-size",
+        "2",
+        "--gpus",
+        "0,2",
+    )
+
+    assert args.dp_size == 2
+    assert args.gpus == [0, 2]
+
+
+def test_launcher_accepts_tp_times_dp_placement(monkeypatch) -> None:
+    args = _parse(
+        monkeypatch,
+        "--model-path",
+        "/models/x",
+        "--tp-size",
+        "2",
+        "--dp-size",
+        "2",
+        "--gpus",
+        "0,1,4,5",
+    )
+
+    assert args.gpus == [0, 1, 4, 5]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--dp-size", "0", "--gpus", "0,1"),
+        ("--dp-size", "2"),
+        ("--dp-size", "2", "--gpu", "1"),
+        ("--dp-size", "2", "--gpus", "0"),
+        ("--dp-size", "2", "--gpus", "0,0"),
+    ],
+)
+def test_launcher_rejects_invalid_dp_placement(monkeypatch, argv) -> None:
+    with pytest.raises(SystemExit):
+        _parse(monkeypatch, "--model-path", "/models/x", *argv)
+
+
+def test_dp2_boot_resolves_per_replica_factory_args(monkeypatch, tmp_path) -> None:
+    """The ws_benchmark/start.sh boot path: --dp-size 2 --gpus 0,1 must reach
+    each replica as per-replica factory args (dp_rank/dp_size/nccl_port)."""
+    import tempfile as _tempfile
+
+    from sglang_omni.pipeline.mp_runner import _build_stage_groups
+    from sglang_omni.pipeline.runtime_config import prepare_pipeline_runtime
+    from sglang_omni.serve import launcher as serve_launcher
+    from tests.unit_test.fixtures.pipeline_fakes import FakeMpContext
+
+    captured = {}
+
+    def fake_launch_server(config, **kwargs):
+        captured["config"] = config
+
+    monkeypatch.setattr(serve_launcher, "launch_server", fake_launch_server)
+    monkeypatch.setattr(
+        _LAUNCHER.sys,
+        "argv",
+        [
+            "run_moss_vl_realtime_server.py",
+            "--model-path",
+            "/models/x",
+            "--dp-size",
+            "2",
+            "--gpus",
+            "0,1",
+        ],
+    )
+
+    _LAUNCHER.main()
+    config = captured["config"]
+
+    with _tempfile.TemporaryDirectory() as run_dir:
+        config.endpoints.base_path = run_dir
+        prep = prepare_pipeline_runtime(config)
+        try:
+            groups = _build_stage_groups(
+                config,
+                ctx=FakeMpContext(),
+                stages_cfg=prep.stages_cfg,
+                name_map=prep.name_map,
+                endpoints=prep.endpoints,
+                placement_plan=prep.placement_plan,
+                process_plan=prep.process_plan,
+            )
+        finally:
+            prep.runtime_dir.close()
+
+    assert len(groups) == 2
+    for dp_rank, group in enumerate(groups):
+        spec = group.specs[0]
+        assert spec.factory_args["dp_rank"] == dp_rank
+        assert spec.factory_args["dp_size"] == 2
+        assert isinstance(spec.factory_args["nccl_port"], int)
+        other = groups[1 - dp_rank].specs[0].factory_args["nccl_port"]
+        assert spec.factory_args["nccl_port"] != other

@@ -39,7 +39,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gpus",
         default=None,
-        help="Comma-separated GPU ids for TP deployment, one GPU per rank.",
+        help="Comma-separated GPU ids for TP deployment, one GPU per rank. "
+        "With --dp-size, one GPU per (replica, rank): exactly "
+        "tp_size * dp_size ids.",
+    )
+    parser.add_argument(
+        "--dp-size",
+        type=int,
+        default=1,
+        help="Data-parallel replicas of the entry stage; each replica is an "
+        "independent engine (its own TP group when --tp-size > 1) with its own "
+        "session slots. Sessions are pinned to one replica for their lifetime.",
     )
     parser.add_argument("--mem-fraction-static", type=float, default=0.40)
     parser.add_argument("--context-length", type=int, default=262144)
@@ -103,21 +113,30 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.tp_size < 1:
         parser.error("--tp-size must be at least 1")
+    if args.dp_size < 1:
+        parser.error("--dp-size must be at least 1")
     if args.max_running_requests < 1:
         parser.error("--max-running-requests must be at least 1")
-    if args.tp_size > 1:
+    parallelism = args.tp_size * args.dp_size
+    if parallelism > 1:
         if args.gpus is None:
-            parser.error("--tp-size > 1 requires --gpus")
+            parser.error("--tp-size/--dp-size above 1 requires --gpus")
         try:
             args.gpus = [int(value.strip()) for value in args.gpus.split(",")]
         except ValueError:
             parser.error("--gpus must be a comma-separated list of integers")
-        if len(args.gpus) != args.tp_size:
-            parser.error("--gpus must contain exactly --tp-size GPU ids")
+        if len(args.gpus) != parallelism:
+            parser.error(
+                f"--gpus must contain exactly tp_size * dp_size "
+                f"({args.tp_size} * {args.dp_size} = {parallelism}) GPU ids"
+            )
         if len(set(args.gpus)) != len(args.gpus):
             parser.error("--gpus must not contain duplicate GPU ids")
     elif args.gpus is not None:
-        parser.error("--gpus only applies when --tp-size > 1; use --gpu for TP=1")
+        parser.error(
+            "--gpus only applies when --tp-size/--dp-size > 1; "
+            "use --gpu for a single replica"
+        )
     if args.decode_cuda_graph and args.decode_attention_backend not in (
         None,
         backend,
@@ -144,13 +163,18 @@ def main() -> None:
     backend = preferred_attention_backend()
     config = MossVLRealtimePipelineConfig(model_path=args.model_path)
     stage = config.stages[0]
-    stage.gpu = args.gpus if args.tp_size > 1 else args.gpu
+    stage.gpu = args.gpus if args.tp_size * args.dp_size > 1 else args.gpu
     stage.tp_size = args.tp_size
     stage.parallelism.tp = args.tp_size
+    stage.dp_size = args.dp_size
+    stage.parallelism.dp = args.dp_size
     factory_args = dict(stage.factory_args)
     factory_args.update(
         {
-            "device": device_spec(0) if args.tp_size > 1 else device_spec(args.gpu),
+            "device": (
+                device_spec(0) if args.tp_size * args.dp_size > 1
+                else device_spec(args.gpu)
+            ),
             "mem_fraction_static": args.mem_fraction_static,
             "context_length": args.context_length,
             "max_new_tokens": args.max_new_tokens,

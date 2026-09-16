@@ -55,6 +55,7 @@ class ModelWorker:
         server_args: ServerArgs,
         gpu_id: int,
         tp_rank: int = 0,
+        dp_rank: int | None = None,
     ):
         self.server_args = server_args
         self.model_arch_override = config.model_arch_override
@@ -65,6 +66,7 @@ class ModelWorker:
 
         self.gpu_id = gpu_id
         self.tp_rank = tp_rank
+        self.dp_rank = dp_rank
         self._init_model_config()
         self._configure_backend_policy()
         self._init_model_runner()
@@ -233,6 +235,7 @@ class ModelWorker:
             model_arch_override=self.model_arch_override,
             weight_prefix=self.weight_prefix,
             total_gpu_memory_fraction=self.total_gpu_memory_fraction,
+            dp_rank=self.dp_rank,
         )
 
     def _init_dllm_algorithm(self):

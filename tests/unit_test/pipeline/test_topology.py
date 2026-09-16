@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from sglang_omni.config import (
+    ParallelismConfig,
     PipelineConfig,
     StageConfig,
     StageResourceConfig,
@@ -1222,3 +1223,85 @@ def test_tp_process_names_must_be_unique_across_tp_stages() -> None:
 
     with pytest.raises(ValueError, match="Duplicate TP process names"):
         build_process_topology_plan(config, gpu_placement)
+
+
+def test_dp1_replica_process_view_wraps_existing_tp_names() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[_stage("thinker", gpu=[0, 1], tp_size=2, terminal=True)],
+    )
+
+    topology = _topology(config)
+
+    assert topology.tp_stage_to_processes == {"thinker": ("thinker_tp0", "thinker_tp1")}
+    assert topology.stage_replica_to_processes == {
+        "thinker": (("thinker_tp0", "thinker_tp1"),)
+    }
+
+
+def test_dp_process_names_carry_the_replica_axis() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[
+            StageConfig(
+                name="ar",
+                factory=_FACTORY,
+                gpu=[0, 1],
+                parallelism=ParallelismConfig(dp=2),
+                terminal=True,
+            )
+        ],
+    )
+
+    topology = _topology(config)
+
+    assert topology.groups == ()
+    assert topology.tp_stage_to_processes == {"ar": ("ar_dp0", "ar_dp1")}
+    assert topology.stage_replica_to_processes == {"ar": (("ar_dp0",), ("ar_dp1",))}
+
+
+def test_dp_tp_process_names_are_replica_major() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[
+            StageConfig(
+                name="thinker",
+                process="model",
+                factory=_FACTORY,
+                gpu=[0, 1, 2, 3],
+                parallelism=ParallelismConfig(tp=2, dp=2),
+                terminal=True,
+            )
+        ],
+    )
+
+    topology = _topology(config)
+
+    assert topology.tp_stage_to_processes == {
+        "thinker": ("model_dp0_tp0", "model_dp0_tp1", "model_dp1_tp0", "model_dp1_tp1")
+    }
+    assert topology.stage_replica_to_processes == {
+        "thinker": (
+            ("model_dp0_tp0", "model_dp0_tp1"),
+            ("model_dp1_tp0", "model_dp1_tp1"),
+        )
+    }
+
+
+def test_dp_replicas_sharing_a_gpu_with_others_require_memory_budgets() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[
+            StageConfig(
+                name="ar",
+                factory=_FACTORY,
+                gpu=[0, 1],
+                parallelism=ParallelismConfig(dp=2),
+                terminal=True,
+            ),
+            _stage("preprocess", gpu=0, fraction=0.1, process="pre", next_stage="ar"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="without runtime.resources"):
+        _topology(config)

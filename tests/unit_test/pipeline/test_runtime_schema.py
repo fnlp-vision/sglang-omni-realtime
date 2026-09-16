@@ -103,3 +103,54 @@ def test_pipeline_accepts_placement_config() -> None:
 def test_invalid_placement_limit_raises() -> None:
     with pytest.raises(ValueError, match="max_total_gpu_memory_fraction_per_gpu"):
         PlacementConfig(max_total_gpu_memory_fraction_per_gpu=1.1)
+
+
+def test_dp_size_normalizes_into_parallelism_dp() -> None:
+    stage = _stage(dp_size=2, gpu=[0, 1])
+
+    assert stage.dp_size == 2
+    assert stage.parallelism.dp == 2
+
+
+def test_parallelism_dp_normalizes_back_to_dp_size() -> None:
+    stage = _stage(parallelism=ParallelismConfig(dp=2), gpu=[0, 1])
+
+    assert stage.dp_size == 2
+    assert stage.parallelism.dp == 2
+
+
+def test_conflicting_dp_size_and_parallelism_dp_raise() -> None:
+    with pytest.raises(ValueError, match="conflicts"):
+        _stage(dp_size=2, parallelism=ParallelismConfig(dp=3), gpu=[0, 1, 2])
+
+
+def test_parallelism_dp_must_be_at_least_one() -> None:
+    with pytest.raises(ValueError, match="parallelism.dp must be >= 1"):
+        ParallelismConfig(dp=0)
+    with pytest.raises(ValueError, match="dp_size >= 1"):
+        _stage(dp_size=0)
+
+
+def test_stage_gpu_list_must_provide_one_gpu_per_dp_tp_rank() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[_stage(tp_size=2, dp_size=2, gpu=[0, 1, 2, 3], process=None)],
+    )
+
+    assert config.stages[0].gpu == [0, 1, 2, 3]
+
+    with pytest.raises(ValueError, match="tp_size \\* dp_size"):
+        PipelineConfig(
+            model_path="dummy",
+            stages=[_stage(tp_size=2, dp_size=2, gpu=[0, 1], process=None)],
+        )
+
+
+def test_non_tp_dp_stage_does_not_require_process() -> None:
+    config = PipelineConfig(
+        model_path="dummy",
+        stages=[_stage(dp_size=2, gpu=[0, 1], process=None)],
+    )
+
+    assert config.stages[0].process is None
+    assert config.stages[0].parallelism.dp == 2

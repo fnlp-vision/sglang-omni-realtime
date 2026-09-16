@@ -51,6 +51,8 @@ class SGLangGenerationEngineBuilder(ABC):
         gpu_id: int | None = None,
         tp_rank: int = 0,
         tp_size: int = 1,
+        dp_rank: int = 0,
+        dp_size: int = 1,
         nccl_port: int | None = None,
         dtype: str = "bfloat16",
         server_args_overrides: dict[str, Any] | None = None,
@@ -81,6 +83,12 @@ class SGLangGenerationEngineBuilder(ABC):
             raise ValueError(f"tp_rank must be in [0, {tp_size}), got {tp_rank}")
         if tp_size > 1 and nccl_port is None:
             raise ValueError("nccl_port is required when tp_size > 1")
+        dp_rank = int(dp_rank)
+        dp_size = int(dp_size)
+        if dp_size < 1:
+            raise ValueError("dp_size must be at least 1")
+        if not 0 <= dp_rank < dp_size:
+            raise ValueError(f"dp_rank must be in [0, {dp_size}), got {dp_rank}")
 
         self.pre_infra_setup(checkpoint_dir)
 
@@ -98,6 +106,19 @@ class SGLangGenerationEngineBuilder(ABC):
                 f"{configured_tp_size} != {tp_size}"
             )
         overrides["tp_size"] = tp_size
+        configured_dp_size = overrides.get("dp_size")
+        if configured_dp_size is not None and int(configured_dp_size) != dp_size:
+            raise ValueError(
+                "server_args_overrides dp_size conflicts with stage placement: "
+                f"{configured_dp_size} != {dp_size}"
+            )
+        if dp_size > 1:
+            # Placement-injected native DP: the replica world was actually
+            # launched by mp_runner, which is what allows the raw-override
+            # guard in build_sglang_server_args to stand down.
+            overrides["dp_size"] = dp_size
+        self.dp_rank = dp_rank if dp_size > 1 else None
+        self.dp_size = dp_size
         self.adjust_overrides(overrides)
         # Left unset, SGLang re-detects off a CUDA-first ladder that can contradict
         # placement. It owns the type, not the index.
@@ -114,6 +135,7 @@ class SGLangGenerationEngineBuilder(ABC):
         server_args = sglang_backend.build_sglang_server_args(
             checkpoint_dir,
             context_length=self.context_length,
+            allow_native_dp=dp_size > 1,
             **overrides,
         )
         self.customize_server_args(server_args)
@@ -122,7 +144,13 @@ class SGLangGenerationEngineBuilder(ABC):
         infra_kwargs = dict(self.infra_kwargs())
         if tp_size > 1:
             infra_kwargs.setdefault("tp_rank", tp_rank)
+        if nccl_port is not None:
+            # Replicated stages pin a per-replica rendezvous port even at
+            # tp=1: each replica builds a world-size-1 process group whose
+            # TCPStore otherwise collides on the shared default/MASTER_PORT.
             infra_kwargs.setdefault("nccl_port", nccl_port)
+        if dp_size > 1:
+            infra_kwargs.setdefault("dp_rank", dp_rank)
         if self.model_arch_override is not None:
             infra_kwargs.setdefault("model_arch_override", self.model_arch_override)
         prefill_graph_backend = get_prefill_cuda_graph_backend(server_args)
@@ -366,6 +394,7 @@ class SGLangGenerationEngineBuilder(ABC):
             "result_adapter": result_adapter,
             "abort_callback": self.make_abort_callback(),
             "request_finished_callback": self.make_request_finished_callback(),
+            "dp_rank": self.dp_rank,
         }
         scheduler_kwargs.update(self.extra_scheduler_callbacks())
         scheduler_kwargs.update(extra_scheduler_kwargs)
@@ -458,6 +487,9 @@ class TtsEngineBuilder(SGLangGenerationEngineBuilder):
             result_adapter=result_adapter,
             abort_callback=self.make_abort_callback(),
             request_finished_callback=self.make_request_finished_callback(),
+            # build() sets self.dp_rank when dp_size is resolved; compat paths
+            # that never call build() stay at None (unreplicated default).
+            dp_rank=getattr(self, "dp_rank", None),
             **self.extra_scheduler_kwargs(),
         )
 

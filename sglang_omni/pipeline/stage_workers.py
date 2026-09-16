@@ -50,6 +50,8 @@ class StageLaunchConfig:
     role: Literal["single", "leader", "follower"] = "single"
     tp_rank: int = 0
     tp_size: int = 1
+    dp_rank: int = 0
+    dp_size: int = 1
     placement_gpu_id: int | None = None
     gpu_id: int | None = None
     nccl_port: int | None = None
@@ -238,6 +240,15 @@ class StageGroup:
             for spec in self.specs
             if spec.owns_external_io
         }
+
+    @property
+    def stage_replica_control_endpoints(self) -> list[tuple[str, int, str]]:
+        """(stage_name, dp_rank, endpoint) for external-I/O owners, one per replica."""
+        return [
+            (spec.stage_name, spec.dp_rank, spec.recv_endpoint)
+            for spec in self.specs
+            if spec.owns_external_io
+        ]
 
     @property
     def processes(self) -> list[multiprocessing.Process]:
@@ -868,10 +879,14 @@ def _process_name(spec: StageWorkerProcessSpec) -> str:
         return f"process-{spec.process_name}"
     stage_spec = spec.stage_specs[0]
     if stage_spec.role == "single":
-        return f"stage-{stage_spec.stage_name}"
-    if stage_spec.role == "leader":
-        return f"stage-{stage_spec.stage_name}-leader"
-    return f"stage-{stage_spec.stage_name}-tp{stage_spec.tp_rank}-follower"
+        name = f"stage-{stage_spec.stage_name}"
+    elif stage_spec.role == "leader":
+        name = f"stage-{stage_spec.stage_name}-leader"
+    else:
+        name = f"stage-{stage_spec.stage_name}-tp{stage_spec.tp_rank}-follower"
+    if stage_spec.dp_size > 1:
+        name = f"{name}-dp{stage_spec.dp_rank}"
+    return name
 
 
 def _close_queue(q: object) -> None:

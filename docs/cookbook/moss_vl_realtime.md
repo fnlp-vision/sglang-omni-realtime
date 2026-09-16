@@ -72,6 +72,46 @@ single-consumer shared-memory frame lifecycle stays intact. A custom
 `frame_resolver` (the scheduler's Python parameter) is likewise executed only
 on rank 0 under TP.
 
+### Data-parallel replicas (`--dp-size`)
+
+`--dp-size N` replicates the realtime engine into N independent replicas
+inside one process set. Replicas do not share KV or scheduling state: each
+replica is its own TP group and owns `--tp-size` GPUs, so deployment requires
+`--gpus` with exactly `--tp-size * --dp-size` distinct ids. Example,
+two single-GPU replicas:
+
+```bash
+python examples/run_moss_vl_realtime_server.py \
+  --model-path "$MODEL_PATH" \
+  --dp-size 2 \
+  --gpus 0,1 \
+  --host 127.0.0.1 --port 18500 \
+  --context-length 131072 --mem-fraction-static 0.5 \
+  --max-running-requests 4
+```
+
+Replica semantics:
+
+- A session is pinned to one replica for its whole lifetime (configure-time
+  least-loaded admission); a parked session still holds its replica slot.
+- `shm://` frame references stay single-consumer per replica: inputs of one
+  session never reach another replica.
+- Admission rejects with `session_capacity_exceeded` (WebSocket close 1013)
+  only when every replica is full; the aggregate session cap is
+  `--max-running-requests * --dp-size` (sessions per replica stay bounded by
+  the scheduler's `max_running_requests`).
+- Startup warmup exercises every replica; the port starts listening only
+  after all replicas pass warmup.
+- Two servers sharing one host must not collide on the NCCL port window;
+  move this instance with `SGLANG_OMNI_NCCL_PORT_BASE` when needed.
+
+For file/dotted configuration instead of the flag, set
+`stages.moss_vl_realtime.parallelism.dp` and `stages.moss_vl_realtime.gpu`
+together in one merge (config file or dotted CLI pairs). Combining `--set
+stages.<stage>.gpu [...]` with `--dp-size` in the same command fails at merge
+time because the GPU list only becomes valid once `dp` is applied.
+
+
 The examples explicitly choose 128K context and a 0.5 memory fraction.
 The launcher's code defaults are listed below. Size context and concurrency
 against the available KV pool; startup reports an error if one full context
@@ -86,6 +126,7 @@ cannot fit.
 | KV page size | 1 | Fixed; realtime does not patch SGLang's paged allocator |
 | Async decode | Off | Optional `--enable-async-decode` |
 | Tensor parallelism | 1 | Use `--tp-size N --gpus g0,...,gN-1` |
+| Data parallelism | 1 | Use `--dp-size N`; replicas pin sessions and scale the session cap by N |
 | Overlap scheduling | Off | Not supported by the realtime update invariants |
 
 Use `--disable-decode-cuda-graph` to run eager decode. When decode Graph is on,

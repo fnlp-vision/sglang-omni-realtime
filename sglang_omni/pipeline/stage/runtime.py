@@ -938,6 +938,7 @@ class Stage:
                 error=None if success else "; ".join(errors) or local.error,
                 rank=0,
                 role=self.role,
+                dp_rank=getattr(self.scheduler, "dp_rank", None),
             )
             await self.control_plane.send_admin_result(AdminResultMessage(result))
             return
@@ -1016,6 +1017,7 @@ class Stage:
             error=error,
             rank=getattr(self.scheduler, "tp_rank", None),
             role=self.role,
+            dp_rank=getattr(self.scheduler, "dp_rank", None),
         )
 
     # ------------------------------------------------------------------

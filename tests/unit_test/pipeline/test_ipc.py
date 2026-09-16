@@ -6,6 +6,7 @@ import asyncio
 import signal
 from pathlib import Path
 from types import FrameType, SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -333,8 +334,8 @@ async def test_mp_runner_stop_cleans_runtime_dir(
         async def run_completion_loop(self) -> None:
             await asyncio.Event().wait()
 
-        def register_stage(self, name: str, endpoint: str) -> None:
-            del name, endpoint
+        def register_stage(self, name: str, endpoint: str, **kwargs) -> None:
+            del name, endpoint, kwargs
 
         async def shutdown_stages(self) -> None:
             return None
@@ -349,6 +350,10 @@ async def test_mp_runner_stop_cleans_runtime_dir(
         process_count = 1
         processes: list[object] = []
         stage_control_endpoints = {"preprocessing": "ipc://stage.sock"}
+        stage_replica_control_endpoints: ClassVar[list[tuple[str, int, str]]] = [
+            ("preprocessing", 0, "ipc://stage.sock")
+        ]
+        specs: ClassVar[list[object]] = []
 
         def __init__(self) -> None:
             self.shutdown_called = False

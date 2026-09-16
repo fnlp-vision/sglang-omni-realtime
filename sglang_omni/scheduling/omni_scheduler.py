@@ -211,6 +211,7 @@ class OmniScheduler:
         request_build_max_workers: int = 1,
         request_build_max_pending: int | None = None,
         shutdown_callback: Callable[[], None] | None = None,
+        dp_rank: int | None = None,
     ):
         self.inbox: _queue_mod.Queue[IncomingMessage] = _queue_mod.Queue()
         self.outbox: _queue_mod.Queue[OutgoingMessage] = _queue_mod.Queue()
@@ -276,7 +277,15 @@ class OmniScheduler:
         self.tp_size = server_args.tp_size
         self.pp_rank = 0
         self.pp_size = server_args.pp_size
-        self.dp_rank = None
+        # Native data parallelism replicates whole schedulers; there is no
+        # shared KV/attention world across replicas, so dp_rank is a pure
+        # identity label here and dp attention stays off (attn_dp == (0, 1)).
+        if server_args.dp_size > 1 and dp_rank is None:
+            raise ValueError(
+                "OmniScheduler requires an explicit dp_rank when "
+                f"server_args.dp_size={server_args.dp_size} > 1"
+            )
+        self.dp_rank = dp_rank if server_args.dp_size > 1 else None
         self.dp_size = server_args.dp_size
         self.moe_ep_rank = 0
         self.moe_ep_size = 1

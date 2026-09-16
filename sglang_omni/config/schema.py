@@ -41,10 +41,13 @@ class ParallelismConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tp: int = 1
+    dp: int = 1
 
     def model_post_init(self, __context: Any = None) -> None:
         if self.tp < 1:
             raise ValueError("parallelism.tp must be >= 1")
+        if self.dp < 1:
+            raise ValueError("parallelism.dp must be >= 1")
 
 
 class StageResourceConfig(BaseModel):
@@ -160,6 +163,7 @@ class StageConfig(BaseModel):
     # --- GPU / parallelism ---
     gpu: int | list[int] | None = None
     tp_size: int = 1
+    dp_size: int = 1
     parallelism: ParallelismConfig = Field(default_factory=ParallelismConfig)
     process: str | None = None
 
@@ -192,9 +196,12 @@ class StageConfig(BaseModel):
     def model_post_init(self, __context: Any = None) -> None:
         fields_set = self.__pydantic_fields_set__
         tp_size_set = "tp_size" in fields_set
+        dp_size_set = "dp_size" in fields_set
         parallelism_set = "parallelism" in fields_set
         if self.tp_size < 1:
             raise ValueError(f"Stage {self.name!r} must have tp_size >= 1")
+        if self.dp_size < 1:
+            raise ValueError(f"Stage {self.name!r} must have dp_size >= 1")
         if self.process is not None:
             self.process = self.process.strip()
             if not self.process:
@@ -210,6 +217,17 @@ class StageConfig(BaseModel):
             parallelism_set and not tp_size_set and self.tp_size != self.parallelism.tp
         ):
             self.tp_size = self.parallelism.tp
+        if parallelism_set and dp_size_set and self.parallelism.dp != self.dp_size:
+            raise ValueError(
+                f"Stage {self.name!r}: dp_size={self.dp_size} conflicts with "
+                f"parallelism.dp={self.parallelism.dp}"
+            )
+        if not parallelism_set and self.dp_size != self.parallelism.dp:
+            self.parallelism.dp = self.dp_size
+        elif (
+            parallelism_set and not dp_size_set and self.dp_size != self.parallelism.dp
+        ):
+            self.dp_size = self.parallelism.dp
 
 
 class AudioChunkingConfig(BaseModel):
@@ -464,10 +482,30 @@ class PipelineConfig(BaseModel):
                     f"Stage {s.name!r}: tp_size={s.tp_size} conflicts with "
                     f"parallelism.tp={s.parallelism.tp}"
                 )
-            if isinstance(s.gpu, list) and len(s.gpu) != s.tp_size:
+            if s.parallelism.dp != s.dp_size:
+                raise ValueError(
+                    f"Stage {s.name!r}: dp_size={s.dp_size} conflicts with "
+                    f"parallelism.dp={s.parallelism.dp}"
+                )
+            # Native DP replicates the entry stage; the coordinator selects a
+            # replica at admission. Mid-pipeline replicas have no defined
+            # upstream routing, so they are rejected for now.
+            if s.dp_size > 1 and s.name != entry:
+                raise ValueError(
+                    f"Stage {s.name!r}: dp_size > 1 is only supported on the "
+                    f"entry stage {entry!r}"
+                )
+            expected_gpu_count = s.tp_size * s.dp_size
+            if isinstance(s.gpu, list) and len(s.gpu) != expected_gpu_count:
+                if s.dp_size == 1:
+                    raise ValueError(
+                        f"Stage {s.name!r}: gpu has {len(s.gpu)} entries "
+                        f"but tp_size={s.tp_size}"
+                    )
                 raise ValueError(
                     f"Stage {s.name!r}: gpu has {len(s.gpu)} entries "
-                    f"but tp_size={s.tp_size}"
+                    f"but tp_size * dp_size = {expected_gpu_count} "
+                    f"(tp_size={s.tp_size}, dp_size={s.dp_size})"
                 )
             if s.wait_for:
                 if not s.merge_fn:
@@ -504,7 +542,9 @@ class PipelineConfig(BaseModel):
                 )
 
         missing_process = [
-            s.name for s in self.stages if s.tp_size == 1 and not s.process
+            s.name
+            for s in self.stages
+            if s.tp_size == 1 and s.dp_size == 1 and not s.process
         ]
         if missing_process:
             raise ValueError(

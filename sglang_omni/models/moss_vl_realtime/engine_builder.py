@@ -211,6 +211,7 @@ class MossVLRealtimeEngineBuilder(SGLangGenerationEngineBuilder):
             "result_adapter": kwargs["result_adapter"],
             "abort_callback": self.make_abort_callback(),
             "request_finished_callback": self.make_request_finished_callback(),
+            "dp_rank": self.dp_rank,
             "segment_builder": self.segment_builder,
             "frame_resolver": self.frame_resolver,
             "silence_token_ids": self.silence_token_ids,

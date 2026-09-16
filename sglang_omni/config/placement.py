@@ -19,6 +19,7 @@ class StagePlacement:
     gpu_ids: tuple[int, ...]
     tp_size: int
     total_gpu_memory_fraction: float | None
+    dp_size: int = 1
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class StagePlacementPlanner:
                 gpu_ids=gpu_ids,
                 tp_size=stage.tp_size,
                 total_gpu_memory_fraction=fraction,
+                dp_size=stage.parallelism.dp,
             )
             for gpu_id in gpu_ids:
                 gpu_entries[gpu_id].append((stage.name, fraction))
@@ -116,10 +118,27 @@ def resolve_stage_gpu_ids(
     plan: StagePlacementPlan,
     stage_cfg: StageConfig,
 ) -> list[int | None]:
+    """Return resolved GPU ids for every (dp_rank, tp_rank), dp_rank-major."""
     placement = plan.stages.get(stage_cfg.name)
     if placement is None:
-        return [None] * stage_cfg.tp_size
+        return [None] * (stage_cfg.tp_size * stage_cfg.parallelism.dp)
     return list(placement.gpu_ids)
+
+
+def resolve_stage_replica_gpu_ids(
+    plan: StagePlacementPlan,
+    stage_cfg: StageConfig,
+) -> list[list[int | None]]:
+    """Return per-replica GPU id lists for a stage.
+
+    Replica ``r`` owns ``gpu_ids[r * tp_size : (r + 1) * tp_size]``, i.e. each
+    replica is one contiguous TP group. Process spawning per replica is built
+    on this split; with ``dp=1`` it is exactly ``[resolve_stage_gpu_ids(...)]``.
+    """
+    gpu_ids = resolve_stage_gpu_ids(plan, stage_cfg)
+    tp_size = stage_cfg.tp_size
+    dp_size = stage_cfg.parallelism.dp
+    return [gpu_ids[r * tp_size : (r + 1) * tp_size] for r in range(dp_size)]
 
 
 def resolve_gpu_stage_names(plan: StagePlacementPlan) -> set[str]:
@@ -136,17 +155,30 @@ def _resolve_stage_gpu_ids(stage: StageConfig) -> tuple[int, ...]:
     gpu = stage.gpu
     if gpu is None:
         return ()
+    dp_size = stage.parallelism.dp
+    expected_gpu_count = stage.tp_size * dp_size
     if isinstance(gpu, int):
-        if stage.tp_size > 1:
+        if expected_gpu_count > 1:
+            if dp_size == 1:
+                raise ValueError(
+                    f"Stage {stage.name!r}: TP placement requires a list of "
+                    f"{stage.tp_size} unique GPU ids, got scalar gpu={gpu}"
+                )
             raise ValueError(
-                f"Stage {stage.name!r}: TP placement requires a list of "
-                f"{stage.tp_size} unique GPU ids, got scalar gpu={gpu}"
+                f"Stage {stage.name!r}: TP/DP placement requires a list of "
+                f"{expected_gpu_count} unique GPU ids (tp_size={stage.tp_size} "
+                f"x dp_size={dp_size}), got scalar gpu={gpu}"
             )
         return tuple(gpu for _ in range(stage.tp_size))
-    if len(gpu) != stage.tp_size:
+    if len(gpu) != expected_gpu_count:
+        if dp_size == 1:
+            raise ValueError(
+                f"Stage {stage.name!r}: gpu has {len(gpu)} entries "
+                f"but tp_size={stage.tp_size}"
+            )
         raise ValueError(
             f"Stage {stage.name!r}: gpu has {len(gpu)} entries "
-            f"but tp_size={stage.tp_size}"
+            f"but tp_size * dp_size = {expected_gpu_count}"
         )
     gpu_ids = tuple(int(gpu_id) for gpu_id in gpu)
     if len(set(gpu_ids)) != len(gpu_ids):

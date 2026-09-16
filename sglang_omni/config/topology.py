@@ -9,7 +9,7 @@ non-TP stages should run in the same OS process?
 from __future__ import annotations
 
 from collections import Counter, OrderedDict, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sglang_omni.config.placement import StagePlacementPlan, resolve_stage_gpu_ids
 from sglang_omni.config.schema import PipelineConfig, StageConfig
@@ -31,6 +31,11 @@ class ProcessTopologyPlan:
     groups: tuple[ProcessGroupPlacement, ...]
     stage_to_process: dict[str, str]
     tp_stage_to_processes: dict[str, tuple[str, ...]]
+    # Per (stage, dp_rank) process-name tuples, sliced out of
+    # ``tp_stage_to_processes``; per-replica process spawning builds on this.
+    stage_replica_to_processes: dict[str, tuple[tuple[str, ...], ...]] = field(
+        default_factory=dict
+    )
 
 
 def build_process_topology_plan(
@@ -51,6 +56,9 @@ def build_process_topology_plan(
             for stage_name in group.stage_names
         },
         tp_stage_to_processes=tp_stage_to_processes,
+        stage_replica_to_processes=_slice_replica_process_names(
+            stages, tp_stage_to_processes
+        ),
     )
     _validate_process_name_uniqueness(plan)
     _validate_gpu_process_colocation(config, gpu_placement, stages, plan)
@@ -62,7 +70,9 @@ def _build_process_groups(
     stages: list[StageConfig],
     gpu_placement: StagePlacementPlan,
 ) -> list[ProcessGroupPlacement]:
-    non_tp_stages = [stage for stage in stages if stage.tp_size == 1]
+    non_tp_stages = [
+        stage for stage in stages if stage.tp_size == 1 and stage.parallelism.dp == 1
+    ]
     _validate_non_tp_processes(non_tp_stages)
 
     components = _resolve_non_tp_process_components(config, non_tp_stages)
@@ -160,16 +170,40 @@ def _component_process_name(
 def _build_tp_process_names(stages: list[StageConfig]) -> dict[str, tuple[str, ...]]:
     return {
         stage.name: tuple(
-            _tp_process_name(stage, tp_rank) for tp_rank in range(stage.tp_size)
+            _tp_process_name(stage, dp_rank, tp_rank)
+            for dp_rank in range(stage.parallelism.dp)
+            for tp_rank in range(stage.tp_size)
         )
         for stage in stages
-        if stage.tp_size > 1
+        if stage.tp_size > 1 or stage.parallelism.dp > 1
     }
 
 
-def _tp_process_name(stage: StageConfig, tp_rank: int) -> str:
+def _slice_replica_process_names(
+    stages: list[StageConfig],
+    tp_stage_to_processes: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """Split the flat (dp_rank, tp_rank) process names into per-replica tuples."""
+    replica_to_processes: dict[str, tuple[tuple[str, ...], ...]] = {}
+    for stage in stages:
+        process_names = tp_stage_to_processes.get(stage.name)
+        if process_names is None:
+            continue
+        tp_size = stage.tp_size
+        dp_size = stage.parallelism.dp
+        replica_to_processes[stage.name] = tuple(
+            process_names[r * tp_size : (r + 1) * tp_size] for r in range(dp_size)
+        )
+    return replica_to_processes
+
+
+def _tp_process_name(stage: StageConfig, dp_rank: int, tp_rank: int) -> str:
     process_base = stage.process or stage.name
-    return f"{process_base}_tp{tp_rank}"
+    if stage.parallelism.dp == 1:
+        return f"{process_base}_tp{tp_rank}"
+    if stage.tp_size == 1:
+        return f"{process_base}_dp{dp_rank}"
+    return f"{process_base}_dp{dp_rank}_tp{tp_rank}"
 
 
 def _validate_process_name_uniqueness(plan: ProcessTopologyPlan) -> None:
@@ -247,7 +281,7 @@ def _validate_gpu_process_colocation(
                     missing_fraction[gpu_id].add(stage.name)
 
     for stage in stages:
-        if stage.tp_size <= 1:
+        if stage.tp_size <= 1 and stage.parallelism.dp <= 1:
             continue
         for rank, gpu_id in enumerate(_stage_gpu_ids(gpu_placement, stage)):
             if gpu_id is None:

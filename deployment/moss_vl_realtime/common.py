@@ -140,7 +140,7 @@ def free_port(host="127.0.0.1", port=0):
 
 def server_command(model, port, host="127.0.0.1"):
     entry = ROOT / "examples/run_moss_vl_realtime_server.py"
-    return [
+    command = [
         sys.executable,
         "-u",
         str(entry),
@@ -161,6 +161,19 @@ def server_command(model, port, host="127.0.0.1"):
         "--parked-request-timeout",
         str(CONFIG["parked_timeout_seconds"]),
     ]
+    # Replica GPUs are device-local once CUDA_VISIBLE_DEVICES is narrowed to
+    # the selected GPU set, so the launcher pwids run 0..dp_size-1.
+    dp_size = int(CONFIG.get("dp_size", 1))
+    if dp_size > 1:
+        command.extend(
+            [
+                "--dp-size",
+                str(dp_size),
+                "--gpus",
+                ",".join(str(index) for index in range(dp_size)),
+            ]
+        )
+    return command
 
 
 class Child:

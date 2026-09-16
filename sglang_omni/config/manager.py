@@ -200,7 +200,7 @@ def _sync_stage_parallelism_aliases(
     config_data: dict[str, Any],
     override_keys: set[str],
 ) -> None:
-    """Keep StageConfig.tp_size and parallelism.tp coherent for dotted CLI args."""
+    """Keep flat StageConfig sizes and parallelism.* coherent for dotted CLI args."""
     stages = config_data.get("stages")
     if not isinstance(stages, list):
         return
@@ -209,21 +209,23 @@ def _sync_stage_parallelism_aliases(
         if not isinstance(stage, dict):
             continue
         stage_keys = (str(index), stage["name"])
-        has_tp_size_override = any(
-            f"stages.{key}.tp_size" in override_keys for key in stage_keys
-        )
-        has_parallelism_override = any(
-            f"stages.{key}.parallelism.tp" in override_keys for key in stage_keys
-        )
-        if has_tp_size_override == has_parallelism_override:
-            continue
+        for flat_key, nested_key in (("tp_size", "tp"), ("dp_size", "dp")):
+            has_flat_override = any(
+                f"stages.{key}.{flat_key}" in override_keys for key in stage_keys
+            )
+            has_nested_override = any(
+                f"stages.{key}.parallelism.{nested_key}" in override_keys
+                for key in stage_keys
+            )
+            if has_flat_override == has_nested_override:
+                continue
 
-        if has_tp_size_override:
-            parallelism = dict(stage.get("parallelism") or {})
-            parallelism["tp"] = stage["tp_size"]
-            stage["parallelism"] = parallelism
-        else:
-            stage["tp_size"] = stage["parallelism"]["tp"]
+            if has_flat_override:
+                parallelism = dict(stage.get("parallelism") or {})
+                parallelism[nested_key] = stage[flat_key]
+                stage["parallelism"] = parallelism
+            else:
+                stage[flat_key] = stage["parallelism"][nested_key]
 
 
 def _resolve_list_index(items: list[Any], key: str) -> int:

@@ -432,10 +432,25 @@ async def _run_server(
             from sglang_omni.serve.video_realtime import warmup_video_realtime
 
             logger.info("Warming up realtime vision path")
-            await warmup_video_realtime(
-                client,
-                model_name=served_model_name,
-            )
+            dp_size = _entry_stage_dp_size(pipeline_config)
+            if dp_size == 1:
+                await warmup_video_realtime(
+                    client,
+                    model_name=served_model_name,
+                )
+            else:
+                # Each replica has its own state/in-flight frame path and must
+                # be exercised independently before listening.
+                await asyncio.gather(
+                    *(
+                        warmup_video_realtime(
+                            client,
+                            model_name=served_model_name,
+                            dp_rank=dp_rank,
+                        )
+                        for dp_rank in range(dp_size)
+                    )
+                )
             logger.info("Realtime vision warmup complete")
         app = create_app(
             client,
@@ -461,6 +476,7 @@ async def _run_server(
                 _video_realtime_parked_timeout_s(pipeline_config)
             ),
             video_realtime_max_sessions=_video_realtime_max_sessions(pipeline_config),
+            video_realtime_replica_count=_entry_stage_dp_size(pipeline_config),
             supports_realtime_audio_output=(
                 type(pipeline_config).code2wav_stage() is not None
             ),
@@ -571,12 +587,21 @@ def _video_realtime_parked_timeout_s(pipeline_config: PipelineConfig) -> float:
     return default
 
 
+def _entry_stage_dp_size(pipeline_config: PipelineConfig) -> int:
+    """Entry-stage replica count; native DP is entry-stage only."""
+    for stage in pipeline_config.stages:
+        if stage.name == pipeline_config.resolved_entry_stage:
+            return stage.parallelism.dp
+    return 1
+
+
 def _video_realtime_max_sessions(pipeline_config: PipelineConfig) -> int:
     """Read the realtime stage's concurrent session cap for the WS edge.
 
     Sessions are capped at the scheduler's ``max_running_requests``: each
     session owns one live request, and a parked session still holds its slot,
     so the two limits must coincide to keep wake-ups from over-admitting.
+    With native DP the aggregate cap spans all entry-stage replicas.
     """
     default = 1
     if not type(pipeline_config).supports_video_realtime:
@@ -585,7 +610,7 @@ def _video_realtime_max_sessions(pipeline_config: PipelineConfig) -> int:
         factory_args = getattr(stage, "factory_args", None) or {}
         value = factory_args.get("max_running_requests")
         if value is not None:
-            return int(value)
+            return int(value) * stage.parallelism.dp
     return default
 
 

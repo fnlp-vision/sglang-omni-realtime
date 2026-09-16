@@ -176,6 +176,7 @@ class SGLModelRunner(ModelRunner):
         model_arch_override: str | None = None,
         weight_prefix: str | None = None,
         total_gpu_memory_fraction: float | None = None,
+        dp_rank: int | None = None,
     ) -> None:
         self._weight_prefix = weight_prefix
         self._total_gpu_memory_fraction = total_gpu_memory_fraction
@@ -212,7 +213,7 @@ class SGLModelRunner(ModelRunner):
             tp_size=tp_size,
             pp_rank=pp_rank,
             pp_size=pp_size,
-            dp_rank=None,
+            dp_rank=dp_rank,
             dp_size=server_args.dp_size,
             attn_tp_rank=attn_tp_rank,
             attn_tp_size=attn_tp_size,
@@ -247,7 +248,7 @@ class SGLModelRunner(ModelRunner):
                 pp_size=pp_size,
                 nccl_port=nccl_port,
                 server_args=server_args,
-                dp_rank=None,
+                dp_rank=dp_rank,
                 attn_cp_rank=0,
                 moe_dp_rank=None,
             )

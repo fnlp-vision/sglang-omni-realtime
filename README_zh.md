@@ -8,7 +8,7 @@
 
 - 增量视觉特征与 KV，支持 JPEG、PNG、WebP 帧。
 - 持续会话、新问题打断与静默后唤醒。
-- 动态多会话调度、单卡及 TP 多卡推理。
+- 动态多会话调度、单卡、TP 多卡以及原生数据并行（`--dp-size`）多副本推理。
 - Decode CUDA Graph、视觉 KV 滑窗与有界输入队列。
 
 配套模型为 [OpenMOSS-Team/MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG)。浏览器交互、ASR/TTS、文本 memory 和 REST 网关由独立的 [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo) 提供。

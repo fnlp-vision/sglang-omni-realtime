@@ -103,6 +103,42 @@ def test_config_manager_named_parallelism_override_updates_tp_size_alias() -> No
     assert thinker.gpu == [0, 1]
 
 
+# Native DP replicas the entry stage only; alias sync is exercised on it.
+def test_config_manager_named_dp_size_override_updates_parallelism_alias() -> None:
+    manager = ConfigManager(Qwen3OmniSpeechColocatedPipelineConfig(model_path="dummy"))
+    merged = manager.merge_config(
+        {"stages.preprocessing.dp_size": 2, "stages.preprocessing.gpu": [0, 1]}
+    )
+    entry = _stage(merged, "preprocessing")
+
+    assert entry.dp_size == 2
+    assert entry.parallelism.dp == 2
+    assert entry.tp_size == 1
+    assert entry.gpu == [0, 1]
+
+
+def test_config_manager_named_parallelism_override_updates_dp_size_alias() -> None:
+    manager = ConfigManager(Qwen3OmniSpeechColocatedPipelineConfig(model_path="dummy"))
+    merged = manager.merge_config(
+        {"stages.preprocessing.parallelism.dp": 2, "stages.preprocessing.gpu": [0, 1]}
+    )
+    entry = _stage(merged, "preprocessing")
+
+    assert entry.dp_size == 2
+    assert entry.parallelism.dp == 2
+    assert entry.tp_size == 1
+    assert entry.gpu == [0, 1]
+
+
+def test_config_manager_rejects_dp_size_override_off_entry_stage() -> None:
+    manager = ConfigManager(Qwen3OmniSpeechColocatedPipelineConfig(model_path="dummy"))
+
+    with pytest.raises(ValueError, match="only supported on the entry stage"):
+        manager.merge_config(
+            {"stages.thinker.parallelism.dp": 2, "stages.thinker.gpu": [0, 1]}
+        )
+
+
 def test_config_manager_rejects_trailing_key_without_value() -> None:
     manager = ConfigManager(Qwen3OmniSpeechColocatedPipelineConfig(model_path="dummy"))
 

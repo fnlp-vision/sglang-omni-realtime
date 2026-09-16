@@ -4,12 +4,14 @@ from __future__ import annotations
 import pytest
 
 from sglang_omni.config import (
+    ParallelismConfig,
     PipelineConfig,
     StageConfig,
     StageResourceConfig,
     StageRuntimeConfig,
     build_stage_placement_plan,
     resolve_stage_gpu_ids,
+    resolve_stage_replica_gpu_ids,
 )
 
 _FACTORY = "tests.unit_test.fixtures.pipeline_fakes.dummy_factory"
@@ -199,4 +201,81 @@ def test_placement_policy_hook_runs_after_generic_plan() -> None:
     )
 
     with pytest.raises(ValueError, match="policy rejected thinker"):
+        build_stage_placement_plan(config)
+
+
+def _dp_stage(
+    name: str,
+    *,
+    gpu: int | list[int] | None,
+    tp_size: int = 1,
+    dp_size: int = 2,
+    fraction: float | None = None,
+    terminal: bool = True,
+) -> StageConfig:
+    return StageConfig(
+        name=name,
+        process="pipeline",
+        factory=_FACTORY,
+        gpu=gpu,
+        tp_size=tp_size,
+        parallelism=ParallelismConfig(tp=tp_size, dp=dp_size),
+        runtime=StageRuntimeConfig(
+            resources=StageResourceConfig(total_gpu_memory_fraction=fraction)
+        ),
+        terminal=terminal,
+    )
+
+
+def test_dp_replica_gpu_ids_are_contiguous_tp_slices() -> None:
+    stage = _dp_stage("thinker", gpu=[0, 1, 2, 3], tp_size=2, dp_size=2)
+    config = PipelineConfig(model_path="dummy", stages=[stage])
+
+    plan = build_stage_placement_plan(config)
+
+    assert resolve_stage_gpu_ids(plan, stage) == [0, 1, 2, 3]
+    assert resolve_stage_replica_gpu_ids(plan, stage) == [[0, 1], [2, 3]]
+    assert plan.stages["thinker"].dp_size == 2
+
+
+def test_dp1_replica_gpu_ids_match_existing_flat_list() -> None:
+    stage = _stage("thinker", gpu=[0, 1], fraction=0.45, tp_size=2, terminal=True)
+    config = PipelineConfig(model_path="dummy", stages=[stage])
+
+    plan = build_stage_placement_plan(config)
+
+    assert resolve_stage_replica_gpu_ids(plan, stage) == [[0, 1]]
+    assert plan.stages["thinker"].dp_size == 1
+
+
+def test_dp_replicas_without_gpu_resolve_to_none_per_rank() -> None:
+    stage = _dp_stage("preprocess", gpu=None, dp_size=2, terminal=True)
+    config = PipelineConfig(model_path="dummy", stages=[stage])
+
+    plan = build_stage_placement_plan(config)
+
+    assert resolve_stage_gpu_ids(plan, stage) == [None, None]
+    assert resolve_stage_replica_gpu_ids(plan, stage) == [[None], [None]]
+
+
+def test_dp_placement_rejects_scalar_gpu_for_multiple_replicas() -> None:
+    stage = _dp_stage("thinker", gpu=0, dp_size=2)
+    config = PipelineConfig(model_path="dummy", stages=[stage])
+
+    with pytest.raises(ValueError, match="requires a list of 2 unique GPU ids"):
+        build_stage_placement_plan(config)
+
+
+def test_dp_placement_requires_tp_times_dp_gpu_ids() -> None:
+    stage = _dp_stage("thinker", gpu=[0, 1, 2], tp_size=2, dp_size=2)
+
+    with pytest.raises(ValueError, match="tp_size \\* dp_size = 4"):
+        PipelineConfig(model_path="dummy", stages=[stage])
+
+
+def test_dp_placement_requires_unique_gpu_ids_across_replicas() -> None:
+    stage = _dp_stage("thinker", gpu=[0, 0], dp_size=2)
+    config = PipelineConfig(model_path="dummy", stages=[stage])
+
+    with pytest.raises(ValueError, match="unique GPU ids"):
         build_stage_placement_plan(config)

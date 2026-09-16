@@ -21,7 +21,6 @@ from sglang_omni.proto import (
     RequestInfo,
     RequestState,
     RequestUpdateMessage,
-    StageInfo,
     StagePayload,
     StreamMessage,
     SubmitMessage,
@@ -35,8 +34,33 @@ logger = logging.getLogger(__name__)
 class _AdminPendingOperation:
     expected_stages: set[str]
     action: str
-    results: dict[str, AdminResult] = field(default_factory=dict)
+    # Per stage, every replica's result in reply order. Aggregation collapses
+    # to one entry per stage (replica detail attached under ``data`` when the
+    # stage is replicated).
+    results: dict[str, list[AdminResult]] = field(default_factory=dict)
+    # Remaining replica results per stage; reaches zero when every replica of
+    # every target stage reported.
+    pending_replica_counts: dict[str, int] = field(default_factory=dict)
     future: asyncio.Future | None = None
+
+
+@dataclass
+class ReplicaInfo:
+    """One data-parallel replica of a registered stage.
+
+    ``capacity``/``inflight`` are the occupancy hook for admission-aware
+    replica selection: ``capacity=None`` means "no admission limit known to
+    the coordinator", in which case selection is plain round-robin.
+    """
+
+    dp_rank: int
+    endpoint: str
+    inflight: int = 0
+    capacity: int | None = None
+
+    @property
+    def is_full(self) -> bool:
+        return self.capacity is not None and self.inflight >= self.capacity
 
 
 class Coordinator:
@@ -82,8 +106,10 @@ class Coordinator:
             abort_endpoint=abort_endpoint,
         )
 
-        # Stage registry
-        self._stages: dict[str, StageInfo] = {}
+        # Stage registry: stage name -> per-dp-replica endpoints (one entry
+        # per replica; len == 1 for stages without native data parallelism).
+        self._stages: dict[str, list[ReplicaInfo]] = {}
+        self._rr_cursors: dict[str, int] = {}
 
         # Request tracking
         self._requests: dict[str, RequestInfo] = {}
@@ -101,15 +127,71 @@ class Coordinator:
         self._running = False
         self._fatal_error: str | None = None
 
-    def register_stage(self, name: str, endpoint: str) -> None:
-        """Register a stage.
+    def register_stage(
+        self,
+        name: str,
+        endpoint: str,
+        *,
+        dp_rank: int | None = None,
+        capacity: int | None = None,
+    ) -> None:
+        """Register a stage endpoint, appending a replica slot per DP rank.
 
         Args:
             name: Stage name
-            endpoint: ZMQ endpoint for the stage
+            endpoint: ZMQ endpoint for the stage replica's external I/O
+            dp_rank: Data-parallel replica index; ``None`` assigns the next
+                rank in registration order (single-replica stages get 0).
+            capacity: Optional admission limit used by replica selection
+                (e.g. per-replica max concurrent requests).
         """
-        self._stages[name] = StageInfo(name=name, control_endpoint=endpoint)
+        replicas = self._stages.setdefault(name, [])
+        resolved_dp_rank = len(replicas) if dp_rank is None else dp_rank
+        replicas.append(
+            ReplicaInfo(dp_rank=resolved_dp_rank, endpoint=endpoint, capacity=capacity)
+        )
         logger.info("Coordinator registered stage: %s at %s", name, endpoint)
+        if len(replicas) > 1:
+            logger.info(
+                "Stage %s now has %d data-parallel replicas", name, len(replicas)
+            )
+
+    def replicas(self, stage_name: str) -> list[ReplicaInfo]:
+        """Live replica handles for a stage (Phase-3 admission reads/mutates
+        occupancy counters through these shared objects)."""
+        return list(self._stages.get(stage_name, ()))
+
+    def _replica_for(self, stage_name: str, dp_rank: int) -> ReplicaInfo | None:
+        for replica in self._stages.get(stage_name, ()):
+            if replica.dp_rank == dp_rank:
+                return replica
+        return None
+
+    def _select_replica(self, stage_name: str) -> ReplicaInfo:
+        """Round-robin over replicas, preferring ones below their capacity."""
+        replicas = self._stages[stage_name]
+        count = len(replicas)
+        cursor = self._rr_cursors.get(stage_name, 0) % count
+        for offset in range(count):
+            replica = replicas[(cursor + offset) % count]
+            if not replica.is_full:
+                self._rr_cursors[stage_name] = (cursor + offset + 1) % count
+                return replica
+        # Every replica is at capacity: keep plain round-robin admission and
+        # let the stage scheduler make the final accept/reject decision.
+        self._rr_cursors[stage_name] = (cursor + 1) % count
+        return replicas[cursor]
+
+    def _release_replica(self, info: RequestInfo) -> None:
+        if info.owner_dp_rank is None:
+            return
+        replica = self._replica_for(
+            info.current_stage or self.entry_stage, info.owner_dp_rank
+        )
+        if replica is not None:
+            replica.inflight = max(0, replica.inflight - 1)
+        info.owner_dp_rank = None
+        info.owner_endpoint = None
 
     async def start(self) -> None:
         """Start the coordinator."""
@@ -142,17 +224,19 @@ class Coordinator:
                         error=message,
                     )
                 )
+            self._release_replica(info)
         self._requests.clear()
         self._partial_results.clear()
 
     async def shutdown_stages(self) -> None:
         """Send shutdown signal to all registered stages."""
-        for name, info in self._stages.items():
-            try:
-                await self.control_plane.send_shutdown(name, info.control_endpoint)
-                logger.info("Sent shutdown to stage: %s", name)
-            except Exception as e:
-                logger.warning("Failed to send shutdown to stage %s: %s", name, e)
+        for name, replicas in self._stages.items():
+            for replica in replicas:
+                try:
+                    await self.control_plane.send_shutdown(name, replica.endpoint)
+                    logger.info("Sent shutdown to stage: %s", name)
+                except Exception as e:
+                    logger.warning("Failed to send shutdown to stage %s: %s", name, e)
 
     async def admin(
         self,
@@ -175,6 +259,10 @@ class Coordinator:
         pending = _AdminPendingOperation(
             expected_stages=set(target_stages),
             action=action,
+            pending_replica_counts={
+                stage_name: len(self._stages[stage_name])
+                for stage_name in target_stages
+            },
             future=loop.create_future(),
         )
         operation = AdminOperation(
@@ -189,22 +277,24 @@ class Coordinator:
             self._admin_ops[op_id] = pending
             try:
                 for stage_name in target_stages:
-                    info = self._stages[stage_name]
-                    await self.control_plane.send_admin(
-                        stage_name,
-                        info.control_endpoint,
-                        AdminMessage(operation=operation),
-                    )
+                    for replica in self._stages[stage_name]:
+                        await self.control_plane.send_admin(
+                            stage_name,
+                            replica.endpoint,
+                            AdminMessage(operation=operation),
+                        )
 
                 assert pending.future is not None
-                results = await asyncio.wait_for(pending.future, timeout=timeout_s)
+                results_by_stage = await asyncio.wait_for(
+                    pending.future, timeout=timeout_s
+                )
             finally:
                 self._admin_ops.pop(op_id, None)
 
         return self._aggregate_admin_results(
             op_id=op_id,
             action=action,
-            results=list(results.values()),
+            results_by_stage=results_by_stage,
         )
 
     async def model_info(
@@ -329,13 +419,28 @@ class Coordinator:
             self._completion_futures.pop(request_id, None)
 
     async def stream(
-        self, request_id: str, request: OmniRequest | Any
+        self,
+        request_id: str,
+        request: OmniRequest | Any,
+        *,
+        dp_rank: int | None = None,
     ) -> AsyncIterator[CompleteMessage | StreamMessage]:
-        """Submit a request and yield stream events until completion."""
+        """Submit a request and yield stream events until completion.
+
+        ``dp_rank`` pins admission to a specific entry-stage replica (used by
+        replica-aware admission that must pre-assign ownership); ``None``
+        leaves replica selection to :meth:`_select_replica`.
+        """
         queue: asyncio.Queue[CompleteMessage | StreamMessage] = asyncio.Queue()
 
         try:
-            await self._submit_request(request_id, request, stream_queue=queue)
+            if dp_rank is None:
+                # Keep the default path on the pre-DP _submit_request signature.
+                await self._submit_request(request_id, request, stream_queue=queue)
+            else:
+                await self._submit_request(
+                    request_id, request, stream_queue=queue, dp_rank=dp_rank
+                )
             expected_terminal_stages = self._expected_terminal_stages(request_id)
 
             completed_stages: set[str] = set()
@@ -368,12 +473,34 @@ class Coordinator:
                         self._stream_queues.pop(request_id, None)
                         self._completion_futures.pop(request_id, None)
 
+    async def submit_to_replica(
+        self,
+        request_id: str,
+        request: OmniRequest | Any,
+        *,
+        dp_rank: int,
+    ) -> Any:
+        """Submit to a specific entry-stage replica and wait for completion.
+
+        Internal API for replica-scoped traffic (e.g. per-replica warmup)
+        that must bypass load-balancing replica selection.
+        """
+        await self._submit_request(request_id, request, dp_rank=dp_rank)
+
+        future = self._completion_futures[request_id]
+        try:
+            result = await future
+            return result
+        finally:
+            self._completion_futures.pop(request_id, None)
+
     async def _submit_request(
         self,
         request_id: str,
         request: OmniRequest | Any,
         *,
         stream_queue: asyncio.Queue[CompleteMessage | StreamMessage] | None = None,
+        dp_rank: int | None = None,
     ) -> None:
         """Submit a request without waiting for completion."""
         if self._fatal_error is not None:
@@ -381,18 +508,31 @@ class Coordinator:
         if self._request_id_is_reserved(request_id):
             raise ValueError(f"Request {request_id} already exists")
 
-        if self.entry_stage not in self._stages:
+        replicas = self._stages.get(self.entry_stage)
+        if not replicas:
             raise ValueError(f"Entry stage {self.entry_stage} not registered")
+        if dp_rank is None:
+            entry_replica = self._select_replica(self.entry_stage)
+        else:
+            entry_replica = self._replica_for(self.entry_stage, dp_rank)
+            if entry_replica is None:
+                raise ValueError(
+                    f"Entry stage {self.entry_stage} has no replica "
+                    f"dp_rank={dp_rank}"
+                )
 
         if not isinstance(request, OmniRequest):
             request = OmniRequest(inputs=request)
 
-        # Track request
+        # Track request, bound to the selected entry-stage replica.
+        entry_replica.inflight += 1
         self._requests[request_id] = RequestInfo(
             request_id=request_id,
             state=RequestState.PENDING,
             current_stage=self.entry_stage,
             terminal_stages=self._resolve_terminal_stages(request),
+            owner_endpoint=entry_replica.endpoint,
+            owner_dp_rank=entry_replica.dp_rank,
         )
 
         # Create future for completion
@@ -408,20 +548,26 @@ class Coordinator:
             data={"raw_inputs": request.inputs},
         )
 
+        admission_metadata: dict[str, Any] = {"entry_stage": self.entry_stage}
+        if len(replicas) > 1:
+            admission_metadata["dp_rank"] = entry_replica.dp_rank
         _emit_event(
             request_id=request_id,
             stage="coordinator",
             event_name="request_admission",
-            metadata={"entry_stage": self.entry_stage},
+            metadata=admission_metadata,
         )
 
-        # Submit to entry stage
-        entry_info = self._stages[self.entry_stage]
-        await self.control_plane.submit_to_stage(
-            self.entry_stage,
-            entry_info.control_endpoint,
-            SubmitMessage(request_id=request_id, data=payload),
-        )
+        # Submit to the selected entry-stage replica
+        try:
+            await self.control_plane.submit_to_stage(
+                self.entry_stage,
+                entry_replica.endpoint,
+                SubmitMessage(request_id=request_id, data=payload),
+            )
+        except Exception:
+            self._release_replica(self._requests[request_id])
+            raise
 
         # Update state
         info = self._requests.get(request_id)
@@ -432,7 +578,7 @@ class Coordinator:
             "Coordinator submitted req=%s to %s at %s",
             request_id,
             self.entry_stage,
-            entry_info.control_endpoint,
+            entry_replica.endpoint,
         )
 
     def _request_id_is_reserved(self, request_id: str) -> bool:
@@ -519,14 +665,20 @@ class Coordinator:
                 f"Request {request_id} is not running: {info.state.value}"
             )
         target = stage_name or info.current_stage or self.entry_stage
-        target_info = self._stages.get(target)
-        if target_info is None:
-            raise ValueError(f"Stage {target} is not registered")
+        if stage_name is None and info.owner_endpoint is not None:
+            # Sticky routing: updates stay on the entry-stage replica that
+            # owns the request (its shm/KV state lives there).
+            target_endpoint = info.owner_endpoint
+        else:
+            replicas = self._stages.get(target)
+            if not replicas:
+                raise ValueError(f"Stage {target} is not registered")
+            target_endpoint = replicas[0].endpoint
         if not isinstance(data, dict):
             raise TypeError("request update data must be a dict")
         await self.control_plane.submit_to_stage(
             target,
-            target_info.control_endpoint,
+            target_endpoint,
             RequestUpdateMessage(request_id=request_id, data=data),
         )
 
@@ -555,6 +707,7 @@ class Coordinator:
                 )
             )
 
+        self._release_replica(info)
         self._requests.pop(request_id, None)
         self._partial_results.pop(request_id, None)
 
@@ -639,6 +792,7 @@ class Coordinator:
             )
             if request_id in self._stream_queues:
                 await self._stream_queues[request_id].put(msg)
+            self._release_replica(info)
             self._requests.pop(request_id, None)
             return
 
@@ -663,6 +817,7 @@ class Coordinator:
                     future.set_result(msg.result)
             if request_id in self._stream_queues:
                 await self._stream_queues[request_id].put(msg)
+            self._release_replica(info)
             self._requests.pop(request_id, None)
             return
 
@@ -687,6 +842,7 @@ class Coordinator:
             future = self._completion_futures[request_id]
             if not future.done():
                 future.set_result(merged)
+        self._release_replica(info)
         self._requests.pop(request_id, None)
 
     async def _handle_stream(self, msg: StreamMessage) -> None:
@@ -725,10 +881,27 @@ class Coordinator:
                 result.stage,
             )
             return
-        pending.results[result.stage] = result
+        if (
+            result.dp_rank is None
+            and len(self._stages.get(result.stage, ())) > 1
+        ):
+            # The replica could not be attributed (stage scheduler does not
+            # report dp_rank); keep it unattributed instead of guessing, so
+            # single-replica result payloads stay exactly as before.
+            logger.warning(
+                "Coordinator could not attribute admin result to a replica: "
+                "op=%s stage=%s",
+                result.op_id,
+                result.stage,
+            )
+        pending.results.setdefault(result.stage, []).append(result)
+        remaining = pending.pending_replica_counts.get(result.stage)
+        if remaining is not None:
+            pending.pending_replica_counts[result.stage] = max(0, remaining - 1)
         if (
             pending.future is not None
             and pending.results.keys() >= pending.expected_stages
+            and all(count <= 0 for count in pending.pending_replica_counts.values())
         ):
             if not pending.future.done():
                 pending.future.set_result(dict(pending.results))
@@ -742,13 +915,52 @@ class Coordinator:
             raise ValueError(f"Unknown admin target stage(s): {unknown}")
         return resolved
 
+    @staticmethod
+    def _merge_stage_replica_results(
+        op_id: str,
+        action: str,
+        stage_name: str,
+        items: list[AdminResult],
+    ) -> AdminResult:
+        """Collapse a stage's replica replies into one stage-level result.
+
+        Single-replica stages return their one result untouched, keeping the
+        pre-DP response shape. A replicated stage succeeds only when every
+        replica succeeded; per-replica detail rides along under
+        ``data["replica_results"]``.
+        """
+        if len(items) == 1:
+            return items[0]
+        ordered = sorted(
+            items, key=lambda item: (item.dp_rank is None, item.dp_rank or 0)
+        )
+        errors = [item.error for item in ordered if item.error]
+        success = all(item.success for item in ordered)
+        data = dict(ordered[0].data)
+        data["replica_results"] = [item.to_dict() for item in ordered]
+        return AdminResult(
+            op_id=op_id,
+            stage=stage_name,
+            action=action,
+            success=success,
+            message=ordered[0].message if success else "; ".join(errors),
+            data=data,
+            error=None if success else ("; ".join(errors) or ordered[0].error),
+            rank=ordered[0].rank,
+            role=ordered[0].role,
+        )
+
     def _aggregate_admin_results(
         self,
         *,
         op_id: str,
         action: str,
-        results: list[AdminResult],
+        results_by_stage: dict[str, list[AdminResult]],
     ) -> dict[str, Any]:
+        results = [
+            self._merge_stage_replica_results(op_id, action, stage, items)
+            for stage, items in results_by_stage.items()
+        ]
         updated_results = [
             item
             for item in results

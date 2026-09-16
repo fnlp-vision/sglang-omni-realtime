@@ -8,7 +8,7 @@ A realtime video-understanding backend for MOSS-VL, built on [SGLang-Omni](https
 
 - Incremental visual features and KV, with JPEG, PNG, and WebP frames.
 - Persistent conversations, prompt interruption, and wake-up after silence.
-- Dynamic multi-session scheduling, single-GPU and tensor-parallel inference.
+- Dynamic multi-session scheduling; single-GPU, tensor-parallel, and data-parallel (`--dp-size`) replica inference.
 - Decode CUDA Graphs, a sliding visual KV window, and bounded input queues.
 
 Use [OpenMOSS-Team/MOSS-VL-Realtime-SGLANG](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime-SGLANG). The separate [Demo](https://github.com/fnlp-vision/MOSS-VL-Realtime_Demo) provides browser interaction, ASR/TTS, text memory, and the REST gateway.

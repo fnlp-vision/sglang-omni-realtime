@@ -128,6 +128,8 @@ def _resolve_stage(
 def _reject_tp_stage(stage: StageConfig) -> None:
     if stage.tp_size > 1:
         raise ValueError(f"Stage {stage.name!r} already uses one process per TP rank")
+    if stage.parallelism.dp > 1:
+        raise ValueError(f"Stage {stage.name!r} already uses one process per DP replica")
 
 
 def _runs_alone(process_map: dict[str, str], stage_name: str) -> bool:

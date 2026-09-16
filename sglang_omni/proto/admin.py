@@ -61,9 +61,11 @@ class AdminResult:
     error: str | None = None
     rank: int | None = None
     role: str | None = None
+    # Data-parallel replica the result came from; None for unreplicated stages.
+    dp_rank: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "op_id": self.op_id,
             "stage": self.stage,
             "action": self.action,
@@ -74,6 +76,10 @@ class AdminResult:
             "rank": self.rank,
             "role": self.role,
         }
+        # Keep single-replica payloads byte-identical to the pre-DP wire shape.
+        if self.dp_rank is not None:
+            result["dp_rank"] = self.dp_rank
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AdminResult":
@@ -87,6 +93,7 @@ class AdminResult:
             error=data.get("error"),
             rank=data.get("rank"),
             role=data.get("role"),
+            dp_rank=data.get("dp_rank"),
         )
 
 
