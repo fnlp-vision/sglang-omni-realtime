@@ -29,18 +29,20 @@ import os
 
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 LISTEN_HOST = os.environ.get("ROUTER_LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("ROUTER_LISTEN_PORT", "18610"))
-UPSTREAM_URLS = [u.strip() for u in os.environ.get("ROUTER_UPSTREAMS", "").split(",") if u.strip()]
+UPSTREAM_URLS = [
+    u.strip() for u in os.environ.get("ROUTER_UPSTREAMS", "").split(",") if u.strip()
+]
 CAPACITY = int(os.environ.get("ROUTER_UPSTREAM_CAPACITY", "2"))
 START_TIMEOUT_S = float(os.environ.get("ROUTER_START_TIMEOUT_S", "15"))
 MAX_MSG = int(os.environ.get("ROUTER_MAX_MESSAGE_MB", "32")) << 20
 BUSY_SUBSTRING = "realtime session is already active"
 logger = logging.getLogger("adapter.router")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-_rr_counter = 0   # tie-break 轮转计数：所有上游同空闲时轮转，避免重连风暴全撞第一个实例
+_rr_counter = 0  # tie-break 轮转计数：所有上游同空闲时轮转，避免重连风暴全撞第一个实例
 
 
 def process_request(connection, request):
@@ -121,7 +123,13 @@ async def _try_upstream(up: Upstream, start_text: str):
                 # behaviour; the slot is released when the connection closes.
                 up.active += 1
                 return up, ws, raw
-    except (asyncio.TimeoutError, ConnectionClosed, OSError, json.JSONDecodeError) as exc:
+    except (
+        asyncio.TimeoutError,
+        ConnectionClosed,
+        OSError,
+        json.JSONDecodeError,
+        WebSocketException,  # e.g. upstream is not the adapter (bad handshake)
+    ) as exc:
         if ws is not None:
             try:
                 await ws.close()
@@ -133,10 +141,13 @@ async def _try_upstream(up: Upstream, start_text: str):
 async def bind_upstream(start_text: str):
     """Try every upstream once per client start; return the first that accepts."""
     tried: set[int] = set()
-    reason = "router: no upstream configured"
+    reason = "no upstream configured"
     while len(tried) < len(UPSTREAMS):
         up = pick(tried)
         if up is None:
+            # Every upstream is at capacity in the router's own view; surface
+            # the legacy busy message so callers keep their retry behaviour.
+            reason = BUSY_SUBSTRING
             break
         tried.add(id(up))
         up2, ws, reply = await _try_upstream(up, start_text)
@@ -152,6 +163,8 @@ async def _pump(src, dst, tag: str) -> None:
             await dst.send(message)
     except (ConnectionClosed, OSError) as e:
         logger.info("pump %s ended: %r", tag, e)
+    except Exception:
+        logger.exception("pump %s failed", tag)
     finally:
         logger.debug("pump %s cleanup", tag)
 
@@ -172,7 +185,12 @@ async def handler(websocket) -> None:
     if data.get("type") != "start":
         try:
             await websocket.send(
-                json.dumps({"type": "error", "message": "router: first message must be type=start"})
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": "router: first message must be type=start",
+                    }
+                )
             )
         except Exception:
             pass
@@ -183,22 +201,36 @@ async def handler(websocket) -> None:
     up, upstream_ws, reply = await bind_upstream(first)
     if upstream_ws is None:
         try:
-            await websocket.send(json.dumps({"type": "error", "message": f"router: {reply}"}))
+            await websocket.send(
+                json.dumps({"type": "error", "message": f"router: {reply}"})
+            )
         except Exception:
             pass
         await websocket.close()
         return
 
     await websocket.send(reply)
+    # Relay in both directions, but finish as soon as EITHER side ends: the
+    # other pump is cancelled and both sockets are closed below, so a client
+    # that drops mid-session (or skips the legacy `stop`) propagates its close
+    # to the upstream adapter instead of squatting on the capacity slot.
+    pumps = [
+        asyncio.create_task(_pump(websocket, upstream_ws, "client->up")),
+        asyncio.create_task(_pump(upstream_ws, websocket, "up->client")),
+    ]
     try:
-        await asyncio.gather(
-            _pump(websocket, upstream_ws, "client->up"),
-            _pump(upstream_ws, websocket, "up->client"),
-            return_exceptions=True,
-        )
+        _, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     finally:
         up.active -= 1
-        logger.info("client %s disconnected, %s released (active=%d)", websocket.remote_address, up.url, up.active)
+        logger.info(
+            "client %s disconnected, %s released (active=%d)",
+            websocket.remote_address,
+            up.url,
+            up.active,
+        )
         for w in (websocket, upstream_ws):
             try:
                 await w.close()
@@ -208,14 +240,21 @@ async def handler(websocket) -> None:
 
 async def main() -> None:
     if not UPSTREAMS:
-        raise SystemExit("ROUTER_UPSTREAMS is required, e.g. 'ws://127.0.0.1:18611,ws://127.0.0.1:18612'")
+        raise SystemExit(
+            "ROUTER_UPSTREAMS is required, e.g. 'ws://127.0.0.1:18611,ws://127.0.0.1:18612'"
+        )
     print(
         f"router listening on {LISTEN_HOST}:{LISTEN_PORT} -> "
         + ", ".join(f"{u.url}(cap={u.capacity})" for u in UPSTREAMS),
         flush=True,
     )
-    async with serve(handler, LISTEN_HOST, LISTEN_PORT, max_size=MAX_MSG,
-                     process_request=process_request):
+    async with serve(
+        handler,
+        LISTEN_HOST,
+        LISTEN_PORT,
+        max_size=MAX_MSG,
+        process_request=process_request,
+    ):
         await asyncio.Future()
 
 
