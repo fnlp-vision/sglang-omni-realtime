@@ -224,7 +224,10 @@ class Child:
             # A recycled group-leader PID belongs to a different run. Never
             # signal it, even if stop() is called long after our leader exited.
             try:
-                if psutil.Process(self.process.pid).create_time() != self._owner_started:
+                if (
+                    psutil.Process(self.process.pid).create_time()
+                    != self._owner_started
+                ):
                     return []
             except psutil.NoSuchProcess:
                 pass
@@ -238,9 +241,11 @@ class Child:
         alive = []
         for process in candidates:
             try:
-                if (process.is_running()
-                        and process.create_time() >= self._owner_started
-                        and process.status() != psutil.STATUS_ZOMBIE):
+                if (
+                    process.is_running()
+                    and process.create_time() >= self._owner_started
+                    and process.status() != psutil.STATUS_ZOMBIE
+                ):
                     alive.append(process)
             except psutil.NoSuchProcess:
                 pass
@@ -279,7 +284,9 @@ class Child:
                 pass
 
     def stop(self, timeout=30.0, kill_timeout=10.0):
-        if any(not math.isfinite(value) or value < 0 for value in (timeout, kill_timeout)):
+        if any(
+            not math.isfinite(value) or value < 0 for value in (timeout, kill_timeout)
+        ):
             raise ValueError("shutdown timeouts must be finite and non-negative")
         if self._stopped:
             return
@@ -293,7 +300,9 @@ class Child:
                 self._signal_processes(alive, signal.SIGKILL)
                 alive = self._wait_owned_processes(kill_timeout, kill=True)
             if alive:
-                raise TimeoutError(f"Child processes did not exit: {[p.pid for p in alive]}")
+                raise TimeoutError(
+                    f"Child processes did not exit: {[p.pid for p in alive]}"
+                )
             self.process.wait(timeout=kill_timeout)
             self._stopped = True
         finally:

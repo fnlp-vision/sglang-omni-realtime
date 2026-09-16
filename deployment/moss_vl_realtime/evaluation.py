@@ -213,7 +213,9 @@ def run_worker(args, cases):
             device=eval_device,
             context_length=eval_context,
             disable_cuda_graph=bool(os.environ.get("MOSS_EVAL_DISABLE_GRAPH")),
-            max_running_requests=max(8, max(args.sessions)) if args.suite == "concurrency" else 4,
+            max_running_requests=(
+                max(8, max(args.sessions)) if args.suite == "concurrency" else 4
+            ),
             server_args_overrides={
                 "prefill_attention_backend": "flashinfer",
                 "decode_attention_backend": "flashinfer",
@@ -316,7 +318,9 @@ def metadata_for(args, cases, gpus):
         concurrency_token_rate=args.token_rate if args.suite == "concurrency" else None,
         timing_units="seconds",
         sessions=args.sessions,
-        test_max_running_requests=max(8, max(args.sessions)) if args.suite == "concurrency" else 4,
+        test_max_running_requests=(
+            max(8, max(args.sessions)) if args.suite == "concurrency" else 4
+        ),
         strict_tokens=args.strict_tokens,
         repeats=args.repeats,
         warmup_trials=0 if args.suite == "concurrency" else 1,

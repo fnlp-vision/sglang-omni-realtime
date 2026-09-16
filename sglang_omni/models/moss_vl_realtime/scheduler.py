@@ -12,17 +12,28 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import torch
-from sglang_omni.scheduling.messages import IncomingMessage
 from PIL import Image
 
 import sglang_omni.compat as _compat
+from sglang_omni.scheduling.messages import IncomingMessage
 
 _compat.apply_all()
-from sglang.srt.managers.schedule_batch import NextBatchPlan, ScheduleBatch  # noqa: E402
-from sglang.srt.managers.scheduler_components.metrics_reporter import PrefillStats  # noqa: E402
+from sglang.srt.managers.schedule_batch import (  # noqa: E402
+    NextBatchPlan,
+    ScheduleBatch,
+)
+from sglang.srt.managers.scheduler_components.metrics_reporter import (  # noqa: E402
+    PrefillStats,
+)
 from sglang.srt.observability.metrics_collector import QueueCount  # noqa: E402
 from sglang.srt.utils import broadcast_pyobj  # noqa: E402
 
+from sglang_omni.models.moss_vl_realtime.accounting import (
+    FINALIZE_ACTION,
+    ContextExhaustedError,
+    RealtimeAccounting,
+    error_code,
+)
 from sglang_omni.models.moss_vl_realtime.batch_adapter import (
     RUNTIME_STATE_ATTR,
     MossVLRealtimeScheduleBatch,
@@ -37,9 +48,6 @@ from sglang_omni.models.moss_vl_realtime.frame_window import (
     stage_segment_frame_records,
 )
 from sglang_omni.models.moss_vl_realtime.payload_types import FramePromptEvent
-from sglang_omni.models.moss_vl_realtime.accounting import (
-    ContextExhaustedError, FINALIZE_ACTION, RealtimeAccounting, error_code,
-)
 from sglang_omni.models.moss_vl_realtime.runtime_state import (
     MossVLRealtimePhase,
     MossVLRealtimeRuntimeState,
@@ -104,7 +112,10 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if not self.silence_token_ids:
             raise ValueError("silence_token_ids must not be empty")
         self.parked_request_timeout_s = float(parked_request_timeout_s)
-        if not math.isfinite(self.parked_request_timeout_s) or self.parked_request_timeout_s <= 0:
+        if (
+            not math.isfinite(self.parked_request_timeout_s)
+            or self.parked_request_timeout_s <= 0
+        ):
             raise ValueError("parked_request_timeout_s must be finite and positive")
         self.parked_reqs: dict[str, Any] = {}
         self.parked_since: dict[str, float] = {}
@@ -153,15 +164,23 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if state.accounting is not None:
             self._prune_accounting_records()
             self._accounting_records[state.request_id] = state.accounting
-        context_limit = getattr(getattr(self, "server_args", None), "context_length", None)
+        context_limit = getattr(
+            getattr(self, "server_args", None), "context_length", None
+        )
         if context_limit is not None:
             state.context_limit = int(context_limit)
-        if (state.accounting is not None and state.context_limit is not None
-                and len(req_data.req.origin_input_ids) + 1 > state.context_limit):
+        if (
+            state.accounting is not None
+            and state.context_limit is not None
+            and len(req_data.req.origin_input_ids) + 1 > state.context_limit
+        ):
             state.accounting.failure_code = "context_exhausted"
             state.accounting.freeze()
             self._emit_request_error(
-                state.request_id, ContextExhaustedError("initial prompt exceeds the realtime context limit")
+                state.request_id,
+                ContextExhaustedError(
+                    "initial prompt exceeds the realtime context limit"
+                ),
             )
             self.abort(state.request_id, defer_running_cleanup=False)
             return
@@ -173,7 +192,10 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 req_data,
                 request_admission_lock_held=request_admission_lock_held,
             )
-            if state.accounting is not None and state.request_id in self._aborted_request_ids:
+            if (
+                state.accounting is not None
+                and state.request_id in self._aborted_request_ids
+            ):
                 state.accounting.freeze()
                 self.realtime_sessions.close(state.request_id)
         except Exception:
@@ -187,7 +209,8 @@ class MossVLRealtimeScheduler(OmniScheduler):
         records = self._accounting_records
         now = time.monotonic()
         retired = sorted(
-            (record.retired_at, rid) for rid, record in records.items()
+            (record.retired_at, rid)
+            for rid, record in records.items()
             if record.retired_at is not None
         )
         for retired_at, rid in retired:
@@ -203,9 +226,14 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
     def _run_admin_action(self, action, payload=None):
         if action == "realtime_v2_info":
-            return {"success": True, "message": "ok", "data": {
-                "realtime_v2": True, "context_limit": int(self.server_args.context_length),
-            }}
+            return {
+                "success": True,
+                "message": "ok",
+                "data": {
+                    "realtime_v2": True,
+                    "context_limit": int(self.server_args.context_length),
+                },
+            }
         if action != FINALIZE_ACTION:
             return super()._run_admin_action(action, payload)
         payload = dict(payload or {})
@@ -230,11 +258,19 @@ class MossVLRealtimeScheduler(OmniScheduler):
         elif not record.frozen:
             self.abort(rid, defer_running_cleanup=False)
         snapshot = record.freeze()
-        return {"success": True, "message": "ok", "data": {
-            "request_id": rid, "session_id": sid, "usage": snapshot,
-            "watermark": record.step, "final": True,
-            "failure_code": record.failure_code, "seq_no": record.failure_seq,
-        }}
+        return {
+            "success": True,
+            "message": "ok",
+            "data": {
+                "request_id": rid,
+                "session_id": sid,
+                "usage": snapshot,
+                "watermark": record.step,
+                "final": True,
+                "failure_code": record.failure_code,
+                "seq_no": record.failure_seq,
+            },
+        }
 
     def _ingest_request_update(self, req_data: Any, data: Any) -> None:
         state = _runtime_state(req_data)
@@ -336,9 +372,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
             )
 
     def _token_to_kv_pool(self) -> Any | None:
-        worker = getattr(self, "tp_worker", None) or getattr(
-            self, "model_worker", None
-        )
+        worker = getattr(self, "tp_worker", None) or getattr(self, "model_worker", None)
         runner = getattr(worker, "model_runner", None)
         return getattr(runner, "token_to_kv_pool", None)
 
@@ -514,7 +548,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if plan.batch_to_run is not None:
             return plan
         if isinstance(self.running_batch, ScheduleBatch):
-            self.running_batch = MossVLRealtimeScheduleBatch.from_batch(self.running_batch)
+            self.running_batch = MossVLRealtimeScheduleBatch.from_batch(
+                self.running_batch
+            )
         self._guard_decode_capacity()
         if self._decode_rate_limited():
             # NextBatchPlan has no "idle with a nonempty running batch" flag;
@@ -768,7 +804,9 @@ class MossVLRealtimeScheduler(OmniScheduler):
         if batch.reqs:
             self.process_batch_result(batch, result)
 
-    def _free_parked_overrun_step_slots(self, batch: Any, drop_indices: list[int]) -> None:
+    def _free_parked_overrun_step_slots(
+        self, batch: Any, drop_indices: list[int]
+    ) -> None:
         """Free parked rows' overrun decode slots and reconcile their accounting.
 
         Unlike finished/retracted rows (whose slots are released with the
@@ -820,9 +858,12 @@ class MossVLRealtimeScheduler(OmniScheduler):
                 if record is not None:
                     state = getattr(req, RUNTIME_STATE_ATTR)
                     finish = req.finished_reason.to_json()
-                    if (finish.get("type") == "length" and state.context_limit is not None
-                            and record.snapshot()["total_tokens"] >= state.context_limit
-                            and record.failure_code is None):
+                    if (
+                        finish.get("type") == "length"
+                        and state.context_limit is not None
+                        and record.snapshot()["total_tokens"] >= state.context_limit
+                        and record.failure_code is None
+                    ):
                         record.failure_code = "context_exhausted"
                     record.freeze()
                 self.realtime_sessions.close(req.rid)
@@ -926,9 +967,7 @@ class MossVLRealtimeScheduler(OmniScheduler):
     ) -> MossVLRealtimeSegment:
         # Token space: fill ids retain one pad placeholder per historical
         # encoder slot, including frames the sliding window already evicted.
-        committed_total = (
-            state.effective_appended_encoder_length + state.decoder_length
-        )
+        committed_total = state.effective_appended_encoder_length + state.decoder_length
         req._refresh_fill_ids()
         pending_count = len(req.full_untruncated_fill_ids) - committed_total
         if pending_count != 1:
@@ -987,15 +1026,22 @@ class MossVLRealtimeScheduler(OmniScheduler):
 
     def abort(self, request_id: str, *, defer_running_cleanup: bool = True) -> None:
         owner = getattr(self, "_scheduler_thread_id", None)
-        if getattr(self, "_running", False) and owner is not None and owner != threading.get_ident():
+        if (
+            getattr(self, "_running", False)
+            and owner is not None
+            and owner != threading.get_ident()
+        ):
             # The control-plane listener is a different thread. Page rewrites,
             # in-flight forwards and KV release must stay on the scheduler owner.
             # Only the entry rank enqueues; recv_requests broadcasts to TP peers.
             if getattr(self, "is_entry_rank", getattr(self, "tp_rank", 0) == 0):
-                self.inbox.put(IncomingMessage(
-                    request_id=request_id, type="abort",
-                    data={"defer_running_cleanup": defer_running_cleanup},
-                ))
+                self.inbox.put(
+                    IncomingMessage(
+                        request_id=request_id,
+                        type="abort",
+                        data={"defer_running_cleanup": defer_running_cleanup},
+                    )
+                )
             return
         pending = getattr(self, "_async_pending", None)
         if pending is not None and any(r.rid == request_id for r in pending[0].reqs):
@@ -1073,9 +1119,7 @@ def _append_segment_to_request(
         segment.multimodal_inputs.visible_frame_counts.clone()
     )
     req._moss_vl_realtime_staged_full_grid_thw = segment.full_grid_thw.clone()
-    req._moss_vl_realtime_staged_events = [
-        event.to_dict() for event in segment.events
-    ]
+    req._moss_vl_realtime_staged_events = [event.to_dict() for event in segment.events]
     prompt_seq_nos = [
         event.seq_no for event in segment.events if event.prompt is not None
     ]

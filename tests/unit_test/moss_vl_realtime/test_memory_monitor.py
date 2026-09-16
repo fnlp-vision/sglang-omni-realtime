@@ -59,7 +59,9 @@ def test_process_peak_separate_from_device_peak(monitor, tmp_path):
 
 
 @pytest.mark.parametrize("used", [0, 2**64 - 1, 81_000_000_000])
-def test_measurement_validity_is_separate_from_reference_capacity(monitor, tmp_path, used):
+def test_measurement_validity_is_separate_from_reference_capacity(
+    monitor, tmp_path, used
+):
     module, state = monitor
     path = tmp_path / "memory.json"
     with module.MemoryMonitor(path, interval=100):

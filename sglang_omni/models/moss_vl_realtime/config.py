@@ -59,7 +59,9 @@ class MossVLRealtimePipelineConfig(PipelineConfig):
         if self.realtime_frame_window_enabled:
             window_args["realtime_frame_window_enabled"] = True
         if self.realtime_frame_window_raw_s is not None:
-            window_args["realtime_frame_window_raw_s"] = self.realtime_frame_window_raw_s
+            window_args["realtime_frame_window_raw_s"] = (
+                self.realtime_frame_window_raw_s
+            )
         if self.realtime_frame_pool_window_s is not None:
             window_args["realtime_frame_pool_window_s"] = (
                 self.realtime_frame_pool_window_s

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from sglang_omni.models.moss_vl_realtime.platform_compat import is_npu_platform
+
 _REPO_ROOT = Path(__file__).parents[3]
 _LAUNCHER_PATH = _REPO_ROOT / "examples" / "run_moss_vl_realtime_server.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -42,7 +44,7 @@ def test_launcher_async_decode_flag_defaults_off(monkeypatch) -> None:
     args = _parse(monkeypatch, "--model-path", "/models/x")
 
     assert args.enable_async_decode is False
-    assert args.decode_cuda_graph is True
+    assert args.decode_cuda_graph is (not is_npu_platform())
     assert args.context_length == 262144
     assert args.mem_fraction_static == 0.40
     assert args.enable_benchmark_mode is False

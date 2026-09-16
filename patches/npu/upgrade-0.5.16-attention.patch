@@ -1,7 +1,7 @@
 --- a/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
 +++ b/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
 @@ -38,7 +38,10 @@
- 
+
          if attn_mask is not None:
              if attn_mask.dtype == torch.bool:
 -                attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
@@ -11,7 +11,7 @@
 +                attn_bias.masked_fill_(bool2d.logical_not(), float("-inf"))
              else:
                  attn_bias = attn_mask + attn_bias
- 
+
 @@ -95,11 +98,11 @@
              scaling: float or None
              enable_gqa: bool
@@ -23,7 +23,7 @@
                  required for SWA layers to translate req_to_token indices
 +            cross_attention_custom_mask: flattened per-request [Q, encoder KV]
 +                visibility entries; True/1 means visible, extend cross-attention only
- 
+
          Returns:
              output: [num_tokens, num_heads, head_size]
 @@ -145,8 +148,14 @@
@@ -39,7 +39,7 @@
                      atten_start_kv = int(encoder_lens[seq_idx].item())
 -                    atten_end_kv = atten_start_kv + extend_seq_len_q
 +                    atten_end_kv = atten_start_kv + seq_len_kv
- 
+
              is_swa_self_attn = (
                  sliding_window_size is not None
 @@ -229,12 +238,28 @@

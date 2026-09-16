@@ -188,9 +188,9 @@ class _MultiFrameProcessor:
             input_ids += [self.image_token_id, 102]
         return {
             "input_ids": torch.tensor([input_ids]),
-            "pixel_values": torch.arange(
-                48 * frame_count, dtype=torch.float32
-            ).reshape(frame_count, 3, 4, 4),
+            "pixel_values": torch.arange(48 * frame_count, dtype=torch.float32).reshape(
+                frame_count, 3, 4, 4
+            ),
             "grid_thw": torch.tensor([[1, 4, 4]] * frame_count),
         }
 

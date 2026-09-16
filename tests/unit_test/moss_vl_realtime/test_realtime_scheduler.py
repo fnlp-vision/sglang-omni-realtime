@@ -502,8 +502,10 @@ def test_park_also_filters_live_running_batch() -> None:
 
     def _batch():
         batch = SimpleNamespace(reqs=[req], batch_is_full=True)
+
         def _filter(*, keep_indices, batch=batch):
             batch.reqs = [batch.reqs[i] for i in keep_indices]
+
         batch.filter_batch = _filter
         return batch
 
@@ -541,14 +543,16 @@ def test_silence_filters_real_batch_and_result_snapshot(
             decoder_length=5 + index,
             phase=MossVLRealtimePhase.DECODING,
         )
-        reqs.append(SimpleNamespace(
-            rid=rid,
-            output_ids=array("q", [77 if index in silent_indices else 5]),
-            finished=lambda: False,
-            return_logprob=False,
-            grammar=None,
-            _moss_vl_realtime_state=state,
-        ))
+        reqs.append(
+            SimpleNamespace(
+                rid=rid,
+                output_ids=array("q", [77 if index in silent_indices else 5]),
+                finished=lambda: False,
+                return_logprob=False,
+                grammar=None,
+                _moss_vl_realtime_state=state,
+            )
+        )
     sampling_filters = []
     live = ScheduleBatch(
         reqs=reqs[:],
@@ -593,7 +597,8 @@ def test_silence_filters_real_batch_and_result_snapshot(
         state = req._moss_vl_realtime_state
         assert state.phase is (
             MossVLRealtimePhase.WAITING_FOR_EVENT
-            if index in silent_indices else MossVLRealtimePhase.DECODING
+            if index in silent_indices
+            else MossVLRealtimePhase.DECODING
         )
         assert (state.encoder_length, state.decoder_length) == (3 + index, 5 + index)
     if keep:
@@ -742,8 +747,9 @@ def test_context_capacity_guard_rejects_overlength_extend() -> None:
 
 
 def test_tp_frame_resolution_broadcasts_rank0_pixels(monkeypatch) -> None:
-    import sglang_omni.models.moss_vl_realtime.scheduler as moss_scheduler
     from PIL import Image
+
+    import sglang_omni.models.moss_vl_realtime.scheduler as moss_scheduler
 
     called: list[str] = []
     source = Image.new("RGB", (3, 2), color=(10, 20, 30))
@@ -911,7 +917,9 @@ def test_preempt_decode_memory_pressure_keeps_last_request() -> None:
 @pytest.mark.parametrize("running_count", [1, 2])
 def test_decode_pressure_can_release_heavier_parked_session(running_count):
     scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
-    active = [_pressure_req(f"active-{i}", encoder_length=20) for i in range(running_count)]
+    active = [
+        _pressure_req(f"active-{i}", encoder_length=20) for i in range(running_count)
+    ]
     parked = _pressure_req("parked-heavy", encoder_length=900)
     scheduler.parked_reqs = {parked.rid: parked}
     scheduler.running_batch = SimpleNamespace(
@@ -924,7 +932,9 @@ def test_decode_pressure_can_release_heavier_parked_session(running_count):
         assert not defer_running_cleanup
         aborted.append(rid)
         scheduler.parked_reqs.pop(rid, None)
-        scheduler.running_batch.reqs = [r for r in scheduler.running_batch.reqs if r.rid != rid]
+        scheduler.running_batch.reqs = [
+            r for r in scheduler.running_batch.reqs if r.rid != rid
+        ]
 
     scheduler.abort = abort
     scheduler._emit_request_error = lambda rid, error: errors.append(rid)
@@ -937,14 +947,18 @@ def test_decode_pressure_can_release_heavier_parked_session(running_count):
 def test_parked_timeout_must_be_finite(timeout):
     with pytest.raises(ValueError, match="finite"):
         MossVLRealtimeScheduler(
-            segment_builder=None, silence_token_ids=(77,), parked_request_timeout_s=timeout,
+            segment_builder=None,
+            silence_token_ids=(77,),
+            parked_request_timeout_s=timeout,
         )
 
 
 def test_decode_pressure_deduplicates_a_request_in_running_and_parked():
     scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
     only = _pressure_req("only", encoder_length=20)
-    scheduler.running_batch = SimpleNamespace(reqs=[only], check_decode_mem=lambda: False)
+    scheduler.running_batch = SimpleNamespace(
+        reqs=[only], check_decode_mem=lambda: False
+    )
     scheduler.parked_reqs = {only.rid: only}
     scheduler.abort = lambda *a, **k: pytest.fail("the last live request must be kept")
     scheduler._preempt_decode_memory_pressure()
@@ -954,7 +968,9 @@ def test_decode_without_memory_pressure_keeps_parked_sessions():
     scheduler = MossVLRealtimeScheduler.__new__(MossVLRealtimeScheduler)
     active = _pressure_req("active", encoder_length=20)
     parked = _pressure_req("parked", encoder_length=900)
-    scheduler.running_batch = SimpleNamespace(reqs=[active], check_decode_mem=lambda: True)
+    scheduler.running_batch = SimpleNamespace(
+        reqs=[active], check_decode_mem=lambda: True
+    )
     scheduler.parked_reqs = {parked.rid: parked}
     scheduler.abort = lambda *a, **k: pytest.fail("no memory pressure")
     scheduler._preempt_decode_memory_pressure()
@@ -1129,9 +1145,7 @@ def test_extend_budget_selects_distinct_victims(
     scheduler._emit_request_error = lambda *args: None
     remaining = scheduler._enforce_extend_memory_budget(selected)
     expected = (
-        ["heavy", "peer"]
-        if append_fits_after_eviction
-        else ["heavy", "peer", "light"]
+        ["heavy", "peer"] if append_fits_after_eviction else ["heavy", "peer", "light"]
     )
     assert aborted == expected
     assert [entry[0].rid for entry in remaining] == (

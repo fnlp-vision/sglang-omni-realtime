@@ -252,18 +252,26 @@ def test_take_deferred_request_payloads_is_event_driven() -> None:
     assert scheduler._dirty_deferred_request_ids == set()
 
 
-@pytest.mark.parametrize('error', [
-    RuntimeError('cuda out of memory'),
-    torch.OutOfMemoryError('cuda out of memory'),
-    RuntimeError('ordinary forward failure'),
-])
-def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(monkeypatch, error) -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("cuda out of memory"),
+        torch.OutOfMemoryError("cuda out of memory"),
+        RuntimeError("ordinary forward failure"),
+    ],
+)
+def test_omni_scheduler_run_batch_failure_emits_error_and_aborts(
+    monkeypatch, error
+) -> None:
     """Forward failures are owned by the scheduler, not model executors."""
     import sglang_omni.platforms as platforms
 
-    monkeypatch.setattr(platforms.current_platform, 'device_type', 'cuda')
-    monkeypatch.setattr(omni_scheduler_module.os, '_exit',
-                        lambda code: pytest.fail(f'CUDA batch failure exited with {code}'))
+    monkeypatch.setattr(platforms.current_platform, "device_type", "cuda")
+    monkeypatch.setattr(
+        omni_scheduler_module.os,
+        "_exit",
+        lambda code: pytest.fail(f"CUDA batch failure exited with {code}"),
+    )
     release_calls: list[tuple[str, object]] = []
     tree_cache = object()
     model_path_events: list[tuple[str, str, str | None]] = []

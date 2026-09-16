@@ -32,8 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--vl-api-v2-port", type=int, default=None,
-                        help="Opt-in separate VL API v2 listener sharing the same model")
+    parser.add_argument(
+        "--vl-api-v2-port",
+        type=int,
+        default=None,
+        help="Opt-in separate VL API v2 listener sharing the same model",
+    )
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--tp-size", type=int, default=1)
     parser.add_argument(

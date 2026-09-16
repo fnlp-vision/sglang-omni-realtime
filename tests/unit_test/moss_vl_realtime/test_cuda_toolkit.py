@@ -37,7 +37,9 @@ def test_environment_views_do_not_conflict(tmp_path):
 def test_concurrent_prepare_is_idempotent(tmp_path):
     sdk = make_sdk(tmp_path / "env")
     with ThreadPoolExecutor(max_workers=8) as pool:
-        views = list(pool.map(lambda _: toolkit.prepare(tmp_path / "views", sdk), range(32)))
+        views = list(
+            pool.map(lambda _: toolkit.prepare(tmp_path / "views", sdk), range(32))
+        )
     assert len(set(views)) == 1
     assert (views[0] / "lib/libcudart.so").is_file()
 

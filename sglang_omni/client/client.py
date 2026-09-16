@@ -37,7 +37,6 @@ from sglang_omni.proto import OmniRequest, RequestState, StreamMessage
 logger = logging.getLogger(__name__)
 
 
-
 class Client:
     """Internal client used by API adapters."""
 

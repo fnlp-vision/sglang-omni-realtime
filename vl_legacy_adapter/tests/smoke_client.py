@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import inspect
+import io
 import json
 import os
 import sys
@@ -38,9 +38,17 @@ from PIL import Image
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-CONNECT_OPTIONS = {"proxy": None} if "proxy" in inspect.signature(connect).parameters else {}
+CONNECT_OPTIONS = (
+    {"proxy": None} if "proxy" in inspect.signature(connect).parameters else {}
+)
 
-END_MARKERS = ("<|im_end|>", "<|silence|>", "<|round_end|>", "<|eot_id|>", "<|endoftext|>")
+END_MARKERS = (
+    "<|im_end|>",
+    "<|silence|>",
+    "<|round_end|>",
+    "<|eot_id|>",
+    "<|endoftext|>",
+)
 BUSY_SUBSTRING = "realtime session is already active"
 
 READY_TIMEOUT_S = 10.0
@@ -143,8 +151,14 @@ async def recv_json(ws, timeout: float) -> dict | None:
     return json.loads(raw)
 
 
-async def run_round(url: str, frames: list[bytes], *, prompt: str | None = None,
-                    max_new_tokens: int | None = None, retry_busy: bool = True) -> RoundResult:
+async def run_round(
+    url: str,
+    frames: list[bytes],
+    *,
+    prompt: str | None = None,
+    max_new_tokens: int | None = None,
+    retry_busy: bool = True,
+) -> RoundResult:
     """Retry rejected connections only, within one shared round deadline."""
     started = time.monotonic()
     deadline = started + ROUND_TIMEOUT_S
@@ -155,10 +169,17 @@ async def run_round(url: str, frames: list[bytes], *, prompt: str | None = None,
         async with asyncio.timeout_at(deadline):
             for attempt in range(len(delays) + 1):
                 result = await _run_round_once(
-                    url, frames, prompt=prompt, max_new_tokens=max_new_tokens,
-                    deadline=deadline)
-                busy = (result.t_ready is None and len(result.errors) == 1
-                        and BUSY_SUBSTRING in result.errors[0])
+                    url,
+                    frames,
+                    prompt=prompt,
+                    max_new_tokens=max_new_tokens,
+                    deadline=deadline,
+                )
+                busy = (
+                    result.t_ready is None
+                    and len(result.errors) == 1
+                    and BUSY_SUBSTRING in result.errors[0]
+                )
                 if not busy or attempt == len(delays):
                     break
                 retries.extend(result.errors)
@@ -172,12 +193,20 @@ async def run_round(url: str, frames: list[bytes], *, prompt: str | None = None,
     return result
 
 
-async def _run_round_once(url: str, frames: list[bytes], *, prompt: str | None = None,
-                    max_new_tokens: int | None = None, deadline: float) -> RoundResult:
+async def _run_round_once(
+    url: str,
+    frames: list[bytes],
+    *,
+    prompt: str | None = None,
+    max_new_tokens: int | None = None,
+    deadline: float,
+) -> RoundResult:
     """One full legacy-contract round: start -> ready -> frames -> outputs -> stop."""
     result = RoundResult()
     result.t_start = time.monotonic()
-    async with connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024, open_timeout=READY_TIMEOUT_S) as ws:
+    async with connect(
+        url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024, open_timeout=READY_TIMEOUT_S
+    ) as ws:
         start = dict(START_EXAMPLE)
         if prompt is not None:
             start["prompt"] = prompt
@@ -235,9 +264,14 @@ async def _run_round_once(url: str, frames: list[bytes], *, prompt: str | None =
 def report(name: str, ok: bool, detail: str, result: RoundResult | None = None) -> bool:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}")
     if result is not None:
-        record = {"test": name, **result.timings(), "acks": result.acks,
-                  "text": result.visible_text[:80], "errors": result.errors,
-                  "retry_errors": result.retry_errors}
+        record = {
+            "test": name,
+            **result.timings(),
+            "acks": result.acks,
+            "text": result.visible_text[:80],
+            "errors": result.errors,
+            "retry_errors": result.retry_errors,
+        }
         print("      " + json.dumps(record, ensure_ascii=False))
     return ok
 
@@ -255,21 +289,31 @@ async def test_vl01(url: str, frames: list[bytes]) -> bool:
             and incremental
             and not result.errors
         )
-        detail = (f"{count} JPEGs, acks={result.acks}, marker={result.marker_seen}, "
-                  f"visible={len(result.visible_text)} chars, incremental={incremental}")
+        detail = (
+            f"{count} JPEGs, acks={result.acks}, marker={result.marker_seen}, "
+            f"visible={len(result.visible_text)} chars, incremental={incremental}"
+        )
         ok &= report(f"VL-01/{count}", good, detail, result)
     return ok
 
 
 async def test_vl02(url: str, frames: list[bytes]) -> bool:
-    r1 = await run_round(url, frames[:4], prompt="第一轮：请描述画面中的主体。", retry_busy=False)
-    r2 = await run_round(url, frames[:4], prompt="第二轮：画面里有什么动作？", retry_busy=False)
-    good = (
-        r1.marker_seen and r2.marker_seen
-        and not any(BUSY_SUBSTRING in e for e in r2.errors)
-        and not r1.errors and not r2.errors
+    r1 = await run_round(
+        url, frames[:4], prompt="第一轮：请描述画面中的主体。", retry_busy=False
     )
-    ok = report("VL-02", good, "two consecutive rounds, no busy residue, no cross-talk", r2)
+    r2 = await run_round(
+        url, frames[:4], prompt="第二轮：画面里有什么动作？", retry_busy=False
+    )
+    good = (
+        r1.marker_seen
+        and r2.marker_seen
+        and not any(BUSY_SUBSTRING in e for e in r2.errors)
+        and not r1.errors
+        and not r2.errors
+    )
+    ok = report(
+        "VL-02", good, "two consecutive rounds, no busy residue, no cross-talk", r2
+    )
     print(f"      round1 text: {r1.visible_text[:60]!r}")
     print(f"      round2 text: {r2.visible_text[:60]!r}")
     # Cross-round contamination: round 2 must not replay round 1's answer.
@@ -278,13 +322,19 @@ async def test_vl02(url: str, frames: list[bytes]) -> bool:
         leaked = r1_text in r2.full_text
         if leaked:
             ok = False
-        ok &= report("VL-02/no-carryover", not leaked,
-                     "round1 full text " + ("FOUND in" if leaked else "absent from")
-                     + " round2 output")
+        ok &= report(
+            "VL-02/no-carryover",
+            not leaked,
+            "round1 full text "
+            + ("FOUND in" if leaked else "absent from")
+            + " round2 output",
+        )
     else:
-        print("      [MANUAL-CHECK] round1 produced too little visible text to "
-              "auto-check carryover; verify by eye that round2 does not "
-              "replay round1 output")
+        print(
+            "      [MANUAL-CHECK] round1 produced too little visible text to "
+            "auto-check carryover; verify by eye that round2 does not "
+            "replay round1 output"
+        )
     return ok
 
 
@@ -292,13 +342,20 @@ async def test_vl03_bad_jpeg(url: str, frames: list[bytes]) -> bool:
     corrupt = b"\xff\xd8\xff\xe0" + os.urandom(4096)
     result = await run_round(url, [frames[0], corrupt, frames[1]])
     consumable = bool(result.errors) or result.marker_seen
-    ok = report("VL-03/bad-jpeg", consumable,
-                f"corrupt frame -> errors={result.errors} marker={result.marker_seen}",
-                result)
+    ok = report(
+        "VL-03/bad-jpeg",
+        consumable,
+        f"corrupt frame -> errors={result.errors} marker={result.marker_seen}",
+        result,
+    )
     # Resource cleanup: the next round must work.
     nxt = await run_round(url, frames[:4])
-    ok &= report("VL-03/bad-jpeg+next", nxt.marker_seen and not nxt.errors,
-                 "next round healthy after corrupt frame", nxt)
+    ok &= report(
+        "VL-03/bad-jpeg+next",
+        nxt.marker_seen and not nxt.errors,
+        "next round healthy after corrupt frame",
+        nxt,
+    )
     return ok
 
 
@@ -310,11 +367,14 @@ async def test_vl03_busy(url: str, frames: list[bytes]) -> bool:
         assert first["type"] == "ready", first
         busy_seen = False
         try:
-            async with connect(url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024) as ws2:
+            async with connect(
+                url, **CONNECT_OPTIONS, max_size=16 * 1024 * 1024
+            ) as ws2:
                 await ws2.send(json.dumps(dict(START_EXAMPLE), ensure_ascii=False))
                 message = await recv_json(ws2, READY_TIMEOUT_S)
-                busy_seen = (message["type"] == "error"
-                             and BUSY_SUBSTRING in message.get("message", ""))
+                busy_seen = message[
+                    "type"
+                ] == "error" and BUSY_SUBSTRING in message.get("message", "")
         except ConnectionClosed as exc:
             busy_seen = False
             print(f"      second connection closed: {exc}")
@@ -322,8 +382,12 @@ async def test_vl03_busy(url: str, frames: list[bytes]) -> bool:
     ok = report("VL-03/busy", busy_seen, "second session got the legacy busy message")
     await asyncio.sleep(0.3)
     nxt = await run_round(url, frames[:4])
-    ok &= report("VL-03/busy+next", nxt.marker_seen and not nxt.errors,
-                 "slot released after stop", nxt)
+    ok &= report(
+        "VL-03/busy+next",
+        nxt.marker_seen and not nxt.errors,
+        "slot released after stop",
+        nxt,
+    )
     return ok
 
 
@@ -342,15 +406,25 @@ async def test_vl03_silent_round(url: str, frames: list[bytes]) -> bool:
         no_output_error and not other_errors
     )
     within_budget = result.t_total is not None and result.t_total < ROUND_TIMEOUT_S
-    ok = report("VL-03/silent-round", clean_end and within_budget,
-                f"1-frame minimal round: marker={result.marker_seen} "
-                f"errors={result.errors}", result)
+    ok = report(
+        "VL-03/silent-round",
+        clean_end and within_budget,
+        f"1-frame minimal round: marker={result.marker_seen} "
+        f"errors={result.errors}",
+        result,
+    )
     if not result.marker_seen and not no_output_error:
-        print("      [MANUAL-CHECK] round ended neither via the forged marker "
-              "nor the no-visible-output error; inspect adapter logs")
+        print(
+            "      [MANUAL-CHECK] round ended neither via the forged marker "
+            "nor the no-visible-output error; inspect adapter logs"
+        )
     nxt = await run_round(url, frames[:4])
-    ok &= report("VL-03/silent+next", nxt.marker_seen and not nxt.errors,
-                 "next round healthy after silent round", nxt)
+    ok &= report(
+        "VL-03/silent+next",
+        nxt.marker_seen and not nxt.errors,
+        "next round healthy after silent round",
+        nxt,
+    )
     return ok
 
 
@@ -367,16 +441,29 @@ async def test_vl03_abrupt_close(url: str, frames: list[bytes]) -> bool:
     await ws.close()
     await asyncio.sleep(0.5)
     nxt = await run_round(url, frames[:4])
-    return report("VL-03/abrupt-close", nxt.marker_seen and not nxt.errors,
-                  "fresh round healthy after abrupt disconnect", nxt)
+    return report(
+        "VL-03/abrupt-close",
+        nxt.marker_seen and not nxt.errors,
+        "fresh round healthy after abrupt disconnect",
+        nxt,
+    )
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="ws://127.0.0.1:18600/v1/realtime?session_id=")
-    parser.add_argument("--testdata", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "testdata",
-        "moss_vl_realtime_1fps", "cd067_ovorec_L2_slow1fps_000013"))
+    parser.add_argument(
+        "--testdata",
+        default=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "..",
+            "testdata",
+            "moss_vl_realtime_1fps",
+            "cd067_ovorec_L2_slow1fps_000013",
+        ),
+    )
     parser.add_argument("--tests", default="vl01,vl02,vl03")
     args = parser.parse_args()
 

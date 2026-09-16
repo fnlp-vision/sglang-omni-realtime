@@ -3,7 +3,7 @@
 @@ -144,6 +144,10 @@
          self.norm1 = norm_layer(dim)
          self.norm2 = norm_layer(dim)
- 
+
 +        # Optional vision attention backend override (e.g. "ascend_attn" for
 +        # the NPU fused flash kernel — flat memory instead of materialized
 +        # attention, the structural fix for large multi-frame rounds).

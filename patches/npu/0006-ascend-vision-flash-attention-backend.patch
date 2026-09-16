@@ -3,7 +3,7 @@
 @@ -144,6 +144,10 @@
          self.norm1 = norm_layer(dim)
          self.norm2 = norm_layer(dim)
- 
+
 +        # Optional vision attention backend override (e.g. "ascend_attn" for
 +        # the NPU fused flash kernel — flat memory instead of materialized
 +        # attention, the structural fix for large multi-frame rounds).
@@ -42,6 +42,6 @@
 +            # cu_seqlens is already cumulative ([0, s1, s1+s2, ...]); take the
 +            # tail as int64 per the TND contract.
 +            seq_len_arg = cu_seqlens[1:].to(torch.int64).tolist()
- 
+
          _, num_heads, head_size = q.shape
          num_kv_heads = k.shape[1]

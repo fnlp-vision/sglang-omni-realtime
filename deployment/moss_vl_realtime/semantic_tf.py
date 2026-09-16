@@ -21,10 +21,20 @@ class Reference:
             trust_remote_code=True,
             local_files_only=True,
             dtype=torch.bfloat16,
-            device_map={"": ("npu:0" if getattr(torch, "npu", None) and torch.npu.is_available() else "cuda:0")},
+            device_map={
+                "": (
+                    "npu:0"
+                    if getattr(torch, "npu", None) and torch.npu.is_available()
+                    else "cuda:0"
+                )
+            },
             attn_implementation=attention,
         ).eval()
-        self.device = ("npu" if getattr(torch, "npu", None) and torch.npu.is_available() else "cuda")
+        self.device = (
+            "npu"
+            if getattr(torch, "npu", None) and torch.npu.is_available()
+            else "cuda"
+        )
         self.stepper = MossVLRealtimeStepper(self.model, self.processor)
         self.tokenizer = self.processor.tokenizer
         self.silence = self.tokenizer.convert_tokens_to_ids("<|silence|>")
@@ -52,7 +62,9 @@ class Reference:
             add_generation_prompt=True,
             return_tensors="pt",
         )
-        ids = (encoded["input_ids"] if hasattr(encoded, "keys") else encoded).to(self.device)
+        ids = (encoded["input_ids"] if hasattr(encoded, "keys") else encoded).to(
+            self.device
+        )
         return self.stepper.initial_prefill(ids)
 
     def extend(self, state, event):

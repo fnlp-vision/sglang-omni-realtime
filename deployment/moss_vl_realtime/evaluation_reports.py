@@ -322,13 +322,20 @@ def render(output, cases, codes, metadata, errors=None):
                 measurement = json.loads(
                     (output / f"{backend}_memory.json").read_text()
                 )
-                peaks = [measurement[k] for k in (
-                    "process_peak_bytes", "device_peak_bytes", "device_total_bytes"
-                )]
+                peaks = [
+                    measurement[k]
+                    for k in (
+                        "process_peak_bytes",
+                        "device_peak_bytes",
+                        "device_total_bytes",
+                    )
+                ]
                 if not all(type(value) is int for value in peaks):
                     raise ValueError("Memory measurements must be integer byte counts")
                 if measurement["errors"] or not 0 < peaks[0] <= peaks[1] <= peaks[2]:
-                    errors.append(f"{backend}: invalid or incomplete memory measurement")
+                    errors.append(
+                        f"{backend}: invalid or incomplete memory measurement"
+                    )
                 memory[backend] = measurement
             except (OSError, KeyError, TypeError, ValueError) as exc:
                 errors.append(f"{backend}: missing memory measurement: {exc}")

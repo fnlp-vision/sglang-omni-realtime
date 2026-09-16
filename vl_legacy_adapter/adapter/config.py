@@ -12,6 +12,7 @@ def _positive_timeout(name: str, default: str) -> float:
         raise ValueError(f"{name} must be a positive finite number")
     return value
 
+
 # Downstream (legacy contract) listener.
 LISTEN_HOST = os.environ.get("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "18600"))

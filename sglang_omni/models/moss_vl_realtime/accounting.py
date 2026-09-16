@@ -1,8 +1,9 @@
 """Opt-in logical-position accounting, independent of the wire protocol."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 ACCOUNTING_PARAM = "realtime_accounting_v2"
 ACCOUNTING_EVENT = "realtime.accounting"
@@ -58,9 +59,13 @@ class RealtimeAccounting:
 
     def snapshot(self) -> dict:
         text = self.text_input + self.text_output
-        return {"vision_tokens": self.vision, "text_input_tokens": self.text_input,
-                "text_output_tokens": self.text_output, "text_tokens": text,
-                "total_tokens": self.vision + text}
+        return {
+            "vision_tokens": self.vision,
+            "text_input_tokens": self.text_input,
+            "text_output_tokens": self.text_output,
+            "text_tokens": text,
+            "total_tokens": self.vision + text,
+        }
 
     def freeze(self) -> dict:
         self.frozen = True

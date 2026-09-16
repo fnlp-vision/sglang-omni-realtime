@@ -8,10 +8,19 @@ from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).resolve().parents[3]
 README_DIRS = (
-    ".", "benchmarks", "benchmarks/tts_serving", "deployment/moss_vl_realtime",
-    "deployment/repro", "docs", "examples", "playground",
-    "playground/qwen-omni/realtime", "sglang_omni/models/audar_tts",
-    "sglang_omni/models/fishaudio_s2_pro", "sglang_omni/models/minimax_music3", "tests",
+    ".",
+    "benchmarks",
+    "benchmarks/tts_serving",
+    "deployment/moss_vl_realtime",
+    "deployment/repro",
+    "docs",
+    "examples",
+    "playground",
+    "playground/qwen-omni/realtime",
+    "sglang_omni/models/audar_tts",
+    "sglang_omni/models/fishaudio_s2_pro",
+    "sglang_omni/models/minimax_music3",
+    "tests",
 )
 
 

@@ -70,24 +70,32 @@ def make_moss_vl_realtime_scheduler_adapters(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": initial_prompt},
         ]
-        prefill = source.get('prefill_messages')
+        prefill = source.get("prefill_messages")
         if prefill is not None:
-            if not isinstance(prefill, list) or not 1 <= len(prefill) <= 64 or any(
-                not isinstance(m, dict) or m.get('role') not in ('system', 'user', 'assistant')
-                or not isinstance(m.get('content'), str) for m in prefill
+            if (
+                not isinstance(prefill, list)
+                or not 1 <= len(prefill) <= 64
+                or any(
+                    not isinstance(m, dict)
+                    or m.get("role") not in ("system", "user", "assistant")
+                    or not isinstance(m.get("content"), str)
+                    for m in prefill
+                )
             ):
-                raise ValueError('invalid prefill_messages')
-            messages = [{'role': m['role'], 'content': m['content']} for m in prefill]
+                raise ValueError("invalid prefill_messages")
+            messages = [{"role": m["role"], "content": m["content"]} for m in prefill]
             # UI transcripts omit the trained opener consumed by the runtime.
             for message in messages:
-                if message['role'] == 'assistant' and not message['content'].startswith('<|silence|>'):
-                    message['content'] = '<|silence|>' + message['content']
-            if sum(len(m['content']) for m in messages) > 131072:
-                raise ValueError('prefill_messages text exceeds 131072 characters')
-            if messages[0]['role'] != 'system':
-                messages.insert(0, {'role': 'system', 'content': system_prompt})
-            if messages[-1]['role'] != 'user':
-                messages.append({'role': 'user', 'content': ''})
+                if message["role"] == "assistant" and not message["content"].startswith(
+                    "<|silence|>"
+                ):
+                    message["content"] = "<|silence|>" + message["content"]
+            if sum(len(m["content"]) for m in messages) > 131072:
+                raise ValueError("prefill_messages text exceeds 131072 characters")
+            if messages[0]["role"] != "system":
+                messages.insert(0, {"role": "system", "content": system_prompt})
+            if messages[-1]["role"] != "user":
+                messages.append({"role": "user", "content": ""})
         encoded = tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -131,7 +139,9 @@ def make_moss_vl_realtime_scheduler_adapters(
             decode_allowance=request_max_new_tokens,
         )
         if params.get("realtime_accounting_v2"):
-            from sglang_omni.models.moss_vl_realtime.accounting import RealtimeAccounting
+            from sglang_omni.models.moss_vl_realtime.accounting import (
+                RealtimeAccounting,
+            )
 
             state.accounting = RealtimeAccounting(session_id)
         setattr(req, RUNTIME_STATE_ATTR, state)
@@ -200,30 +210,50 @@ def make_moss_vl_realtime_stream_output_builder(
         if accounting is not None:
             if req_output.data is not None:
                 accounting.sampled()
-            messages.append(OutgoingMessage(
-                request_id=request_id, type="stream",
-                data={"event": "realtime.accounting", "modality": "control",
-                      "usage": accounting.snapshot(), "watermark": accounting.step,
-                      "context_limit": int(data.runtime_state.context_limit or context_length)},
-                metadata={"modality": "control"},
-            ))
+            messages.append(
+                OutgoingMessage(
+                    request_id=request_id,
+                    type="stream",
+                    data={
+                        "event": "realtime.accounting",
+                        "modality": "control",
+                        "usage": accounting.snapshot(),
+                        "watermark": accounting.step,
+                        "context_limit": int(
+                            data.runtime_state.context_limit or context_length
+                        ),
+                    },
+                    metadata={"modality": "control"},
+                )
+            )
         if (data.stage_payload.request.params or {}).get("include_usage"):
             state = data.runtime_state
             # Include the sampled pending token; it still needs its next forward.
-            decoder_tokens = int(state.decoder_length) + int(req_output.data is not None)
-            token_space_used = int(state.effective_appended_encoder_length) + decoder_tokens
-            messages.append(OutgoingMessage(
-                request_id=request_id, type="stream",
-                data={
-                    "event": "session.usage", "modality": "control",
-                    "decoder_tokens": decoder_tokens,
-                    "encoder_tokens": int(state.effective_appended_encoder_length),
-                    "encoder_kv_tokens": int(state.encoder_length),
-                    "token_space_used": token_space_used,
-                    "context_limit": int(context_length),
-                    "context_remaining": max(0, int(context_length) - token_space_used),
-                }, metadata={"modality": "control"},
-            ))
+            decoder_tokens = int(state.decoder_length) + int(
+                req_output.data is not None
+            )
+            token_space_used = (
+                int(state.effective_appended_encoder_length) + decoder_tokens
+            )
+            messages.append(
+                OutgoingMessage(
+                    request_id=request_id,
+                    type="stream",
+                    data={
+                        "event": "session.usage",
+                        "modality": "control",
+                        "decoder_tokens": decoder_tokens,
+                        "encoder_tokens": int(state.effective_appended_encoder_length),
+                        "encoder_kv_tokens": int(state.encoder_length),
+                        "token_space_used": token_space_used,
+                        "context_limit": int(context_length),
+                        "context_remaining": max(
+                            0, int(context_length) - token_space_used
+                        ),
+                    },
+                    metadata={"modality": "control"},
+                )
+            )
         processed_events = getattr(
             data.req,
             "_moss_vl_realtime_processed_events",

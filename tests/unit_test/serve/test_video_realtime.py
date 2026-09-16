@@ -894,10 +894,14 @@ def test_video_realtime_abort_stream_error_leaves_terminal_to_teardown(
         assert websocket.receive_json()["type"] == "session.configured"
         assert websocket.receive_json()["type"] == "session.ready"
         if submit_frame:
-            websocket.send_json({
-                "type": "input.frame", "seq_no": 0,
-                "timestamp": 0.0, "mime_type": "image/png",
-            })
+            websocket.send_json(
+                {
+                    "type": "input.frame",
+                    "seq_no": 0,
+                    "timestamp": 0.0,
+                    "mime_type": "image/png",
+                }
+            )
             assert websocket.receive_json()["type"] == "input.frame.ready"
             websocket.send_bytes(_png_bytes())
             assert websocket.receive_json()["type"] == "input.frame.accepted"

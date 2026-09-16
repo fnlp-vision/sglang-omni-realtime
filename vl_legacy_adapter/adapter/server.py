@@ -33,9 +33,7 @@ class AdapterServer:
         self._inflight = 0
         self._inflight_lock = asyncio.Lock()
 
-    def _check_path(
-        self, connection: ServerConnection, request
-    ) -> Response | None:
+    def _check_path(self, connection: ServerConnection, request) -> Response | None:
         path = request.path.split("?", 1)[0]
         if path == config.LISTEN_PATH or path.endswith(config.LISTEN_PATH):
             return None

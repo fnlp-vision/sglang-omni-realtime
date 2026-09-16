@@ -1,14 +1,14 @@
 """Cancellation and admission deadlines must work while input credit is stalled."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from io import BytesIO
-import json
 
+import anyio
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-import pytest
-import anyio
 from starlette.websockets import WebSocketState
 
 import sglang_omni.serve.video_realtime as video_realtime
@@ -20,6 +20,7 @@ from sglang_omni.serve.video_realtime import VideoRealtimeSessionManager
 @pytest.mark.asyncio
 async def test_cleanup_survives_repeated_task_cancellation():
     from sglang_omni.serve._cleanup import await_cleanup
+
     gate, entered, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     async def cleanup():
@@ -47,11 +48,13 @@ async def test_abort_cancellation_still_releases_local_resources():
         async def abort(self, rid):
             raise asyncio.CancelledError
 
-    manager = VideoRealtimeSessionManager(client=CancelledClient(), model_name='test')
+    manager = VideoRealtimeSessionManager(client=CancelledClient(), model_name="test")
     session = manager.open(Socket())
     session.configured = True
     session.outstanding_seq_nos.add(0)
-    session.frame_refs_by_seq[0] = manager.frame_store.put(session.request_id, b'unconsumed')
+    session.frame_refs_by_seq[0] = manager.frame_store.put(
+        session.request_id, b"unconsumed"
+    )
     try:
         with pytest.raises(asyncio.CancelledError):
             await manager.close(session.session_id)
@@ -86,7 +89,9 @@ class Socket:
         if isinstance(value, bytes):
             self.incoming.put_nowait(dict(type="websocket.receive", bytes=value))
         else:
-            self.incoming.put_nowait(dict(type="websocket.receive", text=json.dumps(value)))
+            self.incoming.put_nowait(
+                dict(type="websocket.receive", text=json.dumps(value))
+            )
 
 
 class PendingClient:
@@ -99,8 +104,12 @@ class PendingClient:
 
     async def generate(self, request, request_id=None):
         await self.ready_gate.wait()
-        yield GenerateChunk(request_id=request_id, modality="control",
-                            control_event="session.ready", control_data={})
+        yield GenerateChunk(
+            request_id=request_id,
+            modality="control",
+            control_event="session.ready",
+            control_data={},
+        )
         while True:
             yield await self.chunks.get()
 
@@ -115,6 +124,7 @@ async def until(predicate):
     async def poll():
         while not predicate():
             await asyncio.sleep(0.001)
+
     await asyncio.wait_for(poll(), 2)
 
 
@@ -122,8 +132,12 @@ async def until(predicate):
 async def opened(*, configure_timeout_s=180, client=None):
     client = client or PendingClient()
     socket = Socket()
-    manager = VideoRealtimeSessionManager(client=client, model_name="test", max_sessions=1,
-                                         configure_timeout_s=configure_timeout_s)
+    manager = VideoRealtimeSessionManager(
+        client=client,
+        model_name="test",
+        max_sessions=1,
+        configure_timeout_s=configure_timeout_s,
+    )
     session = manager.open(socket)
 
     async def serve():
@@ -149,42 +163,61 @@ async def configure(session, socket):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('protocol', ['v1', 'v2'])
-@pytest.mark.parametrize('abort_mode', ['slow', 'error', 'timeout'])
+@pytest.mark.parametrize("protocol", ["v1", "v2"])
+@pytest.mark.parametrize("abort_mode", ["slow", "error", "timeout"])
 async def test_cancelled_scope_completes_cleanup(protocol, abort_mode):
     from functools import partial
+
     from vl_api_adapter.adapter.session import V2Session
     from vl_api_adapter.adapter.usage import empty_usage
 
     class SlowClient(PendingClient):
         async def abort(self, rid):
-            if abort_mode == 'timeout':
+            if abort_mode == "timeout":
                 await asyncio.Event().wait()
             await asyncio.sleep(0.01)
-            if abort_mode == 'error':
-                raise RuntimeError('synthetic abort failure')
+            if abort_mode == "error":
+                raise RuntimeError("synthetic abort failure")
             self.aborted.append(rid)
 
         async def admin(self, action, payload, **kwargs):
             await asyncio.sleep(0.01)
-            return {'success': True, 'results': [{'data': {
-                **payload, 'final': True, 'watermark': 0, 'usage': empty_usage(),
-            }}]}
+            return {
+                "success": True,
+                "results": [
+                    {
+                        "data": {
+                            **payload,
+                            "final": True,
+                            "watermark": 0,
+                            "usage": empty_usage(),
+                        }
+                    }
+                ],
+            }
 
     class FlexibleSocket(Socket):
         async def close(self, code=1000):
             await super().close()
 
     client, socket = SlowClient(), FlexibleSocket()
-    manager = VideoRealtimeSessionManager(client=client, model_name='test', max_sessions=1)
-    factory = partial(V2Session, context_limit=131072, accounting_stage='test') if protocol == 'v2' else None
+    manager = VideoRealtimeSessionManager(
+        client=client, model_name="test", max_sessions=1
+    )
+    factory = (
+        partial(V2Session, context_limit=131072, accounting_stage="test")
+        if protocol == "v2"
+        else None
+    )
     session = manager.open(socket, session_factory=factory)
     session.cleanup_timeout_s = 0.03
-    if protocol == 'v2':
+    if protocol == "v2":
         # Exercise the same timeout branch without spending five seconds.
         original_abort = client.abort
+
         async def bounded_abort(rid):
             return await asyncio.wait_for(original_abort(rid), 0.03)
+
         client.abort = bounded_abort
     scopes, exited = [], asyncio.Event()
 
@@ -202,12 +235,16 @@ async def test_cancelled_scope_completes_cleanup(protocol, abort_mode):
             group.start_soon(serve)
             await until(lambda: bool(socket.sent))
             await configure(session, socket)
-            socket.submit(dict(type='input.frame', seq_no=0, timestamp=0, mime_type='image/png'))
-            await until(lambda: any(e['type']=='input.frame.ready' for e in socket.sent))
+            socket.submit(
+                dict(type="input.frame", seq_no=0, timestamp=0, mime_type="image/png")
+            )
+            await until(
+                lambda: any(e["type"] == "input.frame.ready" for e in socket.sent)
+            )
             payload = BytesIO()
-            Image.new('RGB', (2, 2)).save(payload, format='PNG')
+            Image.new("RGB", (2, 2)).save(payload, format="PNG")
             socket.submit(payload.getvalue())
-            await until(lambda: len(client.updates)==1)
+            await until(lambda: len(client.updates) == 1)
             assert manager.frame_store._names_by_request
             scopes[0].cancel()
             await asyncio.wait_for(exited.wait(), 2)
@@ -230,8 +267,12 @@ def test_control_releases_stalled_input_and_shared_frame(action, pending_kind):
     async def run():
         async with opened() as (session, socket, client, manager, task):
             await configure(session, socket)
-            socket.submit(dict(type="input.frame", seq_no=0, timestamp=0, mime_type="image/png"))
-            await until(lambda: any(e["type"] == "input.frame.ready" for e in socket.sent))
+            socket.submit(
+                dict(type="input.frame", seq_no=0, timestamp=0, mime_type="image/png")
+            )
+            await until(
+                lambda: any(e["type"] == "input.frame.ready" for e in socket.sent)
+            )
             image = BytesIO()
             Image.new("RGB", (2, 2)).save(image, format="PNG")
             socket.submit(image.getvalue())
@@ -249,7 +290,11 @@ def test_control_releases_stalled_input_and_shared_frame(action, pending_kind):
             if pending_kind == "prompt":
                 socket.submit(dict(type="input.prompt", seq_no=1, prompt="next"))
             else:
-                socket.submit(dict(type="input.frame", seq_no=1, timestamp=1, mime_type="image/png"))
+                socket.submit(
+                    dict(
+                        type="input.frame", seq_no=1, timestamp=1, mime_type="image/png"
+                    )
+                )
             await asyncio.wait_for(entered.wait(), 1)
             if action == "abort":
                 socket.submit(dict(type="session.abort"))
@@ -318,17 +363,26 @@ def test_input_order_is_preserved_when_credit_returns():
             socket.submit(dict(type="input.prompt", seq_no=2, prompt="third"))
             for seq in range(3):
                 await until(lambda: len(client.updates) == seq + 1)
-                client.chunks.put_nowait(GenerateChunk(
-                    request_id=session.request_id, modality="control",
-                    control_event="input.prompt.processed",
-                    control_data=dict(seq_no=seq, timestamp=0, final=False),
-                ))
-                await until(lambda: any(e["type"] == "input.prompt.processed" and e["seq_no"] == seq
-                                        for e in socket.sent))
+                client.chunks.put_nowait(
+                    GenerateChunk(
+                        request_id=session.request_id,
+                        modality="control",
+                        control_event="input.prompt.processed",
+                        control_data=dict(seq_no=seq, timestamp=0, final=False),
+                    )
+                )
+                await until(
+                    lambda: any(
+                        e["type"] == "input.prompt.processed" and e["seq_no"] == seq
+                        for e in socket.sent
+                    )
+                )
             assert [e["seq_no"] for e in client.updates] == [0, 1, 2]
             for seq in range(3):
                 types = [e["type"] for e in socket.sent if e.get("seq_no") == seq]
-                assert types.index("input.prompt.accepted") < types.index("input.prompt.processed")
+                assert types.index("input.prompt.accepted") < types.index(
+                    "input.prompt.processed"
+                )
             socket.submit(dict(type="session.abort"))
             await asyncio.wait_for(task, 1)
 
@@ -352,8 +406,12 @@ def test_oversized_queued_binary_ends_session(monkeypatch):
 
 def test_configure_timeout_frees_slot_via_public_endpoint():
     client = PendingClient()
-    app = create_app(client, model_name="test", enable_video_realtime=True,
-                     video_realtime_configure_timeout_s=0.05)
+    app = create_app(
+        client,
+        model_name="test",
+        enable_video_realtime=True,
+        video_realtime_configure_timeout_s=0.05,
+    )
     with TestClient(app) as http:
         with http.websocket_connect("/v1/video/realtime") as ws:
             assert ws.receive_json()["configure_timeout_s"] == 0.05
@@ -367,7 +425,13 @@ def test_configure_timeout_frees_slot_via_public_endpoint():
 
 def test_invalid_traffic_does_not_extend_configuration_deadline():
     async def run():
-        async with opened(configure_timeout_s=0.05) as (session, socket, client, manager, task):
+        async with opened(configure_timeout_s=0.05) as (
+            session,
+            socket,
+            client,
+            manager,
+            task,
+        ):
             for _ in range(12):
                 if task.done():
                     break
@@ -384,12 +448,20 @@ def test_configuration_deadline_does_not_limit_model_prefill():
     async def run():
         client = PendingClient()
         client.ready_gate.clear()
-        async with opened(configure_timeout_s=0.05, client=client) as (session, socket, _, manager, task):
+        async with opened(configure_timeout_s=0.05, client=client) as (
+            session,
+            socket,
+            _,
+            manager,
+            task,
+        ):
             socket.submit(dict(type="session.configure"))
             await until(lambda: session.configured)
             await asyncio.sleep(0.1)
             assert not task.done() and not session.ready
-            assert not any(e.get("code") == "configuration_timeout" for e in socket.sent)
+            assert not any(
+                e.get("code") == "configuration_timeout" for e in socket.sent
+            )
             socket.submit(dict(type="session.abort"))
             await asyncio.wait_for(task, 1)
             assert client.aborted == [session.request_id] and not manager.sessions
@@ -400,5 +472,9 @@ def test_configuration_deadline_does_not_limit_model_prefill():
 @pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
 def test_invalid_configuration_timeout_is_rejected(timeout):
     with pytest.raises(ValueError, match="configure_timeout_s"):
-        create_app(PendingClient(), model_name="test", enable_video_realtime=True,
-                   video_realtime_configure_timeout_s=timeout)
+        create_app(
+            PendingClient(),
+            model_name="test",
+            enable_video_realtime=True,
+            video_realtime_configure_timeout_s=timeout,
+        )

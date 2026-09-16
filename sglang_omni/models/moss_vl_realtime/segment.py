@@ -92,9 +92,7 @@ class MossVLRealtimeSegmentBuilder:
             zip(frame_events, images), key=lambda pair: pair[0].timestamp
         )
         prompts = [event.prompt for event in events if event.prompt is not None]
-        frame_timestamps = [
-            float(event.timestamp) for event, _ in ordered_frames
-        ]
+        frame_timestamps = [float(event.timestamp) for event, _ in ordered_frames]
         append_text = build_realtime_append_text(
             prompts=prompts,
             frame_timestamps=frame_timestamps,

@@ -163,13 +163,17 @@ def test_update_barrier_resolves_pending_step_before_materialize(monkeypatch) ->
 
     scheduler._resolve_pending_async = _resolve
     extension = object()
-    scheduler._materialize_realtime_extensions = lambda: calls.append("materialize") or extension
+    scheduler._materialize_realtime_extensions = (
+        lambda: calls.append("materialize") or extension
+    )
     scheduler._expire_parked_requests = lambda: None
+
     def plan_after_handoff(self):
         calls.append("super")
         plan = self.get_new_batch_prefill(self.running_batch)
         assert plan.batch_to_run is extension
         return "plan"
+
     monkeypatch.setattr(
         OmniScheduler,
         "get_next_batch_to_run",

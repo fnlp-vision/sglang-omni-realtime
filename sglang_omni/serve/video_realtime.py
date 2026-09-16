@@ -124,7 +124,7 @@ async def warmup_video_realtime(
 
 class VideoPrefillMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    role: Literal['system', 'user', 'assistant']
+    role: Literal["system", "user", "assistant"]
     content: str = Field(max_length=131072)
 
 
@@ -136,14 +136,17 @@ class VideoSessionConfigure(BaseModel):
     # prompt is empty; production callers pass the SFT prompt explicitly.
     prompt: str = ""
     system_prompt: str | None = None
-    prefill_messages: list[VideoPrefillMessage] | None = Field(default=None, min_length=1, max_length=64)
+    prefill_messages: list[VideoPrefillMessage] | None = Field(
+        default=None, min_length=1, max_length=64
+    )
 
-    @field_validator('prefill_messages')
+    @field_validator("prefill_messages")
     @classmethod
     def bound_prefill_text(cls, messages):
         if messages is not None and sum(len(m.content) for m in messages) > 131072:
-            raise ValueError('prefill_messages text exceeds 131072 characters')
+            raise ValueError("prefill_messages text exceeds 131072 characters")
         return messages
+
     max_new_tokens: int = Field(default=4096, gt=0)
     max_tokens_per_turn: float = Field(
         default=86400.0,
@@ -281,18 +284,23 @@ class VideoRealtimeSession:
                 task.cancel()
             if tasks:
                 await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True), self.cleanup_timeout_s
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    self.cleanup_timeout_s,
                 )
         finally:
             await self.teardown()
 
     async def _receive_inputs(self, inputs: asyncio.Queue) -> None:
         while not self.closed:
-            timeout = None if self.configured else max(
-                0.0, self._configure_deadline - time.monotonic()
+            timeout = (
+                None
+                if self.configured
+                else max(0.0, self._configure_deadline - time.monotonic())
             )
             try:
-                message = await asyncio.wait_for(self.websocket.receive(), timeout=timeout)
+                message = await asyncio.wait_for(
+                    self.websocket.receive(), timeout=timeout
+                )
             except asyncio.TimeoutError:
                 # Configuration may have completed while receive was pending.
                 if self.configured:
@@ -314,7 +322,8 @@ class VideoRealtimeSession:
                     if len(payload) > MAX_FRAME_BYTES:
                         self.closed = True
                         await self.send_error_safely(
-                            "frame payload exceeds max_frame_bytes", code="frame_too_large"
+                            "frame payload exceeds max_frame_bytes",
+                            code="frame_too_large",
                         )
                         return
                 else:
@@ -410,8 +419,15 @@ class VideoRealtimeSession:
                 "initial_prompt": config.prompt,
                 "system_prompt": config.system_prompt,
                 "session_id": self.session_id,
-                **({'prefill_messages': [m.model_dump() for m in config.prefill_messages]}
-                   if config.prefill_messages is not None else {}),
+                **(
+                    {
+                        "prefill_messages": [
+                            m.model_dump() for m in config.prefill_messages
+                        ]
+                    }
+                    if config.prefill_messages is not None
+                    else {}
+                ),
             },
             sampling=SamplingParams(
                 temperature=config.temperature,
@@ -556,7 +572,9 @@ class VideoRealtimeSession:
                 request, request_id=self.request_id, **generate_kwargs
             ):
                 if chunk.control_event == "session.usage":
-                    await self.send({"type": "session.usage", **dict(chunk.control_data or {})})
+                    await self.send(
+                        {"type": "session.usage", **dict(chunk.control_data or {})}
+                    )
                     continue
                 if chunk.control_event == "session.ready":
                     self.ready = True
@@ -702,10 +720,14 @@ class VideoRealtimeSession:
             # Give clients a terminal event instead of a bare connection close.
             try:
                 await asyncio.wait_for(
-                    self.send({
-                        "type": "session.done", "session_id": self.session_id,
-                        "aborted": True,
-                    }), self.cleanup_timeout_s,
+                    self.send(
+                        {
+                            "type": "session.done",
+                            "session_id": self.session_id,
+                            "aborted": True,
+                        }
+                    ),
+                    self.cleanup_timeout_s,
                 )
             except (OSError, RuntimeError, WebSocketDisconnect, TimeoutError):
                 logger.debug(
@@ -727,7 +749,9 @@ class VideoRealtimeSession:
                     asyncio.gather(task, return_exceptions=True), self.cleanup_timeout_s
                 )
         except TimeoutError:
-            logger.warning("Realtime response cleanup timed out for %s", self.request_id)
+            logger.warning(
+                "Realtime response cleanup timed out for %s", self.request_id
+            )
         finally:
             try:
                 self.frame_store.cleanup(self.request_id)
@@ -781,9 +805,7 @@ class VideoRealtimeSession:
         keeps the session alive.
         """
         if seq_no != self.next_seq_no:
-            raise ValueError(
-                f"expected seq_no {self.next_seq_no}, received {seq_no}"
-            )
+            raise ValueError(f"expected seq_no {self.next_seq_no}, received {seq_no}")
         if timestamp < self.last_timestamp:
             raise ValueError(
                 f"timestamp moved backwards: {timestamp} < {self.last_timestamp}"
@@ -913,7 +935,9 @@ class VideoRealtimeSessionManager:
             )
         return min(free, key=lambda rank: loads[rank])
 
-    def open(self, websocket: WebSocket, *, session_factory=None) -> VideoRealtimeSession:
+    def open(
+        self, websocket: WebSocket, *, session_factory=None
+    ) -> VideoRealtimeSession:
         if len(self.sessions) >= self.max_sessions:
             raise RuntimeError(
                 "video realtime service has no free session slot "
@@ -962,9 +986,9 @@ def register_video_realtime(
     )
     app.state.video_realtime_manager = manager
 
-    @app.get('/v1/video/realtime/capabilities')
+    @app.get("/v1/video/realtime/capabilities")
     async def video_realtime_capabilities():
-        return {'prefill_messages': True}
+        return {"prefill_messages": True}
 
     @app.websocket("/v1/video/realtime")
     async def video_realtime(websocket: WebSocket) -> None:

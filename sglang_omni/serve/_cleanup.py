@@ -1,4 +1,5 @@
 """Finish owned cleanup before propagating cancellation to its caller."""
+
 import asyncio
 
 import anyio

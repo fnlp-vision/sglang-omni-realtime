@@ -519,6 +519,7 @@ class SGLModelRunner(ModelRunner):
         )
 
     if _compat.uses_legacy_runner(ModelRunner):
+
         def _profile_available_bytes(self, pre_model_load_memory):
             """Keep the Omni memory budget in the legacy runner's profiling MRO."""
             configurator = _OmniKVCacheConfigurator(
