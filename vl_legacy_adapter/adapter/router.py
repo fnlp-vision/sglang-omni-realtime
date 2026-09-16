@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 
 from websockets.asyncio.client import connect
@@ -37,6 +38,9 @@ CAPACITY = int(os.environ.get("ROUTER_UPSTREAM_CAPACITY", "2"))
 START_TIMEOUT_S = float(os.environ.get("ROUTER_START_TIMEOUT_S", "15"))
 MAX_MSG = int(os.environ.get("ROUTER_MAX_MESSAGE_MB", "32")) << 20
 BUSY_SUBSTRING = "realtime session is already active"
+logger = logging.getLogger("adapter.router")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+_rr_counter = 0   # tie-break 轮转计数：所有上游同空闲时轮转，避免重连风暴全撞第一个实例
 
 
 def process_request(connection, request):
@@ -68,9 +72,16 @@ UPSTREAMS = [Upstream(u, CAPACITY) for u in UPSTREAM_URLS]
 
 
 def pick(exclude: frozenset = frozenset()) -> Upstream | None:
-    """Least-loaded upstream with free capacity, excluding already-tried ones."""
+    """Least-loaded upstream with free capacity; tie-break rotates (round-robin)."""
+    global _rr_counter
     cands = [u for u in UPSTREAMS if u.free > 0 and id(u) not in exclude]
-    return min(cands, key=lambda u: u.active) if cands else None
+    if not cands:
+        return None
+    least = min(u.active for u in cands)
+    cands = [u for u in cands if u.active == least]
+    u = cands[_rr_counter % len(cands)]
+    _rr_counter += 1
+    return u
 
 
 async def _try_upstream(up: Upstream, start_text: str):
@@ -94,10 +105,12 @@ async def _try_upstream(up: Upstream, start_text: str):
             kind = data.get("type")
             if kind == "ready":
                 up.active += 1
+                logger.info("bind client -> %s (active=%d)", up.url, up.active)
                 return up, ws, raw
             if kind == "error":
                 message = data.get("message", "")
                 if BUSY_SUBSTRING in message:
+                    logger.info("upstream %s busy, trying next", up.url)
                     try:
                         await ws.close()
                     except Exception:
@@ -133,12 +146,14 @@ async def bind_upstream(start_text: str):
     return None, None, reason
 
 
-async def _pump(src, dst) -> None:
+async def _pump(src, dst, tag: str) -> None:
     try:
         async for message in src:
             await dst.send(message)
-    except (ConnectionClosed, OSError):
-        pass
+    except (ConnectionClosed, OSError) as e:
+        logger.info("pump %s ended: %r", tag, e)
+    finally:
+        logger.debug("pump %s cleanup", tag)
 
 
 async def handler(websocket) -> None:
@@ -164,6 +179,7 @@ async def handler(websocket) -> None:
         await websocket.close()
         return
 
+    logger.info("client %s connected, start received", websocket.remote_address)
     up, upstream_ws, reply = await bind_upstream(first)
     if upstream_ws is None:
         try:
@@ -176,12 +192,13 @@ async def handler(websocket) -> None:
     await websocket.send(reply)
     try:
         await asyncio.gather(
-            _pump(websocket, upstream_ws),
-            _pump(upstream_ws, websocket),
+            _pump(websocket, upstream_ws, "client->up"),
+            _pump(upstream_ws, websocket, "up->client"),
             return_exceptions=True,
         )
     finally:
         up.active -= 1
+        logger.info("client %s disconnected, %s released (active=%d)", websocket.remote_address, up.url, up.active)
         for w in (websocket, upstream_ws):
             try:
                 await w.close()
