@@ -8,7 +8,7 @@
 | --- | --- |
 | [安装](./get_started/installation_zh.md) | 独立环境、固定依赖、模型下载与启动自检 |
 | [启动与测试](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README_zh.md) | 三项公开测试、命令、参考结果与折线图 |
-| [实时协议](./cookbook/moss_vl_realtime.md) | WebSocket 事件、背压、TP 与高级参数 |
+| [实时协议](./cookbook/moss_vl_realtime.md) | WebSocket 事件、背压、TP 与原生 DP 副本，以及高级参数 |
 | [容量规划](./cookbook/moss_vl_realtime_capacity.md) | 会话容量、显存、视觉窗口与长会话 |
 | [架构](./developer_reference/main.md) | Pipeline、调度与通信 |
 | [示例](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/examples/README_zh.md) | 模型启动器与客户端 |

@@ -44,8 +44,15 @@ rollover 负责，不是本后端自动执行的功能。
 ## 扩容
 
 先在目标输入规格下运行[实时多路测试](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README.md)，
-观察每路 TPS、首段可见文本 TTFT、待处理事件和显存峰值，再决定增加单实例会话数、
-使用 TP，或部署多个独立实例。
+观察每路 TPS、首段可见文本 TTFT、待处理事件和显存峰值，再决定扩容方式：
+增加单实例会话数（`--max-running-requests`）、使用 TP、用原生 `--dp-size` 起多副本，
+或部署多个独立实例（配合 sgl-omni-router / 多 URL）。
 
-多实例应使用不同 GPU 和端口，Demo 中为每个实例填写正确的 URL 与 slot 数。
+- `--dp-size N` 是单命令、单实例内的副本扩容：入口 stage 复制 N 份，每份独立 TP 组、
+  独占 `tp_size` 张卡（需要 `tp_size * dp_size` 张卡），会话按副本粒度均衡分配并在生命周期内
+  绑定单一副本，KV 与 `shm://` 帧不跨副本。会话上限 = `max_running_requests * dp_size`，
+  只有所有副本都满时才返回 `session_capacity_exceeded`；启动会等每个副本完成 warmup 后才监听。
+  机内容纳多副本/多实例时注意用 `SGLANG_OMNI_NCCL_PORT_BASE` 错开 NCCL 端口。
+- 多实例应使用不同 GPU 和端口，Demo 中为每个实例填写正确的 URL 与 slot 数。
+
 协议和高级启动参数见 [Realtime Cookbook](./moss_vl_realtime.md)。

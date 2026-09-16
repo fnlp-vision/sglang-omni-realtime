@@ -8,7 +8,7 @@
 | --- | --- |
 | [Installation](./get_started/installation.md) | Independent environment, pinned dependencies, model download, and startup checks |
 | [Launch and tests](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/deployment/moss_vl_realtime/README.md) | Three public tests, commands, reference tables, and charts |
-| [Realtime protocol](./cookbook/moss_vl_realtime.md) | WebSocket events, backpressure, TP, and advanced settings |
+| [Realtime protocol](./cookbook/moss_vl_realtime.md) | WebSocket events, backpressure, TP and native DP replicas, and advanced settings |
 | [Capacity planning](./cookbook/moss_vl_realtime_capacity.md) | Session capacity, memory, visual windows, and long conversations |
 | [Architecture](./developer_reference/main.md) | Pipeline, scheduling, and communication |
 | [Examples](https://github.com/fnlp-vision/sglang-omni-realtime/blob/main/examples/README.md) | Model launchers and clients |
