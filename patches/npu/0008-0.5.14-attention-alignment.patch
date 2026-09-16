@@ -6,7 +6,7 @@
          pass
 +
 +    _moss_vl_extend_alignment_supported = True
- 
+
      def scaled_dot_product_attention_with_softcapping(
          self,
 @@ -141,7 +143,7 @@
@@ -15,7 +15,7 @@
                      atten_start_kv = int(encoder_lens[seq_idx].item())
 -                    atten_end_kv = atten_start_kv + extend_seq_len_q
 +                    atten_end_kv = atten_start_kv + seq_len_kv
- 
+
              if (
                  sliding_window_size is not None
 @@ -173,7 +175,11 @@

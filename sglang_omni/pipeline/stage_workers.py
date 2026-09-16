@@ -810,10 +810,9 @@ def _prepare_accelerator_environment(
     returns, and normalizes gpu_id only when the platform narrowed the process to a
     single visible device.
     """
-    if (
-        os.environ.get("SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS") == "true"
-        and os.environ.get(current_platform.visible_devices_env_key)
-    ):
+    if os.environ.get(
+        "SGLANG_ONE_VISIBLE_DEVICE_PER_PROCESS"
+    ) == "true" and os.environ.get(current_platform.visible_devices_env_key):
         visible_key = current_platform.visible_devices_env_key
         mapped_gpu = os.environ.get(visible_key, str(spec.gpu_id))
         _normalize_spec_gpu_id_to_local_device(spec)

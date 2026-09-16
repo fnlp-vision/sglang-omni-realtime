@@ -71,7 +71,8 @@ class MossVLRealtimeModelRunner(ModelRunner):
                 state = getattr(req, RUNTIME_STATE_ATTR)
                 if state.accounting is not None:
                     accounting_before[req.rid] = (
-                        state.effective_appended_encoder_length, state.decoder_length,
+                        state.effective_appended_encoder_length,
+                        state.decoder_length,
                         int(state.pending_token_id is not None),
                     )
             commit_moss_vl_realtime_batch(schedule_batch)

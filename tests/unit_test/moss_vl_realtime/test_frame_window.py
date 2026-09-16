@@ -127,7 +127,9 @@ def test_window_thresholds_must_be_finite(field, value):
         RealtimeFrameWindowConfig(**{field: value})
 
 
-@pytest.mark.parametrize("key", ["REALTIME_FRAME_WINDOW_RAW_S", "REALTIME_FRAME_POOL_WINDOW_S"])
+@pytest.mark.parametrize(
+    "key", ["REALTIME_FRAME_WINDOW_RAW_S", "REALTIME_FRAME_POOL_WINDOW_S"]
+)
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
 def test_environment_window_thresholds_must_be_finite(key, value):
     with pytest.raises(ValueError, match="finite"):
@@ -208,7 +210,13 @@ def test_plan_holds_aged_remainder_until_ratio_group_fills() -> None:
     plan = plan_frame_window(records, config)
     assert plan is not None
     # 22 aged, floor to 4 full groups; ts 20 and 21 stay raw beyond window.
-    assert plan.raw_chunks == ((0, 4, True), (4, 4, True), (8, 4, True), (12, 4, True), (16, 4, True))
+    assert plan.raw_chunks == (
+        (0, 4, True),
+        (4, 4, True),
+        (8, 4, True),
+        (12, 4, True),
+        (16, 4, True),
+    )
     assert plan.pooled_raw_count == 20
     assert plan.produced_virtual_count == 5
     kept_raw = [r.timestamp for r in plan.new_records if not r.pooled]
@@ -387,9 +395,7 @@ def test_covered_spans_mixed_layout() -> None:
         _record(27.0),
         _record(40.0),
     ]
-    plan = plan_frame_window(
-        records, _config(raw_window_s=15.0, pool_window_s=10.0)
-    )
+    plan = plan_frame_window(records, _config(raw_window_s=15.0, pool_window_s=10.0))
     assert plan is not None
     # Raw window 15: aged raw = 20 and 23 (40-23=17>15; 40-27=13 stays).
     # One full chunk (2 members) pooled -> produced virtual ts=23. Virtuals
@@ -407,12 +413,8 @@ def test_covered_spans_mixed_layout() -> None:
 def test_apply_pools_two_frames_and_compacts_row() -> None:
     records = [_record(t) for t in (0.0, 10.0, 20.0, 30.0, 40.0, 50.0)]
     state, req, req_to_token, allocator, pool = _harness(records)
-    state.visible_frame_counts = torch.tensor(
-        [0, 3, 5], dtype=torch.int32
-    )
-    req.multimodal_inputs.visible_frame_counts = torch.tensor(
-        [3, 5], dtype=torch.int32
-    )
+    state.visible_frame_counts = torch.tensor([0, 3, 5], dtype=torch.int32)
+    req.multimodal_inputs.visible_frame_counts = torch.tensor([3, 5], dtype=torch.int32)
     # Fill the members' K/V with recognizable per-slot values.
     for layer in range(2):
         for slot in (100, 101):  # frame ts=0
@@ -471,8 +473,9 @@ def test_apply_pools_two_frames_and_compacts_row() -> None:
 @pytest.mark.parametrize("widths", [(2, 5), (5, 2)])
 def test_pooling_regression_each_chunk_uses_its_own_width(widths) -> None:
     records = [
-        RealtimeFrameRecord(float(i), 2 if width == 2 else 4,
-                            2 if width == 2 else 4, width)
+        RealtimeFrameRecord(
+            float(i), 2 if width == 2 else 4, 2 if width == 2 else 4, width
+        )
         for i, width in enumerate([widths[0]] * 2 + [widths[1]] * 2)
     ] + [_record(100.0)]
     state, req, table, allocator, pool = _harness(
@@ -487,32 +490,57 @@ def test_pooling_regression_each_chunk_uses_its_own_width(widths) -> None:
     before_v = [buf.clone() for buf in pool.v_buffer]
     plan = plan_frame_window(records, _config())
     event = apply_frame_window_plan(
-        req, state, plan, records=records, req_to_token=table,
-        allocator=allocator, kv_pool_provider=lambda: pool,
+        req,
+        state,
+        plan,
+        records=records,
+        req_to_token=table,
+        allocator=allocator,
+        kv_pool_provider=lambda: pool,
     )
     assert event.produced_virtual_frames == 2
     assert state.encoder_length == 9
     raw_start = 100 + 2 * sum(widths)
-    assert table[0, :12].tolist() == list(range(900, 907)) + [raw_start, raw_start + 1, 50, 60, 70]
+    assert table[0, :12].tolist() == list(range(900, 907)) + [
+        raw_start,
+        raw_start + 1,
+        50,
+        60,
+        70,
+    ]
     assert not table[0, 12:].count_nonzero()
     src, dst = 100, 900
     for width in widths:
         for layer in range(2):
-            expected_k = (before_k[layer][src:src + width] + before_k[layer][src + width:src + 2 * width]) / 2
-            expected_v = (before_v[layer][src:src + width] + before_v[layer][src + width:src + 2 * width]) / 2
-            torch.testing.assert_close(pool.k_buffer[layer][dst:dst + width], expected_k)
-            torch.testing.assert_close(pool.v_buffer[layer][dst:dst + width], expected_v)
+            expected_k = (
+                before_k[layer][src : src + width]
+                + before_k[layer][src + width : src + 2 * width]
+            ) / 2
+            expected_v = (
+                before_v[layer][src : src + width]
+                + before_v[layer][src + width : src + 2 * width]
+            ) / 2
+            torch.testing.assert_close(
+                pool.k_buffer[layer][dst : dst + width], expected_k
+            )
+            torch.testing.assert_close(
+                pool.v_buffer[layer][dst : dst + width], expected_v
+            )
         src += 2 * width
         dst += width
     assert sorted(allocator.freed) == list(range(100, raw_start))
     assert allocator._free == []
     assert state.visible_frame_counts.tolist() == [0, 1, 1, 2, 2, 3]
-    assert state.full_grid_thw.tolist() == [list(record.grid_row) for record in plan.new_records]
+    assert state.full_grid_thw.tolist() == [
+        list(record.grid_row) for record in plan.new_records
+    ]
     assert req.kv_committed_len == req.kv.kv_allocated_len == 12
 
 
 @pytest.mark.parametrize("provider_raises", [False, True])
-def test_pooling_regression_unavailable_provider_does_not_lose_slots(provider_raises) -> None:
+def test_pooling_regression_unavailable_provider_does_not_lose_slots(
+    provider_raises,
+) -> None:
     records = [_record(ts) for ts in (0.0, 1.0, 100.0)]
     state, req, table, allocator, _ = _harness(records)
     before = table.clone()
@@ -525,8 +553,12 @@ def test_pooling_regression_unavailable_provider_does_not_lose_slots(provider_ra
 
     def apply():
         return apply_frame_window_plan(
-            req, state, plan_frame_window(records, _config()),
-            records=records, req_to_token=table, allocator=allocator,
+            req,
+            state,
+            plan_frame_window(records, _config()),
+            records=records,
+            req_to_token=table,
+            allocator=allocator,
             kv_pool_provider=provider,
         )
 
@@ -549,12 +581,21 @@ def test_pooling_regression_unavailable_provider_does_not_lose_slots(provider_ra
 
 @pytest.mark.parametrize("old_virtuals", [0, 2])
 @pytest.mark.parametrize("pool_mode", ["available", "missing", "pressure"])
-def test_pooling_regression_immediately_expired_virtuals_are_dropped(old_virtuals, pool_mode) -> None:
-    records = [_record(-20.0 + i * 10, pooled=True, sources=4) for i in range(old_virtuals)]
-    records += [_record(0.0), _record(1.0), _record(10.0),
-                RealtimeFrameRecord(11.0, 4, 4, 5),
-                RealtimeFrameRecord(100.0, 4, 4, 5),
-                RealtimeFrameRecord(101.0, 4, 4, 5), _record(200.0)]
+def test_pooling_regression_immediately_expired_virtuals_are_dropped(
+    old_virtuals, pool_mode
+) -> None:
+    records = [
+        _record(-20.0 + i * 10, pooled=True, sources=4) for i in range(old_virtuals)
+    ]
+    records += [
+        _record(0.0),
+        _record(1.0),
+        _record(10.0),
+        RealtimeFrameRecord(11.0, 4, 4, 5),
+        RealtimeFrameRecord(100.0, 4, 4, 5),
+        RealtimeFrameRecord(101.0, 4, 4, 5),
+        _record(200.0),
+    ]
     state, req, table, allocator, pool = _harness(records)
     before_encoder = state.encoder_length
     state.visible_frame_counts = torch.arange(len(records) + 1, dtype=torch.int32)
@@ -563,15 +604,30 @@ def test_pooling_regression_immediately_expired_virtuals_are_dropped(old_virtual
     # The first poolable chunk expires immediately; the next is mixed-grid.
     assert plan.raw_chunks == ((0, 2, False), (2, 2, False), (4, 2, True))
     assert plan.evicted_virtual_count == old_virtuals
-    assert covered_spans(tuple(records), plan) == ((old_virtuals + 4, old_virtuals + 6), (old_virtuals + 6, old_virtuals + 7))
+    assert covered_spans(tuple(records), plan) == (
+        (old_virtuals + 4, old_virtuals + 6),
+        (old_virtuals + 6, old_virtuals + 7),
+    )
     event = apply_frame_window_plan(
-        req, state, plan, records=records, req_to_token=table,
-        allocator=allocator, kv_pool_provider=lambda: None if pool_mode == "missing" else pool,
+        req,
+        state,
+        plan,
+        records=records,
+        req_to_token=table,
+        allocator=allocator,
+        kv_pool_provider=lambda: None if pool_mode == "missing" else pool,
     )
     pooled = pool_mode == "available"
     raw_start = 100 + before_encoder - 2
-    expected_encoder = (list(range(900, 905)) if pooled else []) + [raw_start, raw_start + 1]
-    assert table[0, :len(expected_encoder) + 3].tolist() == expected_encoder + [50, 60, 70]
+    expected_encoder = (list(range(900, 905)) if pooled else []) + [
+        raw_start,
+        raw_start + 1,
+    ]
+    assert table[0, : len(expected_encoder) + 3].tolist() == expected_encoder + [
+        50,
+        60,
+        70,
+    ]
     assert sorted(allocator.freed) == list(range(100, raw_start))
     assert event.evicted_virtual_frames == old_virtuals
     assert event.produced_virtual_frames == int(pooled)
@@ -581,15 +637,26 @@ def test_pooling_regression_immediately_expired_virtuals_are_dropped(old_virtual
     assert req.kv_committed_len == req.kv.kv_allocated_len == len(expected_encoder) + 3
     expected_counts = [0] * (old_virtuals + 5) + ([1, 1, 2] if pooled else [0, 0, 1])
     assert state.visible_frame_counts.tolist() == expected_counts
-    assert [record.timestamp for record in state.frame_records] == ([101.0, 200.0] if pooled else [200.0])
+    assert [record.timestamp for record in state.frame_records] == (
+        [101.0, 200.0] if pooled else [200.0]
+    )
 
 
-def test_pooling_regression_partial_write_failure_preserves_committed_layout(monkeypatch) -> None:
+def test_pooling_regression_partial_write_failure_preserves_committed_layout(
+    monkeypatch,
+) -> None:
     import sglang_omni.models.moss_vl_realtime.frame_window as window
 
-    records = [_record(0.0), _record(1.0), RealtimeFrameRecord(2.0, 4, 4, 5),
-               RealtimeFrameRecord(3.0, 4, 4, 5), _record(100.0)]
-    state, req, table, allocator, pool = _harness(records, allocator_ids=tuple(range(900, 907)))
+    records = [
+        _record(0.0),
+        _record(1.0),
+        RealtimeFrameRecord(2.0, 4, 4, 5),
+        RealtimeFrameRecord(3.0, 4, 4, 5),
+        _record(100.0),
+    ]
+    state, req, table, allocator, pool = _harness(
+        records, allocator_ids=tuple(range(900, 907))
+    )
     before = table.clone()
     original = window._pool_group_into_slots
     calls = []
@@ -603,8 +670,13 @@ def test_pooling_regression_partial_write_failure_preserves_committed_layout(mon
     monkeypatch.setattr(window, "_pool_group_into_slots", fail_second)
     with pytest.raises(RuntimeError, match="second group failed"):
         apply_frame_window_plan(
-            req, state, plan_frame_window(records, _config()), records=records,
-            req_to_token=table, allocator=allocator, kv_pool_provider=lambda: pool,
+            req,
+            state,
+            plan_frame_window(records, _config()),
+            records=records,
+            req_to_token=table,
+            allocator=allocator,
+            kv_pool_provider=lambda: pool,
         )
     assert calls == [2, 5]
     assert sorted(allocator.freed) == list(range(900, 907))
@@ -619,8 +691,12 @@ def test_pooling_regression_raw_only_never_requests_pool_or_new_slots() -> None:
     state, req, table, allocator, _ = _harness(records)
     allocator.alloc = lambda n: pytest.fail("raw-only must not allocate pooled slots")
     event = apply_frame_window_plan(
-        req, state, plan_frame_window(records, _config(pooling_enabled=False)),
-        records=records, req_to_token=table, allocator=allocator,
+        req,
+        state,
+        plan_frame_window(records, _config(pooling_enabled=False)),
+        records=records,
+        req_to_token=table,
+        allocator=allocator,
         kv_pool_provider=lambda: pytest.fail("raw-only must not request a KV pool"),
     )
     assert event.produced_virtual_frames == 0
@@ -706,7 +782,9 @@ def test_apply_updates_running_batch_encoder_lens() -> None:
 
 def test_apply_rejects_mismatched_record_spans() -> None:
     records = [_record(0.0, slots=3), _record(1.0, slots=3), _record(50.0)]
-    state, req, req_to_token, allocator, pool = _harness([_record(t) for t in (0.0, 1.0, 50.0)])
+    state, req, req_to_token, allocator, pool = _harness(
+        [_record(t) for t in (0.0, 1.0, 50.0)]
+    )
     plan = plan_frame_window(records, _config())
     assert plan is not None
     with pytest.raises(RuntimeError, match="disagree with the encoder"):
@@ -839,9 +917,7 @@ def test_apply_supports_consecutive_eviction_rounds() -> None:
 
 
 def _hook_scheduler(records, config):
-    from sglang_omni.models.moss_vl_realtime.scheduler import (
-        MossVLRealtimeScheduler,
-    )
+    from sglang_omni.models.moss_vl_realtime.scheduler import MossVLRealtimeScheduler
 
     state, req, req_to_token, allocator, pool = _harness(records)
     req._moss_vl_realtime_state = state
@@ -1025,7 +1101,9 @@ def _post_eviction_harness():
         req.full_untruncated_fill_ids = req.origin_input_ids + req.output_ids
 
     req._refresh_fill_ids = _refresh
-    req.set_extend_range = lambda start, end: setattr(req, "extend_range", Range(start, end))
+    req.set_extend_range = lambda start, end: setattr(
+        req, "extend_range", Range(start, end)
+    )
     _refresh()
     return state, req, req_to_token, allocator, records, Range
 
@@ -1034,9 +1112,7 @@ def test_extend_materialization_after_virtual_eviction() -> None:
     """Dropping a virtual frame must not break the token-space invariants the
     next realtime extend relies on (previously raised "must coalesce with
     exactly one pending sampled token")."""
-    from sglang_omni.models.moss_vl_realtime.scheduler import (
-        _append_segment_to_request,
-    )
+    from sglang_omni.models.moss_vl_realtime.scheduler import _append_segment_to_request
 
     state, req, req_to_token, allocator, records, Range = _post_eviction_harness()
     assert len(req.full_untruncated_fill_ids) == 9  # 1 origin + 6 pads + 2 + pending
@@ -1158,9 +1234,15 @@ def test_guard_without_eviction_uses_kv_space_as_before() -> None:
     # token == KV: 4+2+3+1 pending input+1 sampled output needs 11 positions.
     segment = SimpleNamespace(raw_append_ids=(-101, -101, 301))
     _guard_realtime_context_capacity(
-        SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 11)))
+        SimpleNamespace(),
+        state,
+        segment,
+        SimpleNamespace(req_to_token=torch.zeros((1, 11))),
     )
     with pytest.raises(RuntimeError, match="context length"):
         _guard_realtime_context_capacity(
-            SimpleNamespace(), state, segment, SimpleNamespace(req_to_token=torch.zeros((1, 10)))
+            SimpleNamespace(),
+            state,
+            segment,
+            SimpleNamespace(req_to_token=torch.zeros((1, 10))),
         )

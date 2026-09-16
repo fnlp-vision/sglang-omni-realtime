@@ -105,7 +105,8 @@ def test_stream_builder_flushes_replacement_once(token_id, boundary) -> None:
     if boundary == "silence":
         text_index = next(i for i, m in enumerate(messages) if "text" in m.data)
         silence_index = next(
-            i for i, m in enumerate(messages)
+            i
+            for i, m in enumerate(messages)
             if m.data.get("event") == "response.turn.silence"
         )
         assert text_index < silence_index

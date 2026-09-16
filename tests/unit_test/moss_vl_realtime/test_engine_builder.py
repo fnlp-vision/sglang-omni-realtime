@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from sglang_omni.models.moss_vl_realtime.platform_compat import (
-    preferred_attention_backend,
-)
 from sglang_omni.models.moss_vl_realtime.engine_builder import (
     DECODE_GRAPH_ENCODER_LEN_FILL_VALUE,
     MossVLRealtimeEngineBuilder,
+)
+from sglang_omni.models.moss_vl_realtime.platform_compat import (
+    preferred_attention_backend,
 )
 
 

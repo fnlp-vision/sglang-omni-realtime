@@ -2,19 +2,20 @@
 
 import importlib.util
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import psutil
 import pytest
 
-
 HERE = Path(__file__).resolve().parents[3] / "deployment/moss_vl_realtime"
-spec = importlib.util.spec_from_file_location("delivery_common_cleanup", HERE / "common.py")
+spec = importlib.util.spec_from_file_location(
+    "delivery_common_cleanup", HERE / "common.py"
+)
 common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux process groups")
@@ -33,8 +34,12 @@ def spawn(tmp_path):
 
     def start(code, *, new_group=True):
         log = tmp_path / f"child-{len(children)}.log"
-        child = common.Child([sys.executable, "-u", "-c", code], dict(os.environ),
-                             log, new_group=new_group)
+        child = common.Child(
+            [sys.executable, "-u", "-c", code],
+            dict(os.environ),
+            log,
+            new_group=new_group,
+        )
         children.append(child)
         return child, log
 
@@ -147,7 +152,9 @@ def test_reused_group_leader_pid_is_not_signalled(monkeypatch):
     child.process = SimpleNamespace(pid=123, poll=lambda: 0)
     child.new_group = True
     child._owner_started = 100.0
-    monkeypatch.setattr(common.psutil, "Process", lambda pid: SimpleNamespace(create_time=lambda: 101.0))
+    monkeypatch.setattr(
+        common.psutil, "Process", lambda pid: SimpleNamespace(create_time=lambda: 101.0)
+    )
 
     def forbidden():
         raise AssertionError("must not scan a replacement process group")
@@ -164,8 +171,12 @@ def test_failed_shutdown_keeps_retry_possible(monkeypatch):
     child.log = SimpleNamespace(close=lambda: closed.append(True))
     process = SimpleNamespace(pid=123)
     monkeypatch.setattr(child, "_live_owned_processes", lambda: [process])
-    monkeypatch.setattr(child, "_wait_owned_processes", lambda *args, **kwargs: [process])
-    monkeypatch.setattr(child, "_signal_processes", lambda procs, sig: signals.append(sig))
+    monkeypatch.setattr(
+        child, "_wait_owned_processes", lambda *args, **kwargs: [process]
+    )
+    monkeypatch.setattr(
+        child, "_signal_processes", lambda procs, sig: signals.append(sig)
+    )
     with pytest.raises(TimeoutError, match="did not exit"):
         child.stop(timeout=0, kill_timeout=0)
     assert not child._stopped and closed

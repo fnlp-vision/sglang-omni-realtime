@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-import torch
 
 import sglang_omni.platforms as platforms
 from sglang_omni.pipeline import stage_workers
@@ -25,12 +24,19 @@ def test_normal_stage_process_exit_destroys_distributed_group(monkeypatch):
     from types import SimpleNamespace
 
     calls = []
-    monkeypatch.setattr(stage_workers, "_prepare_accelerator_environment", lambda *a: None)
+    monkeypatch.setattr(
+        stage_workers, "_prepare_accelerator_environment", lambda *a: None
+    )
     monkeypatch.setattr(stage_workers, "apply_gpu_compat_env_defaults", lambda: None)
     monkeypatch.setattr(stage_workers, "_run_process", lambda *a: calls.append("run"))
-    monkeypatch.setattr(stage_workers, "_destroy_torch_distributed_process_group", lambda *a: calls.append("destroy"))
+    monkeypatch.setattr(
+        stage_workers,
+        "_destroy_torch_distributed_process_group",
+        lambda *a: calls.append("destroy"),
+    )
     stage_workers.stage_process_main(
-        SimpleNamespace(process_name="test", stage_specs=[SimpleNamespace()]), None,
+        SimpleNamespace(process_name="test", stage_specs=[SimpleNamespace()]),
+        None,
     )
     assert calls == ["run", "destroy"]
 
@@ -302,8 +308,10 @@ def test_cuda_startup_lock_uses_local_not_placement_index(monkeypatch) -> None:
     monkeypatch.setattr(stage_workers, "gpu_startup_lock", lock)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
     spec = StageLaunchConfig(
-        stage_name="thinker", factory=fake_factory_path("make_scheduler"),
-        gpu_id=0, placement_gpu_id=1,
+        stage_name="thinker",
+        factory=fake_factory_path("make_scheduler"),
+        gpu_id=0,
+        placement_gpu_id=1,
     )
     stage_workers._construct_scheduler(spec, 0, _RecordingLog())
     assert paths[0].name == "sglang_omni_gpu_3_startup.lock"
@@ -311,6 +319,7 @@ def test_cuda_startup_lock_uses_local_not_placement_index(monkeypatch) -> None:
 
 def test_npu_scheduler_does_not_call_cuda_startup_lock(monkeypatch) -> None:
     from types import SimpleNamespace
+
     from sglang_omni.utils import npu_startup
 
     paths = []
@@ -323,14 +332,18 @@ def test_npu_scheduler_does_not_call_cuda_startup_lock(monkeypatch) -> None:
     def unexpected(*args):
         raise AssertionError("NPU must not use the CUDA startup lock")
 
-    monkeypatch.setattr(stage_workers, "current_platform", SimpleNamespace(device_type="npu"))
+    monkeypatch.setattr(
+        stage_workers, "current_platform", SimpleNamespace(device_type="npu")
+    )
     monkeypatch.setattr(stage_workers, "gpu_startup_lock", unexpected)
     monkeypatch.setattr(npu_startup, "npu_startup_lock", lock)
     monkeypatch.setenv("ASCEND_RT_VISIBLE_DEVICES", "6")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
     spec = StageLaunchConfig(
-        stage_name="thinker", factory=fake_factory_path("make_scheduler"),
-        gpu_id=0, placement_gpu_id=2,
+        stage_name="thinker",
+        factory=fake_factory_path("make_scheduler"),
+        gpu_id=0,
+        placement_gpu_id=2,
     )
     stage_workers._construct_scheduler(spec, 0, _RecordingLog())
     assert paths[0].name == "sglang_omni_npu_6_startup.lock"

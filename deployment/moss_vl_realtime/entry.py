@@ -46,8 +46,11 @@ def main(argv=None):
         raise ValueError("--vl-api-v2-port must be valid and distinct from --port")
     if args.dry_run:
         details = dict(
-            model_path=str(args.model_path), config=CONFIG, host=args.host,
-            port=args.port, gpus=args.gpus or "one idle GPU",
+            model_path=str(args.model_path),
+            config=CONFIG,
+            host=args.host,
+            port=args.port,
+            gpus=args.gpus or "one idle GPU",
         )
         if args.vl_api_v2_port is not None:
             details["vl_api_v2_port"] = args.vl_api_v2_port

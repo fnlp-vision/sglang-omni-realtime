@@ -610,7 +610,9 @@ class OmniScheduler:
         self.device_module = torch.get_device_module(self.device)
 
     def init_metrics_collector(self, tp_rank, pp_rank, dp_rank):
-        return _compat.init_metrics_collector(_Upstream, self, tp_rank, pp_rank, dp_rank)
+        return _compat.init_metrics_collector(
+            _Upstream, self, tp_rank, pp_rank, dp_rank
+        )
 
     def init_metrics_reporter(self, tp_rank, pp_rank, dp_rank):
         return _compat.init_metrics_reporter(_Upstream, self, tp_rank, pp_rank, dp_rank)
@@ -864,9 +866,12 @@ class OmniScheduler:
             elif msg.type == "request_update":
                 self._on_request_update(msg.request_id, msg.data)
             elif msg.type == "abort":
-                self.abort(msg.request_id, defer_running_cleanup=bool(
-                    (msg.data or {}).get("defer_running_cleanup", True)
-                ))
+                self.abort(
+                    msg.request_id,
+                    defer_running_cleanup=bool(
+                        (msg.data or {}).get("defer_running_cleanup", True)
+                    ),
+                )
 
         return new_reqs
 

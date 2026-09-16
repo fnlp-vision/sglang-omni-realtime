@@ -19,6 +19,7 @@ class MemoryMonitor:
         self.stop = threading.Event()
         try:
             import pynvml as _nvml_mod
+
             self.nvml = _nvml_mod
             self.nvml.nvmlInit()
             self.handle = self.nvml.nvmlDeviceGetHandleByIndex(0)
@@ -88,8 +89,12 @@ class MemoryMonitor:
         if self.nvml is None:
             write_json(
                 self.path,
-                dict(interval_seconds=self.interval, pid=os.getpid(),
-                     device_total_bytes=0, note="nvml unavailable (NPU)"),
+                dict(
+                    interval_seconds=self.interval,
+                    pid=os.getpid(),
+                    device_total_bytes=0,
+                    note="nvml unavailable (NPU)",
+                ),
             )
             return
         self.nvml.nvmlShutdown()

@@ -1,6 +1,5 @@
 import queue
 import threading
-from types import SimpleNamespace
 
 import pytest
 
@@ -18,11 +17,13 @@ def test_external_abort_never_mutates_or_releases_kv_on_listener_thread(entry):
     scheduler.inbox = queue.Queue()
     # No other scheduler state is initialized: touching the release path fails.
     errors = []
+
     def listener():
         try:
             scheduler.abort("r", defer_running_cleanup=False)
         except Exception as exc:
             errors.append(exc)
+
     thread = threading.Thread(target=listener)
     thread.start()
     thread.join(2)
@@ -38,8 +39,13 @@ def test_scheduler_consumes_abort_in_order_before_next_batch():
     scheduler = OmniScheduler.__new__(OmniScheduler)
     scheduler._aborted_request_ids = set()
     calls = []
-    scheduler.abort = lambda rid, **kwargs: (calls.append((rid, kwargs)), scheduler._aborted_request_ids.add(rid))
-    scheduler._on_request_update = lambda *args: pytest.fail("update after abort must be discarded")
+    scheduler.abort = lambda rid, **kwargs: (
+        calls.append((rid, kwargs)),
+        scheduler._aborted_request_ids.add(rid),
+    )
+    scheduler._on_request_update = lambda *args: pytest.fail(
+        "update after abort must be discarded"
+    )
     scheduler._recv_scheduler_messages = lambda: [
         IncomingMessage("r", "abort", {"defer_running_cleanup": False}),
         IncomingMessage("r", "request_update", {}),

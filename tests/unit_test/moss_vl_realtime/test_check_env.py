@@ -2,13 +2,13 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
-import pytest
 
 tomllib = pytest.importorskip("tomllib")
 
@@ -21,16 +21,26 @@ spec.loader.exec_module(check)
 
 
 def model(tmp_path):
-    config = dict(architectures=["MossVLForConditionalGeneration"],
-                  auto_map={"AutoConfig": "configuration_moss_vl.MossVLConfig"})
+    config = dict(
+        architectures=["MossVLForConditionalGeneration"],
+        auto_map={"AutoConfig": "configuration_moss_vl.MossVLConfig"},
+    )
     (tmp_path / "config.json").write_text(json.dumps(config))
-    for name in ("tokenizer.json", "tokenizer_config.json", "preprocessor_config.json",
-                 "video_preprocessor_config.json", "chat_template.json"):
+    for name in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+        "chat_template.json",
+    ):
         (tmp_path / name).write_text("{}")
     (tmp_path / "configuration_moss_vl.py").write_text("# fixture\n")
     (tmp_path / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"weight": "model-00001.safetensors"}}))
-    (tmp_path / "model-00001.safetensors").write_bytes(b"not loaded by the file checker")
+        json.dumps({"weight_map": {"weight": "model-00001.safetensors"}})
+    )
+    (tmp_path / "model-00001.safetensors").write_bytes(
+        b"not loaded by the file checker"
+    )
     return tmp_path
 
 
@@ -54,7 +64,8 @@ def test_model_accepts_cached_weight_symlink(tmp_path):
 def test_weight_index_rejects_nonlocal_names(tmp_path, name):
     directory = model(tmp_path)
     (directory / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"weight": name}}))
+        json.dumps({"weight_map": {"weight": name}})
+    )
     with pytest.raises(ValueError, match="invalid weight shard"):
         check.check_model(directory)
 
@@ -68,7 +79,9 @@ def test_broken_weight_symlink_is_rejected(tmp_path):
         check.check_model(directory)
 
 
-@pytest.mark.parametrize("name", ["tokenizer.json", "configuration_moss_vl.py", "model-00001.safetensors"])
+@pytest.mark.parametrize(
+    "name", ["tokenizer.json", "configuration_moss_vl.py", "model-00001.safetensors"]
+)
 def test_incomplete_model_is_rejected(tmp_path, name):
     directory = model(tmp_path)
     (directory / name).unlink()
@@ -82,19 +95,28 @@ def test_weight_index_cannot_escape_model_directory(tmp_path):
     model(directory)
     (tmp_path / "outside.safetensors").write_bytes(b"external")
     (directory / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"weight": "../outside.safetensors"}}))
+        json.dumps({"weight_map": {"weight": "../outside.safetensors"}})
+    )
     with pytest.raises(ValueError, match="invalid weight shard"):
         check.check_model(directory)
 
 
 def test_core_versions_and_constraints_match_project():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    requirements = {canonicalize_name(r.name): r for r in
-                    map(Requirement, project["project"]["dependencies"])}
-    constraints = [Requirement(line) for line in
-                   (ROOT / "deployment/moss_vl_realtime/constraints.txt").read_text().splitlines()
-                   if line and not line.startswith("#")]
-    pinned = {canonicalize_name(r.name): next(iter(r.specifier)).version for r in constraints}
+    requirements = {
+        canonicalize_name(r.name): r
+        for r in map(Requirement, project["project"]["dependencies"])
+    }
+    constraints = [
+        Requirement(line)
+        for line in (ROOT / "deployment/moss_vl_realtime/constraints.txt")
+        .read_text()
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    pinned = {
+        canonicalize_name(r.name): next(iter(r.specifier)).version for r in constraints
+    }
     assert len(pinned) == len(constraints)
     assert all(r.url is None for r in constraints)
     for name, expected in check.CORE_VERSIONS.items():

@@ -205,7 +205,9 @@ class Stage:
                             notification.close()
                             if not fatal_npu_oom:
                                 raise
-                            logger.exception("Could not report NPU OOM for stage %s", self.name)
+                            logger.exception(
+                                "Could not report NPU OOM for stage %s", self.name
+                            )
 
                     # Preserve the NPU fail-fast policy. Other platforms keep
                     # their existing scheduler-crash propagation and cleanup.

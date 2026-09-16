@@ -78,7 +78,9 @@ class MossVLRealtimeScheduleBatch(ScheduleBatch):
         for req in self.reqs:
             error = realtime_decode_capacity_error(req, self.req_to_token_pool)
             if error is not None:
-                from sglang_omni.models.moss_vl_realtime.accounting import ContextExhaustedError
+                from sglang_omni.models.moss_vl_realtime.accounting import (
+                    ContextExhaustedError,
+                )
 
                 raise ContextExhaustedError(error)
         record = _DecodeAllocation(
@@ -115,7 +117,9 @@ def realtime_decode_capacity_error(req: Any, pool: Any) -> str | None:
     width = int(table.shape[1])
     limit = state.context_limit or width
     committed = state.encoder_length + state.decoder_length
-    allocated = max(committed, int(getattr(getattr(req, "kv", None), "kv_allocated_len", committed)))
+    allocated = max(
+        committed, int(getattr(getattr(req, "kv", None), "kv_allocated_len", committed))
+    )
     # Allocated but unresolved lookahead tokens count too. The next forward
     # consumes one pending token and samples one more logical position.
     logical = state.effective_appended_encoder_length + allocated - state.encoder_length
@@ -143,13 +147,19 @@ def _rollback_decode(batch: Any, record: _DecodeAllocation) -> None:
     active = {id(req) for req in batch.reqs}
     indices = []
     for i, req in enumerate(record.reqs):
-        if id(req) not in active or req.req_pool_idx != record.pool_indices[i] or req.kv is None:
+        if (
+            id(req) not in active
+            or req.req_pool_idx != record.pool_indices[i]
+            or req.kv is None
+        ):
             continue
         state = getattr(req, RUNTIME_STATE_ATTR)
         if state.encoder_length + state.decoder_length > record.positions[i]:
             continue
         if int(req.kv.kv_allocated_len) > record.positions[i] + 1:
-            raise RuntimeError("resolve newer decode allocations before rolling back this step")
+            raise RuntimeError(
+                "resolve newer decode allocations before rolling back this step"
+            )
         indices.append(i)
     if indices:
         batch.token_to_kv_pool_allocator.free(record.slots[indices])
@@ -157,7 +167,9 @@ def _rollback_decode(batch: Any, record: _DecodeAllocation) -> None:
             req = record.reqs[i]
             req.kv.kv_allocated_len = record.positions[i]
             req.kv_committed_len = record.committed_lengths[i]
-            batch.req_to_token_pool.req_to_token[record.pool_indices[i], record.positions[i]] = 0
+            batch.req_to_token_pool.req_to_token[
+                record.pool_indices[i], record.positions[i]
+            ] = 0
     record.released = True
 
 

@@ -228,6 +228,7 @@ def wait_for_server(args: argparse.Namespace, process: subprocess.Popen) -> None
         if process.poll() is not None:
             raise RuntimeError(f"server exited early with code {process.returncode}")
         try:
+
             async def _try() -> None:
                 async with websockets.connect(url):
                     return
@@ -292,17 +293,25 @@ def run_once(args: argparse.Namespace, frames: list[Path], *, window_on: bool) -
             process.kill()
     window_events = server_window_events(log_file.name)
     frame_processed = [
-        e for e in received if e.get("type") == "stream" and e.get("data", {}).get("event") == "input.frame.processed"
+        e
+        for e in received
+        if e.get("type") == "stream"
+        and e.get("data", {}).get("event") == "input.frame.processed"
     ]
-    print(f"streamed {len(frames)} frames in {elapsed:.1f}s "
-          f"({len(frame_processed)} processed acks)", flush=True)
+    print(
+        f"streamed {len(frames)} frames in {elapsed:.1f}s "
+        f"({len(frame_processed)} processed acks)",
+        flush=True,
+    )
     if window_events:
         print("server frame-window timeline:", flush=True)
         for _, data in window_events:
             print(f"  {data}", flush=True)
     else:
-        print("server frame-window timeline: <none> (feature off or no eviction)",
-              flush=True)
+        print(
+            "server frame-window timeline: <none> (feature off or no eviction)",
+            flush=True,
+        )
     return {
         "mode": mode,
         "received": received,

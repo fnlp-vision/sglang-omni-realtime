@@ -152,7 +152,9 @@ class RealtimeFrameWindowConfig:
         raw = cls().raw_window_s if raw_window_s is None else float(raw_window_s)
         pool = cls().pool_window_s if pool_window_s is None else float(pool_window_s)
         ratio = cls().pool_ratio if pool_ratio is None else int(pool_ratio)
-        pooling = cls().pooling_enabled if pooling_enabled is None else bool(pooling_enabled)
+        pooling = (
+            cls().pooling_enabled if pooling_enabled is None else bool(pooling_enabled)
+        )
         if REALTIME_FRAME_WINDOW_ENABLED_ENV in env:
             resolved_enabled = _env_flag(env[REALTIME_FRAME_WINDOW_ENABLED_ENV])
         if REALTIME_FRAME_WINDOW_RAW_S_ENV in env:
@@ -263,9 +265,10 @@ def plan_frame_window(
     aged_raw = 0
     if raws:
         newest_raw = raws[-1].timestamp
-        while aged_raw < len(raws) and (
-            newest_raw - raws[aged_raw].timestamp
-        ) > config.raw_window_s:
+        while (
+            aged_raw < len(raws)
+            and (newest_raw - raws[aged_raw].timestamp) > config.raw_window_s
+        ):
             aged_raw += 1
 
     # Layer two, step one: fold the aged raw prefix into full chunks of
@@ -316,9 +319,11 @@ def plan_frame_window(
     evicted_virtual = 0
     if len(virtuals_all) >= 2:
         newest_virtual = virtuals_all[-1].timestamp
-        while evicted_virtual < len(virtuals_all) - 1 and (
-            newest_virtual - virtuals_all[evicted_virtual].timestamp
-        ) > config.pool_window_s:
+        while (
+            evicted_virtual < len(virtuals_all) - 1
+            and (newest_virtual - virtuals_all[evicted_virtual].timestamp)
+            > config.pool_window_s
+        ):
             evicted_virtual += 1
 
     if evicted_virtual == 0 and not raw_chunks:
@@ -485,7 +490,9 @@ def apply_frame_window_plan(
     dst_slot_ids: torch.Tensor | None = None
     kv_pool = None
     if poolable_chunks:
-        widths = [len(runs[old_virtual_count + start]) for start, _, _ in poolable_chunks]
+        widths = [
+            len(runs[old_virtual_count + start]) for start, _, _ in poolable_chunks
+        ]
         # A missing or failing provider must not leave newly allocated slots orphaned.
         kv_pool = kv_pool_provider()
         if kv_pool is not None:
@@ -551,7 +558,8 @@ def apply_frame_window_plan(
         raise
 
     consumed_raw_slots = [
-        slot for run in runs[old_virtual_count : old_virtual_count + aged_raw_total]
+        slot
+        for run in runs[old_virtual_count : old_virtual_count + aged_raw_total]
         for slot in run
     ]
     freed = [
@@ -577,9 +585,7 @@ def apply_frame_window_plan(
         try:
             pool_free = int(available())
         except (RuntimeError, ValueError, TypeError) as exc:
-            logger.warning(
-                "frame window: allocator available_size() failed: %s", exc
-            )
+            logger.warning("frame window: allocator available_size() failed: %s", exc)
     event = FrameWindowEvent(
         request_id=state.request_id,
         evicted_virtual_frames=plan.evicted_virtual_count,
@@ -692,8 +698,7 @@ def _prepare_metadata_update(
             new_counts = owner
         visible_counts.append((owner, new_counts))
     dropped_units = plan.dropped_raw_count + sum(
-        record.pooled_sources
-        for record in records[: plan.evicted_virtual_count]
+        record.pooled_sources for record in records[: plan.evicted_virtual_count]
     )
     return _PreparedMetadataUpdate(
         dropped_units=dropped_units,
@@ -736,9 +741,9 @@ def _commit_metadata_update(
             mm_inputs.media_nums_per_sample = [int(state.full_grid_thw.shape[0])]
         items = getattr(mm_inputs, "mm_items", None) or ()
         if items and state.full_grid_thw is not None:
-            items[0].model_specific_data[REALTIME_FULL_GRID_THW_KEY] = (
-                state.full_grid_thw
-            )
+            items[0].model_specific_data[
+                REALTIME_FULL_GRID_THW_KEY
+            ] = state.full_grid_thw
 
     # The request frees KV via row[0:kv_committed_len] on release; shrink the
     # committed lengths so the evicted slots (already freed above) are never

@@ -83,7 +83,10 @@ class BridgeSession:
         try:
             while True:
                 try:
-                    if self._pending_meta_deadline is not None and not self.round_finished:
+                    if (
+                        self._pending_meta_deadline is not None
+                        and not self.round_finished
+                    ):
                         remaining = self._pending_meta_deadline - time.monotonic()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
@@ -96,12 +99,12 @@ class BridgeSession:
                         remaining = start_deadline - time.monotonic()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
-                        raw = await asyncio.wait_for(
-                            self.downstream.recv(), remaining
-                        )
+                        raw = await asyncio.wait_for(self.downstream.recv(), remaining)
                 except asyncio.TimeoutError:
                     if self._pending_meta_deadline is not None:
-                        await self._fail_round("timed out waiting for frame binary data")
+                        await self._fail_round(
+                            "timed out waiting for frame binary data"
+                        )
                         return
                     logger.info(
                         "closing idle connection: no start within %.1fs",

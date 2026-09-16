@@ -16,7 +16,7 @@
 +        )
          rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
          return rotary_pos_emb
- 
+
 --- a/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
 +++ b/sglang/srt/hardware_backend/npu/attention/ascend_torch_native_backend.py
 @@ -74,6 +74,7 @@
@@ -26,11 +26,11 @@
 +        cross_attention_custom_mask: Optional[torch.Tensor] = None,
      ):
          """Run the extend forward by using torch native sdpa op.
- 
+
 @@ -103,6 +104,22 @@
          assert seq_lens.shape[0] == extend_prefix_lens.shape[0]
          assert seq_lens.shape[0] == extend_seq_lens.shape[0]
- 
+
 +        if cross_attention_custom_mask is not None:
 +            if not is_cross_attention or encoder_lens is None:
 +                raise ValueError("frame visibility mask requires cross-attention encoder lengths")
@@ -49,10 +49,10 @@
 +
          # [num_tokens, num_heads, head_size] -> [num_heads, num_tokens, head_size]
          query = query.movedim(0, query.dim() - 2)
- 
+
 @@ -140,15 +157,29 @@
                  )
- 
+
              per_req_query = query[:, start_q:end_q, :]
 -            query_start_idx = max(prefill_seq_len_q - atten_start_kv, 0)
              seq_len_kv = atten_end_kv - atten_start_kv
@@ -85,7 +85,7 @@
 +                    device=per_req_query.device,
 +                )
 +                per_req_query_redundant[:, query_start_idx:, :] = per_req_query
- 
+
              # get key and value from cache. per_req_tokens contains the kv cache
              # index for each token in the sequence.
 @@ -172,6 +203,7 @@
@@ -117,11 +117,11 @@
 --- a/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
 +++ b/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
 @@ -275,6 +275,7 @@
- 
- 
+
+
  class AscendAttnBackend(AttentionBackend):
 +    _moss_vl_visibility_mask_supported = True
- 
+
      def __init__(self, model_runner: ModelRunner, speculative_step_id: int = 0):
          super().__init__()
 @@ -1088,6 +1089,19 @@

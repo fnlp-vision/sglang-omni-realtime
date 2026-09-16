@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Mapping
 from contextlib import contextmanager
-import os
 from pathlib import Path
-import tempfile
 
 
 def get_npu_startup_lock_path(
@@ -26,7 +26,9 @@ def get_npu_startup_lock_path(
     if visible:
         entries = [entry.strip() for entry in visible.split(",")]
         if any(not entry.isascii() or not entry.isdecimal() for entry in entries):
-            raise ValueError("ASCEND_RT_VISIBLE_DEVICES must contain non-negative device IDs")
+            raise ValueError(
+                "ASCEND_RT_VISIBLE_DEVICES must contain non-negative device IDs"
+            )
         if logical_device_id >= len(entries):
             raise ValueError(
                 f"NPU device index {logical_device_id} exceeds "

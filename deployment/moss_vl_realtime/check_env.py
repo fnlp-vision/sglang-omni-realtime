@@ -4,9 +4,9 @@ import argparse
 import importlib
 import importlib.metadata
 import json
-from pathlib import Path
 import platform
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE_VERSIONS = {
@@ -22,16 +22,27 @@ CORE_VERSIONS = {
 
 def check_model(directory):
     directory = directory.expanduser().resolve()
-    required = ["config.json", "tokenizer.json", "tokenizer_config.json",
-                "preprocessor_config.json", "video_preprocessor_config.json", "chat_template.json"]
+    required = [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+        "chat_template.json",
+    ]
     for name in required:
         if not (directory / name).is_file():
             raise ValueError(f"Missing model file: {name}")
     config = json.loads((directory / "config.json").read_text())
     if not any("MossVL" in name for name in config.get("architectures", [])):
         raise ValueError("Expected a MOSS-VL checkpoint")
-    for name in ("config.json", "tokenizer_config.json", "preprocessor_config.json",
-                 "video_preprocessor_config.json", "processor_config.json"):
+    for name in (
+        "config.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+        "processor_config.json",
+    ):
         if not (directory / name).is_file():
             continue
         metadata = json.loads((directory / name).read_text())
@@ -63,8 +74,14 @@ def check_model(directory):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("model_path", type=Path, nargs="?", help="Optional downloaded model directory")
-    parser.add_argument("--no-gpu", action="store_true", help="Check packages/files without GPU runtime imports")
+    parser.add_argument(
+        "model_path", type=Path, nargs="?", help="Optional downloaded model directory"
+    )
+    parser.add_argument(
+        "--no-gpu",
+        action="store_true",
+        help="Check packages/files without GPU runtime imports",
+    )
     args = parser.parse_args(argv)
     errors = []
 
@@ -86,11 +103,13 @@ def main(argv=None):
 
     record("platform", python_platform)
     for name, expected in CORE_VERSIONS.items():
+
         def package(name=name, expected=expected):
             actual = importlib.metadata.version(name)
             if actual.partition("+")[0] != expected:
                 raise ValueError(f"expected {expected}, installed {actual}")
             return actual
+
         record(name, package)
     record("nvidia-ml-py", lambda: importlib.metadata.version("nvidia-ml-py"))
 
@@ -98,31 +117,41 @@ def main(argv=None):
         module = importlib.import_module("sglang_omni")
         location = Path(module.__file__).resolve().parent
         if location != ROOT / "sglang_omni":
-            raise ValueError(f"Imported another checkout: {location}; install this repository with -e .")
+            raise ValueError(
+                f"Imported another checkout: {location}; install this repository with -e ."
+            )
         return str(location)
 
     record("checkout", checkout)
     if args.model_path is not None:
         record("model files", lambda: check_model(args.model_path))
     if not args.no_gpu and not errors:
+
         def runtime():
             torch = importlib.import_module("torch")
             if not torch.version.cuda or not torch.version.cuda.startswith("13."):
-                raise ValueError(f"Expected CUDA 13 PyTorch, found {torch.version.cuda}")
+                raise ValueError(
+                    f"Expected CUDA 13 PyTorch, found {torch.version.cuda}"
+                )
             if not torch.cuda.is_available():
-                raise ValueError("CUDA is unavailable; check driver and CUDA_VISIBLE_DEVICES")
+                raise ValueError(
+                    "CUDA is unavailable; check driver and CUDA_VISIBLE_DEVICES"
+                )
             probe = torch.ones(1, device="cuda")
             if (probe + 1).item() != 2:
                 raise RuntimeError("CUDA tensor check failed")
             importlib.import_module("sglang_omni.models.moss_vl_realtime.stages")
             return f"{torch.cuda.get_device_name(0)}, CUDA {torch.version.cuda}, realtime imports ready"
+
         record("GPU runtime", runtime)
     elif args.no_gpu:
         print("SKIP  GPU runtime (--no-gpu)")
     if errors:
         print("FAIL: see docs/get_started/installation.md")
         return 1
-    print("PASS: environment checks complete; server startup warmup verifies model/JIT execution")
+    print(
+        "PASS: environment checks complete; server startup warmup verifies model/JIT execution"
+    )
     return 0
 
 

@@ -479,9 +479,7 @@ async def _run_server(
             # Frames travel as binary WebSocket messages; the transport cap must
             # cover MAX_FRAME_BYTES or large frames die silently at close-code
             # 1009 before the frame store's own limit ever applies.
-            from sglang_omni.models.moss_vl_realtime.frame_store import (
-                MAX_FRAME_BYTES,
-            )
+            from sglang_omni.models.moss_vl_realtime.frame_store import MAX_FRAME_BYTES
 
             uvicorn_kwargs["ws_max_size"] = MAX_FRAME_BYTES + 256 * 1024
 
@@ -498,17 +496,25 @@ async def _run_server(
             await _serve_with_failure_watch(server, [mp_runner.wait_failed()])
         else:
             from vl_api_adapter.adapter.server import (
-                SecondaryServer, create_v2_app, serve_pair,
+                SecondaryServer,
+                create_v2_app,
+                serve_pair,
             )
 
             v2_app = await create_v2_app(
                 app.state.video_realtime_manager,
                 model_version=os.environ.get("VL_API_V2_MODEL_VERSION"),
             )
-            secondary = SecondaryServer(uvicorn.Config(
-                v2_app, host=host, port=vl_api_v2_port, log_level=log_level,
-                timeout_graceful_shutdown=30, **uvicorn_kwargs,
-            ))
+            secondary = SecondaryServer(
+                uvicorn.Config(
+                    v2_app,
+                    host=host,
+                    port=vl_api_v2_port,
+                    log_level=log_level,
+                    timeout_graceful_shutdown=30,
+                    **uvicorn_kwargs,
+                )
+            )
             await serve_pair(server, secondary, mp_runner.wait_failed())
     finally:
         logger.info("Shutting down pipeline …")

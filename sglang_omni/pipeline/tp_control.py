@@ -57,10 +57,7 @@ class TPLeaderFanout:
     async def fanout_control(
         self,
         msg: (
-            ShutdownMessage
-            | ProfilerStartMessage
-            | ProfilerStopMessage
-            | AdminMessage
+            ShutdownMessage | ProfilerStartMessage | ProfilerStopMessage | AdminMessage
         ),
     ) -> None:
         for q in self._follower_work_queues:

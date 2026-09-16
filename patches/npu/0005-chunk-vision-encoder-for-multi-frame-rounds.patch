@@ -2,7 +2,7 @@
 +++ b/sglang/srt/models/moss_vl.py
 @@ -3,6 +3,7 @@
  from __future__ import annotations
- 
+
  import logging
 +import os
  from array import array
@@ -45,6 +45,6 @@
 +            )
 +            offset += n
 +        return torch.cat(feats, dim=0)
- 
+
      def _insert_separator_tokens(
          self,
