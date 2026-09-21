@@ -98,6 +98,8 @@ async def _try_upstream(up: Upstream, start_text: str):
         ws = await asyncio.wait_for(
             connect(up.url, max_size=MAX_MSG, open_timeout=3.0), timeout=5.0
         )
+        up.active += 1  # count from connection setup: a binding-in-progress upstream
+                        # must not be picked as idle by concurrent clients
         await ws.send(start_text)
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=START_TIMEOUT_S)
@@ -106,12 +108,12 @@ async def _try_upstream(up: Upstream, start_text: str):
             data = json.loads(raw)
             kind = data.get("type")
             if kind == "ready":
-                up.active += 1
                 logger.info("bind client -> %s (active=%d)", up.url, up.active)
                 return up, ws, raw
             if kind == "error":
                 message = data.get("message", "")
                 if BUSY_SUBSTRING in message:
+                    up.active -= 1  # rejected: this probe connection is closing
                     logger.info("upstream %s busy, trying next", up.url)
                     try:
                         await ws.close()
@@ -121,7 +123,6 @@ async def _try_upstream(up: Upstream, start_text: str):
                 # Real (non-busy) failure: keep the session bound so the client
                 # sees the error over the live connection, mirroring adapter
                 # behaviour; the slot is released when the connection closes.
-                up.active += 1
                 return up, ws, raw
     except (
         asyncio.TimeoutError,
@@ -131,6 +132,7 @@ async def _try_upstream(up: Upstream, start_text: str):
         WebSocketException,  # e.g. upstream is not the adapter (bad handshake)
     ) as exc:
         if ws is not None:
+            up.active -= 1  # probe failed: release the connection-time count
             try:
                 await ws.close()
             except Exception:
