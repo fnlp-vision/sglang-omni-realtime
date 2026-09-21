@@ -99,7 +99,7 @@ async def _try_upstream(up: Upstream, start_text: str):
             connect(up.url, max_size=MAX_MSG, open_timeout=3.0), timeout=5.0
         )
         up.active += 1  # count from connection setup: a binding-in-progress upstream
-                        # must not be picked as idle by concurrent clients
+        # must not be picked as idle by concurrent clients
         await ws.send(start_text)
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=START_TIMEOUT_S)
@@ -211,7 +211,24 @@ async def handler(websocket) -> None:
         await websocket.close()
         return
 
-    await websocket.send(reply)
+    # The client may have dropped while `start` was being bound upstream: if
+    # the first reply cannot be sent, release the slot here instead of leaking
+    # it (the pump finally below never runs on this path).
+    try:
+        await websocket.send(reply)
+    except Exception:
+        up.active -= 1
+        logger.info(
+            "client %s gone before bind, %s released (active=%d)",
+            websocket.remote_address,
+            up.url,
+            up.active,
+        )
+        try:
+            await upstream_ws.close()
+        except Exception:
+            pass
+        return
     # Relay in both directions, but finish as soon as EITHER side ends: the
     # other pump is cancelled and both sockets are closed below, so a client
     # that drops mid-session (or skips the legacy `stop`) propagates its close
