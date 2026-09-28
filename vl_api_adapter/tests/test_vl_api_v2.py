@@ -1,13 +1,19 @@
 """v2 protocol/accounting regressions, no model or GPU required."""
 
 import asyncio
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
 from sglang_omni.models.moss_vl_realtime.accounting import RealtimeAccounting
+from sglang_omni.models.moss_vl_realtime.frame_store import (
+    SharedMemoryFrameStore,
+    resolve_shared_memory_frame,
+)
 from sglang_omni.serve.video_realtime import (
     VideoRealtimeSession,
     VideoRealtimeSessionManager,
@@ -290,27 +296,49 @@ async def test_configuration_timeout_has_error_reason():
 
 
 @pytest.mark.asyncio
-async def test_corrupt_binary_keeps_seq_and_releases_input():
-    session, socket, _, _ = make_session()
+@pytest.mark.parametrize("corruption", ["invalid-header", "truncated-jpeg"])
+async def test_corrupt_binary_keeps_seq_and_releases_input(corruption):
+    output = BytesIO()
+    Image.new("RGB", (32, 32)).save(output, format="JPEG")
+    valid_payload = output.getvalue()
+    payload = valid_payload[:-2] if corruption == "truncated-jpeg" else b"bad-jpeg"
+
+    session, socket, client, _ = make_session()
+    session.frame_store = SharedMemoryFrameStore()
     session.configured = session.ready = True
-    await session.prepare_frame(
-        Frame(type="input.frame", seq_no=0, timestamp=0.0, mime_type="image/jpeg")
-    )
-    session._cancel_binary_timer()
+    session.input_queue_capacity = 1
+    metadata = dict(type="input.frame", seq_no=0, timestamp=0.0, mime_type="image/jpeg")
     queue = asyncio.Queue()
-    queue.put_nowait(("bytes", b"bad-jpeg"))
     worker = asyncio.create_task(session._process_inputs(queue))
     try:
+        queue.put_nowait(("json", metadata))
+        queue.put_nowait(("bytes", payload))
         # PIL may import image plugins on the first malformed-image decode.
         # This is a lifecycle check, not a one-second decode benchmark.
         await asyncio.wait_for(queue.join(), 10)
+        rejected = [m for m in socket.sent if m["type"] == "input.frame.rejected"]
+        assert len(rejected) == 1 and rejected[0]["seq_no"] == 0
+        assert session.pending_frame is None and not session.outstanding_seq_nos
+        assert session.next_seq_no == 0
+        assert not client.updates
+        assert not [m for m in socket.sent if m["type"] == "input.frame.accepted"]
+        assert not session.closed and socket.close_code is None
+
+        queue.put_nowait(("json", metadata))
+        queue.put_nowait(("bytes", valid_payload))
+        await asyncio.wait_for(queue.join(), 10)
+        accepted = [m for m in socket.sent if m["type"] == "input.frame.accepted"]
+        assert len(accepted) == 1 and accepted[0]["seq_no"] == 0
+        assert session.next_seq_no == 1
+        assert len(client.updates) == 1
+        with resolve_shared_memory_frame(client.updates[0]["frame_ref"]) as image:
+            assert image.size == (32, 32)
+        assert not session.closed and socket.close_code is None
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
-    rejected = [m for m in socket.sent if m["type"] == "input.frame.rejected"]
-    assert rejected[0]["seq_no"] == 0
-    assert session.pending_frame is None and not session.outstanding_seq_nos
-    assert session.next_seq_no == 0
+        session._cancel_binary_timer()
+        session.frame_store.cleanup(session.request_id)
 
 
 def test_shared_capacity_and_native_default_factory():
