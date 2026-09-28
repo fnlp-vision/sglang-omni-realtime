@@ -382,6 +382,9 @@ class V2Session(VideoRealtimeSession):
                     if Image.MIME.get(image.format) != pending.metadata.mime_type:
                         raise ValueError("image encoding does not match mime_type")
                     image.verify()
+                # JPEG verify() does not decode pixels, so truncated scans can pass.
+                with Image.open(BytesIO(payload)) as image:
+                    image.load()
             except Exception as exc:
                 raise ValueError(f"invalid image: {exc}") from exc
 
